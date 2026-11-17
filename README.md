@@ -1,4 +1,4 @@
-# Agent Hub
+# Agents Hub
 
 One place for your Claude Code sessions and the terminals around them.
 
