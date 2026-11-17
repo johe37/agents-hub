@@ -17,6 +17,7 @@ class Window:
     index: int
     name: str
     window_id: str
+    pane_id: str
     command: str
     claude: Session | None = None
 
@@ -74,6 +75,16 @@ class Agent:
     def in_hub(self) -> bool:
         return self.workspace is not None
 
+    @property
+    def target(self) -> tuple[str, str] | None:
+        """(tmux socket, pane id) where the agent reads its input, if known."""
+        if self.workspace and self.window:
+            return socket_path(), self.window.pane_id
+        s = self.session
+        if s and s.tmux_socket and s.tmux_pane:
+            return s.tmux_socket, s.tmux_pane
+        return None
+
 
 @dataclass
 class Snapshot:
@@ -96,7 +107,7 @@ def _windows(panes: list[Pane], claude_by_pane: dict[str, Session]) -> dict[str,
     for window_panes in by_window.values():
         active = next((p for p in window_panes if p.active), window_panes[0])
         claude = next((claude_by_pane[p.pane_id] for p in window_panes if p.pane_id in claude_by_pane), None)
-        w = Window(active.session, active.window_index, active.window_name, active.window_id, active.command, claude)
+        w = Window(active.session, active.window_index, active.window_name, active.window_id, active.pane_id, active.command, claude)
         result.setdefault(active.session, []).append(w)
     for windows in result.values():
         windows.sort(key=lambda w: w.index)
