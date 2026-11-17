@@ -1,0 +1,16 @@
+[project]
+name = "claude-hub"
+version = "0.1.0"
+description = "TUI hub for Claude Code sessions and git repos in tmux"
+requires-python = ">=3.11"
+dependencies = ["textual>=1.0"]
+
+[project.scripts]
+claude-hub = "claude_hub.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
