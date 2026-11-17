@@ -13,6 +13,7 @@ class Config:
     mouse: bool = True
     refresh_seconds: float = 2.0
     stale_minutes: float = 60.0
+    prewarm: bool = True
 
 
 def load_config() -> Config:
@@ -26,4 +27,5 @@ def load_config() -> Config:
     cfg.mouse = bool(data.get("mouse", cfg.mouse))
     cfg.refresh_seconds = float(data.get("refresh_seconds", cfg.refresh_seconds))
     cfg.stale_minutes = float(data.get("stale_minutes", cfg.stale_minutes))
+    cfg.prewarm = bool(data.get("prewarm", cfg.prewarm))
     return cfg

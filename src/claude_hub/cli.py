@@ -11,27 +11,35 @@ TOOL_EVENTS = {"PreToolUse", "PostToolUse"}
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 
+def _is_ours(command: str) -> bool:
+    return command.endswith("claude-hub report") or command.endswith("claude_hub/hook.sh")
+
+
 def install_hooks(yes: bool) -> int:
-    command = f"{os.path.abspath(sys.argv[0])} report"
+    command = f"/bin/sh {Path(__file__).parent / 'hook.sh'}"
     settings = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
     hooks = settings.setdefault("hooks", {})
 
-    added = []
+    changed = []
     for event in HOOK_EVENTS:
         groups = hooks.setdefault(event, [])
         if any(h.get("command") == command for g in groups for h in g.get("hooks", [])):
             continue
+        # Replace older claude-hub hooks, such as the slower `claude-hub report`.
+        for g in groups:
+            g["hooks"] = [h for h in g.get("hooks", []) if not _is_ours(h.get("command", ""))]
+        groups[:] = [g for g in groups if g["hooks"]]
         group: dict = {"hooks": [{"type": "command", "command": command}]}
         if event in TOOL_EVENTS:
             group = {"matcher": "*", **group}
         groups.append(group)
-        added.append(event)
+        changed.append(event)
 
-    if not added:
+    if not changed:
         print("Hooks already installed.")
         return 0
-    print(f"Will add '{command}' to these hooks in {SETTINGS_PATH}:")
-    print("  " + ", ".join(added))
+    print(f"Will set '{command}' as the claude-hub hook for these events in {SETTINGS_PATH}:")
+    print("  " + ", ".join(changed))
     if not yes and input("Continue? [y/N] ").strip().lower() != "y":
         print("Aborted.")
         return 1

@@ -1,4 +1,5 @@
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,7 +8,7 @@ from . import theme
 from .config import Config
 from .git import GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs
 from .state import STATUS_ORDER, Session, load_sessions, worst_status
-from .tmux import SUMMARY_FILE, Pane, list_panes, live_panes, socket_path
+from .tmux import POOL_SESSION, SUMMARY_FILE, Pane, kill_window, list_all_panes, live_panes, socket_path, spares, spawn_spare
 
 @dataclass
 class Window:
@@ -36,6 +37,7 @@ class Snapshot:
     workspaces: list[Workspace]
     elsewhere: list[Session]
     recent_dirs: list[str]
+    spares: dict[str, str] = field(default_factory=dict)
 
 
 def _windows(panes: list[Pane], claude_by_pane: dict[str, Session]) -> dict[str, list[Window]]:
@@ -59,6 +61,9 @@ class Collector:
         self.git = GitCache()
         self.pool = ThreadPoolExecutor(max_workers=8)
         self.hub_socket = socket_path()
+        # Path the picker currently points at; the pool keeps a shell ready there too.
+        self.speculative: str | None = None
+        self._pool_lock = threading.Lock()
         cached = load_dir_cache()
         self.dirs: list[tuple[str, bool]] = cached or []
         self._need_scan = cached is None
@@ -69,10 +74,11 @@ class Collector:
         return self.dirs
 
     def collect(self) -> Snapshot:
-        panes = list_panes()
-        hub_panes = {p.pane_id for p in panes}
+        all_panes = list_all_panes()
+        panes = [p for p in all_panes if not p.session.startswith("_")]
+        hub_panes = {p.pane_id: p.session for p in all_panes}
 
-        def live(socket: str) -> set[str]:
+        def live(socket: str) -> dict[str, str]:
             return hub_panes if os.path.realpath(socket) == self.hub_socket else live_panes(socket)
 
         sessions = load_sessions(live, self.cfg.stale_minutes)
@@ -82,6 +88,8 @@ class Collector:
             if s.alive and s.tmux_pane and s.tmux_socket and os.path.realpath(s.tmux_socket) == self.hub_socket
         }
         elsewhere = [s for s in sessions if s.alive and s.tmux_pane not in in_hub]
+        for s in elsewhere:
+            s.repo_root = self.git.repo_root(s.cwd) if s.cwd else None
 
         windows = _windows(panes, in_hub)
         workspaces = []
@@ -101,7 +109,36 @@ class Collector:
             self._need_scan = False
             self.rescan()
         recent = list(dict.fromkeys(s.cwd for s in sessions if s.cwd))
-        return Snapshot(workspaces, elsewhere, recent)
+        if self.cfg.prewarm:
+            self._fill_pool({w.path for w in workspaces})
+        return Snapshot(workspaces, elsewhere, recent, spares(list_all_panes()))
+
+    def _fill_pool(self, paths: set[str]) -> None:
+        """Keep one started shell ready per workspace, so a new terminal shows its prompt at once."""
+        with self._pool_lock:
+            wanted = paths | ({self.speculative} if self.speculative else set())
+            seen: set[str] = set()
+            for p in list_all_panes():
+                if p.session != POOL_SESSION:
+                    continue
+                if p.window_name in seen or p.window_name not in wanted:
+                    kill_window(p.window_id)
+                seen.add(p.window_name)
+            pool_exists = bool(seen)
+            # A few per round, so a hub start with many workspaces does not spawn a burst of shells.
+            for path in sorted(wanted - seen)[:3]:
+                if os.path.isdir(path):
+                    spawn_spare(path, pool_exists)
+                    pool_exists = True
+
+    def prewarm(self, path: str | None) -> None:
+        self.speculative = path
+        if not path or not os.path.isdir(path):
+            return
+        with self._pool_lock:
+            current = spares(list_all_panes())
+            if path not in current:
+                spawn_spare(path, bool(current))
 
     def _write_summary(self, sessions: list[Session]) -> None:
         """One-line summary shown in the tmux status bar of every workspace."""

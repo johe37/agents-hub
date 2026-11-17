@@ -196,6 +196,7 @@ class DirPicker(ModalScreen[tuple[str, str] | None]):
         self.candidates = candidates
         self.rescan_fn = rescan
         self.initial_query = query
+        self._prewarm_timer = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -279,6 +280,14 @@ class DirPicker(ModalScreen[tuple[str, str] | None]):
         box = self.query_one(Input)
         box.value = shorten(path).rstrip("/") + "/"
         box.cursor_position = len(box.value)
+
+    @on(OptionList.OptionHighlighted)
+    def on_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        # Start a shell for the highlighted directory while the user decides, so Enter opens it at once.
+        if self._prewarm_timer is not None:
+            self._prewarm_timer.stop()
+        path = event.option.id
+        self._prewarm_timer = self.set_timer(0.15, lambda: self.app.prewarm(path))
 
     def action_choose(self, kind: str) -> None:
         options = self.query_one(OptionList)
@@ -565,7 +574,8 @@ class HubApp(App):
             return
         if error:
             self.notify(error, severity="error")
-        self.refresh_data()
+        # The client has already switched away; refresh a moment later so it does not compete with the new shell.
+        self.set_timer(0.3, self.refresh_data)
 
     @on(Tree.NodeSelected)
     def on_selected(self, event: Tree.NodeSelected) -> None:
@@ -587,7 +597,9 @@ class HubApp(App):
         if ws is None:
             self.notify("Select a workspace first, or press n for a new one", severity="warning")
             return
-        self._run(tmux.new_window, ws.name, ws.path, kind, WINDOW_KINDS[kind])
+        command = WINDOW_KINDS[kind]
+        spare = self.snapshot.spares.get(ws.path) if self.snapshot and command is None else None
+        self._run(tmux.new_window, ws.name, ws.path, kind, command, spare)
 
     def _relative(self, path: str) -> str:
         for root in self.cfg.roots:
@@ -618,12 +630,26 @@ class HubApp(App):
 
     def action_new_workspace(self, query: str = "") -> None:
         def chosen(result: tuple[str, str] | None) -> None:
+            self.collector.speculative = None
             if result is None:
                 return
             path, kind = result
-            self._run(tmux.open_workspace, path, kind, WINDOW_KINDS[kind])
+            workspaces = self.snapshot.workspaces if self.snapshot else []
+            existing = next((ws for ws in workspaces if os.path.realpath(ws.path) == os.path.realpath(path)), None)
+            if existing:
+                self._run(tmux.switch_client, existing.name)
+                return
+            command = WINDOW_KINDS[kind]
+            # Look up the pool fresh: the picker may have started a shell for this path a moment ago.
+            spare = tmux.spares(tmux.list_all_panes()).get(path) if command is None else None
+            name = tmux.unique_session_name(Path(path).name, {ws.name for ws in workspaces})
+            self._run(tmux.create_workspace, name, path, kind, command, spare)
 
         self.push_screen(DirPicker(self._candidates(), self._rescan_candidates, query), chosen)
+
+    def prewarm(self, path: str | None) -> None:
+        if self.cfg.prewarm:
+            self.run_worker(lambda: self.collector.prewarm(path), thread=True, group="prewarm")
 
     def check_request(self) -> None:
         """Pick up a request from `claude-hub <query>` run in another terminal."""
