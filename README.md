@@ -2,9 +2,14 @@
 
 One place for your Claude Code sessions and the terminals around them.
 
-You work in **workspaces**. A workspace is a directory with its Claude sessions,
+The hub is a list of **agents**: every running Claude session, grouped by what it needs
+from you (*Needs you*, *Working*, *Idle*). Each row shows the task (the session's title),
+the workspace, the branch and the lines changed. The panel next to it shows what the agent
+waits for, its last message, the changed files and the terminals in the workspace.
+
+Agents live in **workspaces**. A workspace is a directory with its Claude sessions,
 shells and editors. The directory does not have to be a git repo; when it is, the hub
-shows branch, changes and ahead/behind.
+shows branch, changes and ahead/behind. Workspaces without an agent are listed last.
 
 Work keeps running when you leave. Close the terminal, come back later, run
 `claude-hub` again and everything is where you left it. Under the hood claude-hub
@@ -78,28 +83,31 @@ picker after you clone a new repo.
 | Where | Key | Action |
 |---|---|---|
 | Workspace | Click **◀ Claude Hub** | Back to the hub (or tmux prefix + `s`, pick `_hub`) |
-| Hub | `Enter` | Open the workspace or window |
+| Hub | `Enter` | Open the agent or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
-| Hub | `c` / `t` / `e` | New Claude / shell / nvim window in the workspace |
-| Hub | `x` | Close window or workspace |
-| Hub | `R` | Rename |
-| Hub | `Space` / `l` / `h` | Expand / collapse |
+| Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
+| Hub | `x` | Close the agent or the workspace |
+| Hub | `R` | Rename the workspace |
+| Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `q` | Leave. Everything keeps running |
 
 Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
 to go back), the workspace name and path, its windows (click to switch) and how many
-Claude sessions wait for you. When you enter a workspace, a short message reminds you
-how to get back.
+Claude sessions wait for you.
 
 Opening a directory that already has a workspace jumps to it instead of creating a
 second one.
 
-Claude sessions that run outside claude-hub show up under "Outside claude-hub" with
-their status.
+Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
+shows their status and messages but cannot jump to them.
 
 Mouse: a click selects a row. A second click on the selected row (or a double-click)
-opens it. Click `▸`/`▾` to expand.
+opens it. Click a terminal in the detail panel to jump to it.
+
+The title of an agent comes from its transcript: the title Claude Code gives the session,
+or the first prompt until then. The last message, the last request, the model and the
+cost come from the same file.
 
 ## Notes
 

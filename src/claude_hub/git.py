@@ -2,7 +2,7 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 STATUS_TTL = 5.0
@@ -16,6 +16,9 @@ class GitStatus:
     ahead: int = 0
     behind: int = 0
     has_upstream: bool = False
+    added: int = 0
+    removed: int = 0
+    files: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _git(cwd: str, *args: str) -> str | None:
@@ -69,6 +72,18 @@ def save_dir_cache(dirs: list[tuple[str, bool]]) -> None:
     DIR_CACHE.write_text("".join(f"{'repo' if is_repo else 'dir'}\t{path}\n" for path, is_repo in dirs))
 
 
+def _changed_file(line: str) -> tuple[str, str]:
+    """(status, path) from a porcelain v2 line. Status is the two-letter XY code, or ?? for untracked."""
+    kind = line[0]
+    if kind == "?":
+        return "??", line[2:]
+    if kind == "2":
+        return line.split(" ", 9)[1], line.split(" ", 9)[9].split("\t")[0]
+    if kind == "u":
+        return line.split(" ", 10)[1], line.split(" ", 10)[10]
+    return line.split(" ", 8)[1], line.split(" ", 8)[8]
+
+
 class GitCache:
     """Thread-safe caches for repo-root lookups and rate-limited git status."""
 
@@ -111,6 +126,13 @@ class GitCache:
                     st.ahead, st.behind = int(a), -int(b)
                 elif not line.startswith("#"):
                     st.dirty += 1
+                    st.files.append(_changed_file(line))
+        numstat = _git(repo, "diff", "--numstat", "HEAD")
+        for line in (numstat or "").splitlines():
+            added, removed, *_ = line.split("\t")
+            if added.isdigit() and removed.isdigit():
+                st.added += int(added)
+                st.removed += int(removed)
         with self._lock:
             self._status[repo] = (now, st)
         return st

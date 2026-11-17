@@ -6,6 +6,8 @@
 dir="${XDG_STATE_HOME:-$HOME/.local/state}/claude-hub/events"
 input=$(cat)
 case $input in *'"session_id"'*) ;; *) exit 0 ;; esac
+# "agent_completed" goes to every open session when another session finishes; it would hide this session's real state.
+case $input in *'"notification_type":"agent_completed"'*) exit 0 ;; esac
 id=${input#*\"session_id\"}
 id=${id#*\"}
 id=${id%%\"*}
