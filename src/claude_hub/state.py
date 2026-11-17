@@ -16,6 +16,18 @@ STATUS_STYLE = {
     "stale": ("?", theme.DIM),
 }
 PRUNE_AFTER = 24 * 3600
+EVENTS_DIR = STATE_DIR / "events"
+
+
+STATUS_BY_EVENT = {
+    "SessionStart": "idle",
+    "UserPromptSubmit": "working",
+    "PreToolUse": "working",
+    "PostToolUse": "working",
+    "Notification": "waiting",
+    "Stop": "idle",
+    "SessionEnd": "ended",
+}
 
 
 @dataclass
@@ -25,14 +37,12 @@ class Session:
     status: str
     last_event: str
     timestamp: float
-    repo_root: str | None = None
-    branch: str | None = None
     tmux_socket: str | None = None
     tmux_pane: str | None = None
     tmux_session: str | None = None
-    tmux_window: str | None = None
     transcript_path: str | None = None
     message: str | None = None
+    repo_root: str | None = None
     path: Path | None = None
 
     @property
@@ -44,25 +54,37 @@ class Session:
         return self.status not in ("ended", "stale")
 
 
-def load_sessions(live_panes: Callable[[str], set[str]], stale_minutes: float) -> list[Session]:
-    """Read all status files and mark dead ones stale.
+def _read_event(path: Path) -> Session | None:
+    """Turn the latest hook event of a session (written by hook.sh) into a Session."""
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    event = record.get("event") or {}
+    name = event.get("hook_event_name")
+    if name not in STATUS_BY_EVENT or not event.get("session_id"):
+        return None
+    return Session(
+        session_id=event["session_id"],
+        cwd=event.get("cwd") or "",
+        status=STATUS_BY_EVENT[name],
+        last_event=name,
+        timestamp=float(record.get("time") or 0),
+        tmux_socket=record.get("tmux") or None,
+        tmux_pane=record.get("tmux_pane") or None,
+        transcript_path=event.get("transcript_path"),
+        message=event.get("message") if name == "Notification" else None,
+        path=path,
+    )
 
-    live_panes(socket) returns the pane ids alive on that tmux server.
+
+def load_sessions(live_panes: Callable[[str], dict[str, str]], stale_minutes: float) -> list[Session]:
+    """Read the latest event of every session and mark dead ones stale.
+
+    live_panes(socket) returns {pane_id: tmux_session} for the panes alive on that tmux server.
     """
-    sessions = []
     now = time.time()
-    for path in STATE_DIR.glob("*.json"):
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        fields = {k: data.get(k) for k in Session.__dataclass_fields__ if k != "path"}
-        if not fields["session_id"]:
-            continue
-        fields["status"] = fields["status"] or "idle"
-        fields["cwd"] = fields["cwd"] or ""
-        fields["timestamp"] = fields["timestamp"] or 0.0
-        sessions.append(Session(**fields, path=path))
+    sessions = [s for s in map(_read_event, EVENTS_DIR.glob("*.json")) if s is not None]
 
     newest_in_pane: dict[tuple, Session] = {}
     for s in sessions:
@@ -72,17 +94,19 @@ def load_sessions(live_panes: Callable[[str], set[str]], stale_minutes: float) -
             if cur is None or s.timestamp > cur.timestamp:
                 newest_in_pane[key] = s
 
-    live_cache: dict[str, set[str]] = {}
+    live_cache: dict[str, dict[str, str]] = {}
     for s in sessions:
         if not s.alive:
             continue
         if s.tmux_pane and s.tmux_socket:
             if s.tmux_socket not in live_cache:
                 live_cache[s.tmux_socket] = live_panes(s.tmux_socket)
+            live = live_cache[s.tmux_socket]
             # A pane runs one Claude at a time, so older sessions in it are dead.
-            alive_pane = s.tmux_pane in live_cache[s.tmux_socket]
-            if not alive_pane or newest_in_pane[(s.tmux_socket, s.tmux_pane)] is not s:
+            if s.tmux_pane not in live or newest_in_pane[(s.tmux_socket, s.tmux_pane)] is not s:
                 s.status = "stale"
+            else:
+                s.tmux_session = live[s.tmux_pane]
         elif now - s.timestamp > stale_minutes * 60:
             s.status = "stale"
 

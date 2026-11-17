@@ -13,6 +13,7 @@ from .config import STATE_DIR
 
 SOCKET_NAME = "claude-hub"
 HUB_SESSION = "_hub"
+POOL_SESSION = "_pool"
 SUMMARY_FILE = STATE_DIR / "summary"
 REQUEST_FILE = STATE_DIR / "request"
 
@@ -59,6 +60,9 @@ set -g pane-border-style "fg=$border"
 set -g pane-active-border-style "fg=$accent"
 set -g mode-style "bg=#264F78,fg=$bright"
 bind -n MouseDown1Status if -F "#{==:#{mouse_status_range},hub}" "new-session -A -s $hub $hub_cmd" "select-window -t ="
+# The session and window lists hide the pool of spare shells.
+bind s choose-tree -Zs -f "#{!=:#{session_name},$pool}"
+bind w choose-tree -Zw -f "#{!=:#{session_name},$pool}"
 set-hook -g client-session-changed[0] 'if -F "#{!=:#{session_name},$hub}" "display-message -d 3000 \\"$hint\\""'
 set-hook -g client-attached[0] 'if -F "#{!=:#{session_name},$hub}" "display-message -d 3000 \\"$hint\\""'
 """)
@@ -108,6 +112,7 @@ def write_config(exe: str) -> str:
     text = CONFIG_TEMPLATE.substitute(
         summary=shlex.quote(str(SUMMARY_FILE)),
         hub=HUB_SESSION,
+        pool=POOL_SESSION,
         hub_cmd=shlex.quote(f"{exe} ui"),
         hint="Workspace #S  ·  click ◀ Claude Hub (top left) to go back",
         bar=theme.BAR,
@@ -150,7 +155,8 @@ def server_running() -> bool:
         return False
 
 
-def list_panes() -> list[Pane]:
+def list_all_panes() -> list[Pane]:
+    """Every pane on the hub server, including the hidden _hub and _pool sessions."""
     fmt = "\t".join(f"#{{{f}}}" for f in FIELDS)
     try:
         out = _tmux("list-panes", "-a", "-F", fmt)
@@ -161,19 +167,41 @@ def list_panes() -> list[Pane]:
     panes = []
     for line in out.stdout.splitlines():
         p = line.split("\t")
-        if len(p) != len(FIELDS) or p[0] == HUB_SESSION:
-            continue
-        panes.append(Pane(p[0], p[1], p[2], int(p[3]), p[4], p[5], p[6], p[7] == "1", p[8], p[9]))
+        if len(p) == len(FIELDS):
+            panes.append(Pane(p[0], p[1], p[2], int(p[3]), p[4], p[5], p[6], p[7] == "1", p[8], p[9]))
     return panes
 
 
-def live_panes(socket: str) -> set[str]:
-    """Pane ids on any tmux server, given its socket path."""
+def list_panes() -> list[Pane]:
+    """Panes in workspaces only."""
+    return [p for p in list_all_panes() if not p.session.startswith("_")]
+
+
+def spares(panes: list[Pane]) -> dict[str, str]:
+    """Pre-started shells waiting in the pool, as {path: window_id}. A spare's window name is its path."""
+    return {p.window_name: p.window_id for p in panes if p.session == POOL_SESSION}
+
+
+def spawn_spare(path: str, pool_exists: bool) -> None:
+    if pool_exists:
+        _tmux("new-window", "-d", "-t", f"={POOL_SESSION}:", "-c", path, "-n", path)
+    else:
+        _tmux("new-session", "-d", "-s", POOL_SESSION, "-c", path, "-n", path)
+
+
+def live_panes(socket: str) -> dict[str, str]:
+    """Pane ids on any tmux server, given its socket path, as {pane_id: session_name}."""
     try:
-        out = subprocess.run(["tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}"], capture_output=True, text=True)
+        out = subprocess.run(
+            ["tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}"],
+            capture_output=True,
+            text=True,
+        )
     except OSError:
-        return set()
-    return set(out.stdout.split()) if out.returncode == 0 else set()
+        return {}
+    if out.returncode != 0:
+        return {}
+    return dict(line.split("\t", 1) for line in out.stdout.splitlines() if "\t" in line)
 
 
 def list_sessions() -> list[str]:
@@ -181,26 +209,75 @@ def list_sessions() -> list[str]:
     return out.stdout.split() if out.returncode == 0 else []
 
 
-def unique_session_name(name: str) -> str:
+def unique_session_name(name: str, taken: set[str] | None = None) -> str:
     # tmux rejects '.' and ':' in session names.
-    base = re.sub(r"[.:\s]", "_", name) or "workspace"
-    existing = set(list_sessions())
+    base = re.sub(r"[.:\s]", "_", name).lstrip("_") or "workspace"
+    taken = set(list_sessions()) if taken is None else taken
     candidate, n = base, 2
-    while candidate in existing:
+    while candidate in taken:
         candidate, n = f"{base}-{n}", n + 1
     return candidate
 
 
-def switch_client(session: str) -> str | None:
-    if not inside_hub_server():
+def _chain(*commands: list[str]) -> list[str]:
+    args: list[str] = []
+    for cmd in commands:
+        if args:
+            args.append(";")
+        args.extend(cmd)
+    return args
+
+
+def run_and_switch(session: str, *commands: list[str]) -> str | None:
+    """Run tmux commands and switch to session, all in one tmux call so it feels instant."""
+    inside = inside_hub_server()
+    if inside:
+        commands = (*commands, ["switch-client", "-t", f"={session}"])
+    if commands:
+        err = _error(_tmux(*_chain(*commands)))
+        if err:
+            return err
+    if not inside:
         raise NeedsAttach(session)
-    return _error(_tmux("switch-client", "-t", f"={session}"))
+    return None
+
+
+def switch_client(session: str) -> str | None:
+    return run_and_switch(session)
 
 
 def jump_to_window(session: str, window_id: str) -> str | None:
     # Selecting first makes the window current in its session, so an attach lands there too.
-    err = _error(_tmux("select-window", "-t", window_id))
-    return err or switch_client(session)
+    return run_and_switch(session, ["select-window", "-t", window_id])
+
+
+def _label(path: str) -> str:
+    home = str(Path.home())
+    return "~" + path[len(home) :] if path == home or path.startswith(home + "/") else path
+
+
+def _create_commands(name: str, path: str, window: str, command: str | None, spare: str | None) -> list[list[str]]:
+    options = [
+        ["set-option", "-t", f"={name}:", "@workspace_path", path],
+        ["set-option", "-t", f"={name}:", "@workspace_label", _label(path)],
+    ]
+    if spare and command is None:
+        # A session always starts with a window, so start with a cheap placeholder and swap in the spare shell.
+        return [
+            ["new-session", "-d", "-s", name, "-c", path, "-n", "_placeholder", "cat"],
+            ["move-window", "-s", spare, "-t", f"={name}:"],
+            ["kill-window", "-t", f"={name}:_placeholder"],
+            ["rename-window", "-t", spare, window],
+            *options,
+        ]
+    return [["new-session", "-d", "-s", name, "-c", path, "-n", window, *([command] if command else [])], *options]
+
+
+def create_workspace(name: str, path: str, window: str, command: str | None, spare: str | None = None) -> str | None:
+    err = run_and_switch(name, *_create_commands(name, path, window, command, spare))
+    if err and spare:
+        return run_and_switch(name, *_create_commands(name, path, window, command, None))
+    return err
 
 
 def workspace_for_path(path: str) -> str | None:
@@ -212,37 +289,25 @@ def workspace_for_path(path: str) -> str | None:
 
 
 def ensure_workspace(path: str, window: str, command: str | None) -> tuple[str, str | None]:
-    """Return the workspace for path, creating it if needed. Returns (name, error)."""
+    """Return the workspace for path, creating it (without switching) if needed. Returns (name, error)."""
     existing = workspace_for_path(path)
     if existing:
         return existing, None
     name = unique_session_name(Path(path).name)
-    args = ["new-session", "-d", "-s", name, "-c", path, "-n", window]
-    if command:
-        args.append(command)
-    err = _error(_tmux(*args))
-    if err:
-        return name, err
-    home = str(Path.home())
-    label = "~" + path[len(home) :] if path == home or path.startswith(home + "/") else path
-    _tmux("set-option", "-t", f"={name}:", "@workspace_path", path)
-    _tmux("set-option", "-t", f"={name}:", "@workspace_label", label)
-    return name, None
+    return name, _error(_tmux(*_chain(*_create_commands(name, path, window, command, None))))
 
 
-def open_workspace(path: str, window: str, command: str | None) -> str | None:
-    name, err = ensure_workspace(path, window, command)
-    return err or switch_client(name)
-
-
-def new_window(session: str, cwd: str, name: str, command: str | None) -> str | None:
-    args = ["new-window", "-t", f"={session}:", "-c", cwd, "-n", name, "-P", "-F", "#{window_id}"]
-    if command:
-        args.append(command)
-    out = _tmux(*args)
-    if out.returncode != 0:
-        return _error(out)
-    return jump_to_window(session, out.stdout.strip())
+def new_window(session: str, cwd: str, name: str, command: str | None, spare: str | None = None) -> str | None:
+    if spare and command is None:
+        err = run_and_switch(
+            session,
+            ["move-window", "-s", spare, "-t", f"={session}:"],
+            ["rename-window", "-t", spare, name],
+            ["select-window", "-t", spare],
+        )
+        if not err:
+            return None
+    return run_and_switch(session, ["new-window", "-t", f"={session}:", "-c", cwd, "-n", name, *([command] if command else [])])
 
 
 def kill_session(session: str) -> str | None:

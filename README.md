@@ -29,6 +29,7 @@ roots = ["~/repos"]          # where to look for git repos (any depth)
 mouse = true
 refresh_seconds = 2
 stale_minutes = 60
+prewarm = true               # keep a started shell ready per workspace
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
@@ -39,8 +40,12 @@ All keys are optional. The default for `roots` is `~/repos`.
 .venv/bin/claude-hub install-hooks
 ```
 
-This adds `claude-hub report` to the hooks in `~/.claude/settings.json`. The command
-shows what it adds and asks first. It saves a backup as `settings.json.bak`.
+This adds a small shell script (`src/claude_hub/hook.sh`) to the hooks in
+`~/.claude/settings.json`. It replaces older claude-hub hooks. The command shows what it
+changes and asks first. It saves a backup as `settings.json.bak`.
+
+The hook runs on every Claude tool call, so it does almost nothing: it stores the latest
+event per session (about 5 ms) and the hub reads it.
 
 Only Claude sessions started after this report status.
 
@@ -101,6 +106,9 @@ opens it. Click `▸`/`▾` to expand.
 - The hub's tmux server loads your own `~/.tmux.conf` first, so your prefix and key
   bindings work. The hub then sets its own status bar and mouse settings on top.
 - Running `claude-hub` restarts the hub UI when the code has changed since it started.
+- New terminals open instantly because the hub keeps one started shell per workspace in
+  a hidden `_pool` session, and starts one for the directory you highlight in the picker.
+  Turn it off with `prewarm = false`.
 
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
 - To stop everything: `tmux -L claude-hub kill-server`.
