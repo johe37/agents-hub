@@ -330,5 +330,22 @@ def detach() -> None:
     _tmux("detach-client")
 
 
+def send_text(socket: str, pane: str, text: str) -> str | None:
+    """Type text into a pane and press Enter, as if the user wrote it."""
+    cmd = ["tmux", "-S", socket, "send-keys", "-t", pane, "-l", "--", text, ";", "send-keys", "-t", pane, "Enter"]
+    try:
+        return _error(subprocess.run(cmd, capture_output=True, text=True))
+    except OSError as e:
+        return str(e)
+
+
+def send_keys(socket: str, pane: str, *keys: str) -> str | None:
+    """Press named keys (Enter, Escape, ...) in a pane."""
+    try:
+        return _error(subprocess.run(["tmux", "-S", socket, "send-keys", "-t", pane, *keys], capture_output=True, text=True))
+    except OSError as e:
+        return str(e)
+
+
 def hide_hub_status() -> None:
     _tmux("set-option", "-t", f"={HUB_SESSION}:", "status", "off")

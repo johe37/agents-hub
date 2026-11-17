@@ -32,6 +32,8 @@ HELP = """\
   c / t / e       new Claude / terminal / nvim in the workspace
   x               close the agent or workspace
   R               rename the workspace
+  r               reply: type a message, Enter sends it to the agent
+  y / d           approve / deny a permission prompt
   j k / arrows    move
   PgUp / PgDn     scroll the detail panel
   /               filter, Esc clears
@@ -321,6 +323,9 @@ WAITING_REASON = {
     "idle_prompt": "Waiting for your input",
     "elicitation_dialog": "Asks you a question",
 }
+# Keys that answer Claude Code's permission dialog: Enter takes the highlighted "Yes", Escape declines.
+APPROVE_KEYS = ("Enter",)
+DENY_KEYS = ("Escape",)
 FILE_STYLE = {"?": T.SUCCESS, "A": T.SUCCESS, "D": T.ERROR, "R": T.INFO, "U": T.ERROR}
 MAX_FILES = 20
 MAX_MESSAGE_LINES = 40
@@ -355,6 +360,11 @@ def status_line(a: Agent) -> tuple[Text, Text]:
         head.append(WAITING_REASON.get(s.notification_type or "", "Waiting for you") + when, style=f"bold {T.WARNING}")
         if s.message:
             detail.append(s.message, style=T.MODIFIED)
+        # The hook keeps only the latest event, so the tool behind a permission prompt comes from the transcript.
+        if s.notification_type == "permission_prompt" and t and t.last_tool:
+            detail.append(("\n" if detail else "") + t.last_tool[:200], style=T.FG)
+        if a.target:
+            detail.append("\ny approves · d denies · r replies", style=T.MUTED)
     elif a.status == "working":
         head.append("Working" + when, style=T.INFO)
         tool = (s.tool if s else None) or (t.last_tool if t else None)
@@ -378,6 +388,9 @@ class AgentList(OptionList):
         Binding("e", "app.new_window('nvim')", "nvim"),
         Binding("x", "app.close", "Close"),
         Binding("R", "app.rename", "Rename"),
+        Binding("r", "app.reply", "Reply"),
+        Binding("y", "app.approve", "Approve"),
+        Binding("d", "app.deny", "Deny"),
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
     ]
@@ -396,7 +409,7 @@ class AgentList(OptionList):
 
 class DetailPanel(VerticalScroll):
     DEFAULT_CSS = """
-    DetailPanel { width: 55%; min-width: 40; border-left: solid #2B2B2B; padding: 0 2; background: $background; }
+    DetailPanel { width: 100%; height: 1fr; padding: 0 2; background: $background; }
     DetailPanel #title { color: #FFFFFF; text-style: bold; }
     DetailPanel #meta { color: $text-muted; }
     DetailPanel #state { margin-top: 1; }
@@ -539,6 +552,9 @@ class HubApp(App):
     #header-left { width: 1fr; }
     #header-right { width: auto; }
     #main { height: 1fr; }
+    #side { width: 55%; min-width: 40; border-left: solid #2B2B2B; }
+    #reply { display: none; margin: 0 1; }
+    #reply.visible { display: block; }
     AgentList { width: 1fr; height: 1fr; background: $background; border: none; padding: 0 1; scrollbar-size: 1 1; }
     AgentList > .option-list--option-disabled { color: #9D9D9D; text-style: bold; }
     Footer { border-top: none; }
@@ -575,7 +591,9 @@ class HubApp(App):
             yield Static("", id="header-right")
         with Horizontal(id="main"):
             yield AgentList(id="list")
-            yield DetailPanel(id="detail")
+            with Vertical(id="side"):
+                yield DetailPanel(id="detail")
+                yield Input(placeholder="", id="reply")
         yield Input(placeholder="filter…", id="filter")
         yield Footer()
 
@@ -590,7 +608,7 @@ class HubApp(App):
         self.set_interval(0.3, self.check_request)
 
     def on_resize(self, event: events.Resize) -> None:
-        self.query_one(DetailPanel).display = event.size.width >= 100
+        self.query_one("#side").display = event.size.width >= 100
         self.render_list()
 
     @work(thread=True, exclusive=True, group="collect")
@@ -733,6 +751,71 @@ class HubApp(App):
             panel.show_workspace(row)
         else:
             panel.show_empty()
+        reply = self.query_one("#reply", Input)
+        agent = row if isinstance(row, Agent) and row.target else None
+        reply.set_class(agent is not None, "visible")
+        if agent is not None:
+            if self._needs_permission(agent):
+                reply.placeholder = f"Answer {agent.name}: y approves, d denies, or write what to do instead"
+            else:
+                reply.placeholder = f"Message to {agent.name} · r to type, Enter sends"
+        self.refresh_bindings()
+
+    @staticmethod
+    def _needs_permission(a: Agent) -> bool:
+        return a.status == "waiting" and a.session is not None and a.session.notification_type == "permission_prompt"
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action in ("approve", "deny"):
+            row = self._current()
+            return True if isinstance(row, Agent) and self._needs_permission(row) else None
+        if action == "reply":
+            row = self._current()
+            return True if isinstance(row, Agent) and row.target else None
+        return True
+
+    def _send(self, agent: Agent, what: str, fn, *args) -> None:
+        if agent.target is None:
+            self.notify("The hub does not know where this agent reads its input.", severity="warning")
+            return
+        socket, pane = agent.target
+        error = fn(socket, pane, *args)
+        if error:
+            self.notify(error, severity="error")
+            return
+        self.notify(f"{what} → {agent.title}")
+        self.set_timer(0.8, self.refresh_data)
+
+    def action_approve(self) -> None:
+        row = self._current()
+        if isinstance(row, Agent) and self._needs_permission(row):
+            self._send(row, "Approved", tmux.send_keys, *APPROVE_KEYS)
+
+    def action_deny(self) -> None:
+        row = self._current()
+        if isinstance(row, Agent) and self._needs_permission(row):
+            self._send(row, "Denied", tmux.send_keys, *DENY_KEYS)
+
+    def action_reply(self) -> None:
+        row = self._current()
+        if isinstance(row, Agent) and row.target:
+            self.query_one("#reply", Input).focus()
+
+    @on(Input.Submitted, "#reply")
+    def on_reply_submitted(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        row = self._current()
+        box = self.query_one("#reply", Input)
+        box.value = ""
+        self.query_one(AgentList).focus()
+        if not text or not isinstance(row, Agent):
+            return
+        if self._needs_permission(row) and text.lower() in ("y", "yes"):
+            self._send(row, "Approved", tmux.send_keys, *APPROVE_KEYS)
+        elif self._needs_permission(row) and text.lower() in ("n", "no", "d"):
+            self._send(row, "Denied", tmux.send_keys, *DENY_KEYS)
+        else:
+            self._send(row, "Sent", tmux.send_text, text)
 
     @on(OptionList.OptionHighlighted)
     def on_highlighted(self) -> None:
@@ -892,6 +975,9 @@ class HubApp(App):
         box.focus()
 
     def action_clear_filter(self) -> None:
+        if self.query_one("#reply", Input).has_focus:
+            self.query_one(AgentList).focus()
+            return
         box = self.query_one("#filter", Input)
         box.value = ""
         box.remove_class("visible")

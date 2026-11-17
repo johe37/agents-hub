@@ -88,6 +88,8 @@ picker after you clone a new repo.
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
 | Hub | `x` | Close the agent or the workspace |
 | Hub | `R` | Rename the workspace |
+| Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
+| Hub | `y` / `d` | Approve / deny a permission prompt |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `q` | Leave. Everything keeps running |
@@ -99,8 +101,13 @@ Claude sessions wait for you.
 Opening a directory that already has a workspace jumps to it instead of creating a
 second one.
 
+You answer agents from the hub. Press `r`, type a message and press `Enter`: the hub types
+it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
+denies, and the panel shows the tool call it wants to run. You handle several waiting agents
+without leaving the list.
+
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
-shows their status and messages but cannot jump to them.
+shows their status and messages and can reply to them, but cannot jump to them.
 
 Mouse: a click selects a row. A second click on the selected row (or a double-click)
 opens it. Click a terminal in the detail panel to jump to it.
