@@ -9,6 +9,7 @@ from .config import Config
 from .git import GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs
 from .state import STATUS_ORDER, Session, load_sessions, worst_status
 from .tmux import POOL_SESSION, SUMMARY_FILE, Pane, kill_window, list_all_panes, live_panes, socket_path, spares, spawn_spare
+from .transcript import Transcript, TranscriptCache
 
 @dataclass
 class Window:
@@ -33,11 +34,58 @@ class Workspace:
 
 
 @dataclass
+class Agent:
+    """One Claude session: in a hub workspace, outside the hub, or a claude window without hook data."""
+
+    key: str
+    status: str
+    session: Session | None = None
+    workspace: Workspace | None = None
+    window: Window | None = None
+    transcript: Transcript | None = None
+    git: GitStatus | None = None
+
+    @property
+    def title(self) -> str:
+        t = self.transcript
+        if t and (t.title or t.first_prompt):
+            return t.title or t.first_prompt
+        if self.window and self.window.name != "claude":
+            return self.window.name
+        return "Claude"
+
+    @property
+    def name(self) -> str:
+        if self.workspace:
+            return self.workspace.name
+        return self.session.name if self.session else "?"
+
+    @property
+    def path(self) -> str:
+        if self.workspace:
+            return self.workspace.path
+        return self.session.cwd if self.session else ""
+
+    @property
+    def timestamp(self) -> float:
+        return self.session.timestamp if self.session else 0.0
+
+    @property
+    def in_hub(self) -> bool:
+        return self.workspace is not None
+
+
+@dataclass
 class Snapshot:
     workspaces: list[Workspace]
-    elsewhere: list[Session]
+    agents: list[Agent]
     recent_dirs: list[str]
     spares: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def idle_workspaces(self) -> list[Workspace]:
+        busy = {a.workspace.name for a in self.agents if a.workspace}
+        return [ws for ws in self.workspaces if ws.name not in busy]
 
 
 def _windows(panes: list[Pane], claude_by_pane: dict[str, Session]) -> dict[str, list[Window]]:
@@ -59,6 +107,7 @@ class Collector:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.git = GitCache()
+        self.transcripts = TranscriptCache()
         self.pool = ThreadPoolExecutor(max_workers=8)
         self.hub_socket = socket_path()
         # Path the picker currently points at; the pool keeps a shell ready there too.
@@ -102,7 +151,8 @@ class Collector:
         for ws, st in zip(workspaces, statuses):
             ws.git = st
 
-        workspaces.sort(key=lambda w: (STATUS_ORDER.get(w.badge or "", 5), w.name.lower()))
+        workspaces.sort(key=lambda w: w.name.lower())
+        agents = self._agents(workspaces, elsewhere)
         self._write_summary(sessions)
 
         if self._need_scan:
@@ -111,7 +161,25 @@ class Collector:
         recent = list(dict.fromkeys(s.cwd for s in sessions if s.cwd))
         if self.cfg.prewarm:
             self._fill_pool({w.path for w in workspaces})
-        return Snapshot(workspaces, elsewhere, recent, spares(list_all_panes()))
+        return Snapshot(workspaces, agents, recent, spares(list_all_panes()))
+
+    def _agents(self, workspaces: list[Workspace], elsewhere: list[Session]) -> list[Agent]:
+        agents: list[Agent] = []
+        for ws in workspaces:
+            for w in ws.windows:
+                if w.claude:
+                    agents.append(Agent(f"agent:{w.claude.session_id}", w.claude.status, w.claude, ws, w, git=ws.git))
+                elif w.command == "claude":
+                    agents.append(Agent(f"window:{w.window_id}", "unknown", None, ws, w, git=ws.git))
+        roots = list(self.pool.map(lambda s: self.git.repo_root(s.cwd) if s.cwd else None, elsewhere))
+        statuses = list(self.pool.map(lambda r: self.git.status(r) if r else None, roots))
+        for s, st in zip(elsewhere, statuses):
+            agents.append(Agent(f"agent:{s.session_id}", s.status, s, git=st))
+        transcripts = list(self.pool.map(lambda a: self.transcripts.get(a.session.transcript_path) if a.session else None, agents))
+        for a, t in zip(agents, transcripts):
+            a.transcript = t
+        agents.sort(key=lambda a: (STATUS_ORDER.get(a.status, 3), -a.timestamp, a.title.lower()))
+        return agents
 
     def _fill_pool(self, paths: set[str]) -> None:
         """Keep one started shell ready per workspace, so a new terminal shows its prompt at once."""

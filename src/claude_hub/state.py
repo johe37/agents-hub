@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import theme
 from .config import STATE_DIR
+from .transcript import tool_summary
 
 STATUS_ORDER = {"waiting": 0, "working": 1, "idle": 2, "ended": 3, "stale": 4}
 STATUS_STYLE = {
@@ -14,6 +15,7 @@ STATUS_STYLE = {
     "idle": ("○", theme.SUCCESS),
     "ended": ("✗", theme.DIM),
     "stale": ("?", theme.DIM),
+    "unknown": ("·", theme.DIM),
 }
 PRUNE_AFTER = 24 * 3600
 EVENTS_DIR = STATE_DIR / "events"
@@ -42,6 +44,9 @@ class Session:
     tmux_session: str | None = None
     transcript_path: str | None = None
     message: str | None = None
+    notification_type: str | None = None
+    tool: str | None = None
+    permission_mode: str | None = None
     repo_root: str | None = None
     path: Path | None = None
 
@@ -64,16 +69,23 @@ def _read_event(path: Path) -> Session | None:
     name = event.get("hook_event_name")
     if name not in STATUS_BY_EVENT or not event.get("session_id"):
         return None
+    status = STATUS_BY_EVENT[name]
+    if name == "Notification" and event.get("notification_type") == "agent_completed":
+        # Sent to every open session when some other session finishes; it says nothing about this one.
+        status = "idle"
     return Session(
         session_id=event["session_id"],
         cwd=event.get("cwd") or "",
-        status=STATUS_BY_EVENT[name],
+        status=status,
         last_event=name,
         timestamp=float(record.get("time") or 0),
         tmux_socket=record.get("tmux") or None,
         tmux_pane=record.get("tmux_pane") or None,
         transcript_path=event.get("transcript_path"),
-        message=event.get("message") if name == "Notification" else None,
+        message=event.get("message") if status == "waiting" else None,
+        notification_type=event.get("notification_type") if status == "waiting" else None,
+        tool=tool_summary(event.get("tool_name"), event.get("tool_input")) if name == "PreToolUse" else None,
+        permission_mode=event.get("permission_mode"),
         path=path,
     )
 

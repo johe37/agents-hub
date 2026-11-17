@@ -63,8 +63,9 @@ bind -n MouseDown1Status if -F "#{==:#{mouse_status_range},hub}" "new-session -A
 # The session and window lists hide the pool of spare shells.
 bind s choose-tree -Zs -f "#{!=:#{session_name},$pool}"
 bind w choose-tree -Zw -f "#{!=:#{session_name},$pool}"
-set-hook -g client-session-changed[0] 'if -F "#{!=:#{session_name},$hub}" "display-message -d 3000 \\"$hint\\""'
-set-hook -g client-attached[0] 'if -F "#{!=:#{session_name},$hub}" "display-message -d 3000 \\"$hint\\""'
+# Older versions showed a hint on every switch; unset it on servers that still run.
+set-hook -gu client-session-changed[0]
+set-hook -gu client-attached[0]
 """)
 
 
@@ -114,7 +115,6 @@ def write_config(exe: str) -> str:
         hub=HUB_SESSION,
         pool=POOL_SESSION,
         hub_cmd=shlex.quote(f"{exe} ui"),
-        hint="Workspace #S  ·  click ◀ Claude Hub (top left) to go back",
         bar=theme.BAR,
         bg=theme.BG,
         fg=theme.FG,
