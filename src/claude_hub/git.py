@@ -1,3 +1,4 @@
+import os
 import subprocess
 import threading
 import time
@@ -5,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 STATUS_TTL = 5.0
+DIR_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "claude-hub" / "dirs.tsv"
 
 
 @dataclass
@@ -24,26 +26,47 @@ def _git(cwd: str, *args: str) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
-def scan_roots(roots: list[Path], max_depth: int = 2) -> list[str]:
-    found: list[str] = []
+def scan_dirs(roots: list[Path]) -> list[tuple[str, bool]]:
+    """Find directories under roots as (path, is_repo). Stops descending at a repo, which keeps the scan fast."""
+    found: list[tuple[str, bool]] = []
 
-    def walk(path: Path, depth: int) -> None:
-        if (path / ".git").exists():
-            found.append(str(path))
-            return
-        if depth >= max_depth:
-            return
+    def walk(path: str, is_root: bool) -> None:
         try:
-            children = sorted(p for p in path.iterdir() if p.is_dir() and not p.name.startswith("."))
+            entries = list(os.scandir(path))
         except OSError:
             return
-        for child in children:
-            walk(child, depth + 1)
+        # .git is a directory in a normal repo and a file in worktrees and submodules.
+        if any(e.name == ".git" for e in entries):
+            found.append((path, True))
+            return
+        if not is_root:
+            found.append((path, False))
+        for e in sorted(entries, key=lambda e: e.name):
+            if not e.name.startswith(".") and e.is_dir(follow_symlinks=False):
+                walk(e.path, False)
 
     for root in roots:
         if root.is_dir():
-            walk(root, 0)
+            walk(str(root), True)
     return found
+
+
+def load_dir_cache() -> list[tuple[str, bool]] | None:
+    try:
+        lines = DIR_CACHE.read_text().splitlines()
+    except OSError:
+        return None
+    result = []
+    for line in lines:
+        kind, _, path = line.partition("\t")
+        if path:
+            result.append((path, kind == "repo"))
+    return result
+
+
+def save_dir_cache(dirs: list[tuple[str, bool]]) -> None:
+    DIR_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    DIR_CACHE.write_text("".join(f"{'repo' if is_repo else 'dir'}\t{path}\n" for path, is_repo in dirs))
 
 
 class GitCache:

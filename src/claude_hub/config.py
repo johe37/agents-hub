@@ -9,7 +9,7 @@ STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "stat
 
 @dataclass
 class Config:
-    roots: list[Path] = field(default_factory=lambda: [Path.home() / "code"])
+    roots: list[Path] = field(default_factory=lambda: [Path.home() / "repos"])
     mouse: bool = True
     refresh_seconds: float = 2.0
     stale_minutes: float = 60.0

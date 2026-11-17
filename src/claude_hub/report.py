@@ -40,10 +40,17 @@ def _git_info(cwd: str) -> dict:
 
 def _tmux_info(pane: str | None) -> dict:
     if not pane:
-        return {"tmux_pane": None, "tmux_session": None, "tmux_window": None}
+        return {"tmux_socket": None, "tmux_pane": None, "tmux_session": None, "tmux_window": None}
+    # Pane ids are only unique per tmux server, so record which server this is.
+    socket = os.environ.get("TMUX", "").split(",")[0] or None
     out = _run("tmux", "display-message", "-p", "-t", pane, "#{session_name}\t#{window_index}")
     session, _, window = (out or "\t").partition("\t")
-    return {"tmux_pane": pane, "tmux_session": session or None, "tmux_window": window or None}
+    return {
+        "tmux_socket": socket,
+        "tmux_pane": pane,
+        "tmux_session": session or None,
+        "tmux_window": window or None,
+    }
 
 
 def report(data: dict) -> None:
@@ -73,7 +80,7 @@ def report(data: dict) -> None:
     # git and tmux lookups cost a subprocess each; only redo them when the location changed.
     if prev.get("cwd") != cwd or "repo_root" not in prev or event == "Stop":
         state.update(_git_info(cwd))
-    if prev.get("tmux_pane") != pane or "tmux_session" not in prev:
+    if prev.get("tmux_pane") != pane or "tmux_socket" not in prev:
         state.update(_tmux_info(pane))
     if event == "Notification":
         state["message"] = data.get("message")
