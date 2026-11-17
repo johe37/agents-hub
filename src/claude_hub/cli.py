@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,11 +43,70 @@ def install_hooks(yes: bool) -> int:
     return 0
 
 
+def _attach(tmux, config: str, session: str) -> None:
+    if tmux.inside_hub_server():
+        tmux.switch_client(session)
+        return
+    # Inside another tmux this nests a client; tmux refuses that unless $TMUX is unset.
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    os.execvpe("tmux", ["tmux", "-L", tmux.SOCKET_NAME, "-f", config, "attach-session", "-t", f"={session}"], env)
+
+
+def open_hub(cfg, target: str | None) -> int:
+    """Start the engine if needed, then go to the hub, or straight to a workspace for a directory."""
+    from . import tmux
+
+    exe = os.path.abspath(sys.argv[0])
+    config = tmux.write_config(exe)
+    if tmux.server_running():
+        subprocess.run(["tmux", "-L", tmux.SOCKET_NAME, "source-file", config], capture_output=True)
+    tmux.ensure_hub(exe, config)
+
+    session = tmux.HUB_SESSION
+    if target and os.path.isdir(target):
+        session, err = tmux.ensure_workspace(os.path.realpath(target), "shell", None)
+        if err:
+            print(f"claude-hub: {err}", file=sys.stderr)
+            return 1
+    elif target:
+        tmux.REQUEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmux.REQUEST_FILE.write_text(target)
+    _attach(tmux, config, session)
+    return 0
+
+
+def run_ui(cfg, mouse: bool) -> int:
+    from .app import HubApp
+
+    attach_to = HubApp(cfg).run(mouse=mouse)
+    if attach_to:
+        from . import tmux
+
+        exe = os.path.abspath(sys.argv[0])
+        config = tmux.write_config(exe)
+        env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+        os.execvpe("tmux", ["tmux", "-L", tmux.SOCKET_NAME, "-f", config, "attach-session", "-t", f"={attach_to}"], env)
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="claude-hub")
-    parser.add_argument("--popup", action="store_true", help="exit after jumping to a pane")
+    commands = {"ui", "report", "install-hooks"}
+    argv = sys.argv[1:]
+    if argv and argv[0] not in commands and not argv[0].startswith("-"):
+        from .config import load_config
+
+        # `claude-hub <dir>` opens a workspace there; `claude-hub <query>` opens the picker.
+        return open_hub(load_config(), " ".join(argv))
+
+    parser = argparse.ArgumentParser(
+        prog="claude-hub",
+        usage="claude-hub [<dir> | <query>] | {ui,report,install-hooks}",
+        description="Open the claude-hub workspace manager. Give a directory to open a workspace there, "
+        "or a search query to open the picker with it.",
+    )
     parser.add_argument("--no-mouse", action="store_true", help="disable mouse support")
     sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("ui", help="run the hub UI in the current terminal, without the tmux engine")
     sub.add_parser("report", help="hook handler: read hook JSON from stdin")
     hooks = sub.add_parser("install-hooks", help="add claude-hub hooks to ~/.claude/settings.json")
     hooks.add_argument("-y", "--yes", action="store_true")
@@ -59,12 +119,12 @@ def main() -> int:
     if args.cmd == "install-hooks":
         return install_hooks(args.yes)
 
-    from .app import HubApp
     from .config import load_config
 
     cfg = load_config()
-    HubApp(cfg, popup=args.popup).run(mouse=cfg.mouse and not args.no_mouse)
-    return 0
+    if args.cmd == "ui":
+        return run_ui(cfg, mouse=cfg.mouse and not args.no_mouse)
+    return open_hub(cfg, None)
 
 
 if __name__ == "__main__":
