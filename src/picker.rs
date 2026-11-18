@@ -121,13 +121,13 @@ impl Picker {
     fn tag_span(&self, path: &str, tag: Option<Tag>) -> Option<Span<'static>> {
         let open = tag == Some(Tag::Open) || self.candidates.iter().any(|c| c.tag == Tag::Open && c.path == path);
         if open {
-            return Some(Span::styled("  ● open", Style::new().fg(C_SUCCESS)));
+            return Some(Span::styled("  ● open", Style::new().fg(colors().success)));
         }
         match tag {
-            Some(Tag::Repo) => Some(Span::styled("  repo", Style::new().fg(C_PURPLE))),
-            Some(Tag::Recent) => Some(Span::styled("  recent", Style::new().fg(C_DIM))),
-            Some(Tag::Dir) => Some(Span::styled("  dir", Style::new().fg(C_DIM))),
-            _ if Path::new(path).join(".git").exists() => Some(Span::styled("  repo", Style::new().fg(C_PURPLE))),
+            Some(Tag::Repo) => Some(Span::styled("  repo", Style::new().fg(colors().purple))),
+            Some(Tag::Recent) => Some(Span::styled("  recent", Style::new().fg(colors().dim))),
+            Some(Tag::Dir) => Some(Span::styled("  dir", Style::new().fg(colors().dim))),
+            _ if Path::new(path).join(".git").exists() => Some(Span::styled("  repo", Style::new().fg(colors().purple))),
             _ => None,
         }
     }
@@ -138,14 +138,14 @@ impl Picker {
         let typed = PathBuf::from(expand(text));
         if typed.is_dir() {
             let r = real(&typed);
-            items.push(Choice { line: Line::from(Span::styled(format!("Open {}", shorten(&r)), Style::new().fg(C_BRIGHT).bold())), path: r });
+            items.push(Choice { line: Line::from(Span::styled(format!("Open {}", shorten(&r)), Style::new().fg(colors().bright).bold())), path: r });
         }
         for name in fuzzy::rank(&fragment, &subdirs(&parent, &fragment), |n| n).into_iter().take(300) {
             let full = real(&parent.join(&name));
             if items.iter().any(|c| c.path == full) {
                 continue;
             }
-            let mut spans = vec![Span::styled(format!("{}/", shorten(&full)), Style::new().fg(C_FG))];
+            let mut spans = vec![Span::styled(format!("{}/", shorten(&full)), Style::new().fg(colors().fg))];
             spans.extend(self.tag_span(&full, None));
             items.push(Choice { path: full, line: Line::from(spans) });
         }
@@ -158,7 +158,7 @@ impl Picker {
             .take(300)
             .map(|c| {
                 let label = if c.tag == Tag::Dir { format!("{}/", c.label) } else { c.label.clone() };
-                let mut spans = vec![Span::styled(label, Style::new().fg(C_FG))];
+                let mut spans = vec![Span::styled(label, Style::new().fg(colors().fg))];
                 spans.extend(self.tag_span(&c.path, Some(c.tag)));
                 Choice { path: c.path, line: Line::from(spans) }
             })
@@ -210,8 +210,8 @@ impl Picker {
     pub fn hint() -> Line<'static> {
         let mut spans = vec![];
         for (key, what) in [("↵", "open with terminal"), ("^O", "open with Claude"), ("⇥", "complete"), ("→", "accept"), ("^R", "rescan"), ("esc", "close")] {
-            spans.push(Span::styled(format!(" {key} "), Style::new().fg(C_FG).bg(C_INPUT)));
-            spans.push(Span::styled(format!(" {what}  "), Style::new().fg(C_MUTED)));
+            spans.push(Span::styled(format!(" {key} "), Style::new().fg(colors().fg).bg(colors().input)));
+            spans.push(Span::styled(format!(" {what}  "), Style::new().fg(colors().muted)));
         }
         Line::from(spans)
     }
