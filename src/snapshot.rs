@@ -207,16 +207,18 @@ impl Collector {
         let live = |socket: &str| if tmux::canonical(socket) == hub_socket { hub_panes.clone() } else { tmux::live_panes(socket) };
         let sessions = load_sessions(live, self.cfg.stale_minutes);
 
+        let on_hub = |s: &Session| s.tmux_socket.as_deref().is_some_and(|sock| tmux::canonical(sock) == hub_socket);
         let in_hub: HashMap<String, Session> = sessions
             .iter()
-            .filter(|s| s.status.alive() && s.tmux_socket.as_deref().is_some_and(|sock| tmux::canonical(sock) == self.hub_socket))
+            .filter(|s| s.status.alive() && on_hub(s))
             .filter_map(|s| Some((s.tmux_pane.clone()?, s.clone())))
             .collect();
         let mut closed: Vec<Session> = sessions.iter().filter(|s| !s.status.alive() && !s.cwd.is_empty()).cloned().collect();
         closed.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
+        // Pane ids are only unique per tmux server, so check the socket too.
         let elsewhere: Vec<Session> = sessions
             .iter()
-            .filter(|s| s.status.alive() && !s.tmux_pane.as_ref().is_some_and(|p| in_hub.contains_key(p)))
+            .filter(|s| s.status.alive() && !(on_hub(s) && s.tmux_pane.as_ref().is_some_and(|p| in_hub.contains_key(p))))
             .cloned()
             .collect();
 
