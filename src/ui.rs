@@ -587,7 +587,11 @@ struct Side {
     body: Vec<Line<'static>>,
     /// A banner line, by index, that Ctrl+click opens in the browser.
     link: Option<(usize, String)>,
+    /// Clickable parts of the body: (line, column, width, url).
+    body_links: Vec<BodyLink>,
 }
+
+type BodyLink = (usize, u16, u16, String);
 
 fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     let color = status_color(a.status);
@@ -620,10 +624,15 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
         buttons.push(("a", "adopt into the hub", colors().accent, Action::Adopt));
     }
     let git = a.git.as_ref();
+    let mut body_links = vec![];
     let body = match app.tab {
         0 => chat_lines(a),
         1 => change_lines(git),
-        3 => pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t),
+        3 => {
+            let (lines, links) = pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t, app.hits.detail.width);
+            body_links = links;
+            lines
+        }
         _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(colors().muted)))],
         _ => vec![],
     };
@@ -636,6 +645,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
         tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len())), ("Pipeline", ws.and_then(|w| w.mr.as_ref()).map_or(0, |m| m.jobs.len()))],
         body,
         link: None,
+        body_links,
     }
 }
 
@@ -670,6 +680,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
             banner.push(Line::from(s(format!("{} commit{} not pushed · p pushes", g.ahead, plural(g.ahead as usize)), fg(colors().dim))));
         }
     }
+    let mut body_links = vec![];
     let body = match app.tab {
         0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(colors().muted)))],
         0 => agents
@@ -687,7 +698,11 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
             })
             .collect(),
         1 => change_lines(ws.git.as_ref()),
-        3 => pipeline_lines(ws.mr.as_ref(), t),
+        3 => {
+            let (lines, links) = pipeline_lines(ws.mr.as_ref(), t, app.hits.detail.width);
+            body_links = links;
+            lines
+        }
         _ => vec![],
     };
     Side {
@@ -699,6 +714,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
         body,
         link,
+        body_links,
     }
 }
 
@@ -792,6 +808,11 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             let max_scroll = (side.body.len() as u16).saturating_sub(4);
             app.detail_scroll = app.detail_scroll.min(max_scroll);
             f.render_widget(Paragraph::new(side.body).wrap(Wrap { trim: false }).scroll((app.detail_scroll, 0)), body_area);
+            for (line, x, w, url) in &side.body_links {
+                let Some(y) = (*line as u16).checked_sub(app.detail_scroll).filter(|&y| y < body_area.height) else { continue };
+                let w = (*w).min(body_area.width.saturating_sub(*x));
+                link_row(f, Rect::new(body_area.x + x, body_area.y + y, w, 1), url);
+            }
         }
     }
     if reply_h > 0 {
@@ -918,13 +939,14 @@ fn pipeline_symbol(status: Option<&str>) -> Span<'static> {
 }
 
 fn finished(status: &str) -> bool {
-    matches!(status, "success" | "failed" | "canceled" | "skipped")
+    matches!(status, "success" | "failed" | "warning" | "canceled" | "skipped")
 }
 
 fn job_symbol(status: &str, t: u128) -> Span<'static> {
     match status {
         "success" => s("✓", fg(colors().success)),
         "failed" => s("✗", fg(colors().error).bold()),
+        "warning" => s("!", fg(colors().warning).bold()),
         "running" => s(SPINNER[(t / 80) as usize % SPINNER.len()], fg(colors().info)),
         "manual" => s("▸", fg(colors().muted)),
         "canceled" | "skipped" => s("⊘", fg(colors().dim)),
@@ -939,8 +961,9 @@ fn stage_status<'a>(jobs: &[&'a gitlab::Job]) -> &'a str {
         "running" => 1,
         "pending" | "created" | "preparing" | "waiting_for_resource" => 2,
         "manual" => 3,
-        "success" => 4,
-        _ => 5,
+        "warning" => 4,
+        "success" => 5,
+        _ => 6,
     };
     jobs.iter().map(|j| j.status.as_str()).min_by_key(|s| rank(s)).unwrap_or("created")
 }
@@ -954,37 +977,118 @@ fn duration(secs: f64) -> String {
     }
 }
 
-/// The head pipeline: a strip of stages, then every job under its stage.
-fn pipeline_lines(mr: Option<&gitlab::Mr>, t: u128) -> Vec<Line<'static>> {
-    let Some(mr) = mr else { return vec![Line::from(s("No merge request for this branch.", fg(colors().muted)))] };
+/// Text cut to fit w columns (with …) and padded to exactly w.
+fn cell(text: &str, w: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let cw = ch.width().unwrap_or(0);
+        if used + cw > w.saturating_sub(1) && text.width() > w {
+            out.push('…');
+            used += 1;
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out + &" ".repeat(w.saturating_sub(used))
+}
+
+/// The head pipeline as GitLab draws it: a box per stage with its jobs, joined left to right by arrows.
+/// Stages that do not fit next to each other continue on a new row of boxes.
+/// Also returns where each job and the summary sit, so Ctrl+click opens them in GitLab.
+fn pipeline_lines(mr: Option<&gitlab::Mr>, t: u128, width: u16) -> (Vec<Line<'static>>, Vec<BodyLink>) {
+    let Some(mr) = mr else { return (vec![Line::from(s("No merge request for this branch.", fg(colors().muted)))], vec![]) };
     if mr.jobs.is_empty() {
-        return vec![Line::from(s(format!("!{} has no pipeline yet.", mr.iid), fg(colors().muted)))];
+        return (vec![Line::from(s(format!("!{} has no pipeline yet.", mr.iid), fg(colors().muted)))], vec![]);
     }
+    let mut links = vec![];
+    let c = colors();
+    const GAP: usize = 2;
     let stages = mr.stages();
-    let mut strip = vec![];
-    for (i, (name, jobs)) in stages.iter().enumerate() {
-        if i > 0 {
-            strip.push(s(" ── ", fg(colors().border)));
+    // Room for the longest job or stage name plus its symbol, within reason.
+    let longest = stages.iter().flat_map(|(n, jobs)| jobs.iter().map(|j| j.name.width()).chain([n.width()])).max().unwrap_or(8);
+    let box_w = (longest + 4).clamp(12, 26);
+    // The panel width from the last frame; a guess before the first one.
+    let width = if width == 0 { 60 } else { width as usize };
+    let per_row = ((width + GAP) / (box_w + GAP)).max(1);
+    let tone = |status: &str| match status {
+        "failed" => c.error,
+        "warning" => c.warning,
+        "running" => c.info,
+        _ => c.border,
+    };
+    let mut out = vec![];
+    for (r, row) in stages.chunks(per_row).enumerate() {
+        if r > 0 {
+            out.push(Line::default());
         }
-        let st = stage_status(jobs);
-        strip.push(job_symbol(st, t));
-        strip.push(s(format!(" {name}"), if st == "failed" { fg(colors().error).bold() } else { fg(colors().fg) }));
-    }
-    let mut out = vec![Line::from(strip), Line::default()];
-    for (name, jobs) in &stages {
-        let longest = jobs.iter().filter_map(|j| j.duration).fold(None, |m: Option<f64>, d| Some(m.map_or(d, |m| m.max(d))));
-        out.push(Line::from(vec![
-            job_symbol(stage_status(jobs), t),
-            s(format!(" {name:<30}"), fg(colors().bright).bold()),
-            s(longest.map(duration).unwrap_or_default(), fg(colors().dim)),
-        ]));
-        for j in jobs {
-            let when = j.duration.map(duration).unwrap_or_else(|| if j.status == "running" { "running".into() } else { j.status.clone() });
-            out.push(Line::from(vec![s("   ", Style::new()), job_symbol(&j.status, t), s(format!(" {:<27}", j.name), fg(colors().fg)), s(when, fg(colors().dim))]));
+        let mut head = vec![];
+        for (name, jobs) in row {
+            let st = stage_status(jobs);
+            // The stage's slowest job, which is how long the stage takes when its jobs run in parallel.
+            let took = jobs.iter().filter_map(|j| j.duration).reduce(f64::max).map(|d| format!(" {}", duration(d))).unwrap_or_default();
+            head.push(job_symbol(st, t));
+            head.push(s(cell(&format!(" {name}"), (box_w - 1).saturating_sub(took.width())), if st == "failed" { fg(c.error).bold() } else { fg(c.bright).bold() }));
+            head.push(s(format!("{took}{}", " ".repeat(GAP)), fg(c.dim)));
         }
-        out.push(Line::default());
+        out.push(Line::from(head));
+        let height = row.iter().map(|(_, jobs)| jobs.len()).max().unwrap_or(0) + 2;
+        for y in 0..height {
+            let mut line = vec![];
+            for (i, (_, jobs)) in row.iter().enumerate() {
+                let border = fg(tone(stage_status(jobs)));
+                let inner = box_w - 2;
+                if y == 0 {
+                    line.push(s(format!("┌{}┐", "─".repeat(inner)), border));
+                } else if y == jobs.len() + 1 {
+                    line.push(s(format!("└{}┘", "─".repeat(inner)), border));
+                } else if let Some(j) = jobs.get(y - 1) {
+                    let x = line.iter().map(|sp: &Span| sp.width()).sum::<usize>() as u16 + 1;
+                    links.push((out.len(), x, (box_w - 2) as u16, j.url.clone()));
+                    let name = match j.status.as_str() {
+                        "failed" => fg(c.error),
+                        "warning" => fg(c.warning),
+                        "success" | "running" => fg(c.fg),
+                        _ => fg(c.dim),
+                    };
+                    line.extend([s("│", border), job_symbol(&j.status, t), s(cell(&format!(" {}", j.name), inner - 1), name), s("│", border)]);
+                } else {
+                    line.push(s(" ".repeat(box_w), Style::new()));
+                }
+                if i + 1 < row.len() {
+                    line.push(if y == 1 { s("─▶", fg(c.border)) } else { s(" ".repeat(GAP), Style::new()) });
+                }
+            }
+            out.push(Line::from(line));
+        }
     }
-    out
+    let count = |st: &str| mr.jobs.iter().filter(|j| j.status == st).count();
+    let mut summary: Vec<Span> = vec![];
+    let mut add = |span: Span<'static>| {
+        if !summary.is_empty() {
+            summary.push(s(" · ", fg(c.dim)));
+        }
+        summary.push(span);
+    };
+    for j in mr.jobs.iter().filter(|j| j.status == "failed") {
+        add(s(format!("✗ {} failed", j.name), fg(c.error).bold()));
+    }
+    if count("warning") > 0 {
+        add(s(format!("! {} allowed to fail", count("warning")), fg(c.warning)));
+    }
+    if count("running") > 0 {
+        add(s(format!("⟳ {} running", count("running")), fg(c.info)));
+    }
+    let done = mr.jobs.iter().filter(|j| finished(&j.status)).count();
+    add(s(format!("{done}/{} done", mr.jobs.len()), fg(c.muted)));
+    if let Some(url) = &mr.pipeline_url {
+        summary.push(s("  ↗ pipeline", fg(c.accent)));
+        links.push((out.len() + 1, 0, width as u16, url.clone()));
+    }
+    out.push(Line::default());
+    out.push(Line::from(summary));
+    (out, links)
 }
 
 /// A review thread: every note in it, with a reply box below.
@@ -1214,6 +1318,33 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pipeline_boxes_line_up_and_wrap() {
+        let job = |id, stage: &str, name: &str, status: &str| gitlab::Job { id, name: name.into(), stage: stage.into(), status: status.into(), duration: None, url: format!("https://x/jobs/{id}") };
+        let mr = gitlab::Mr {
+            jobs: vec![job(1, "lint", "markdown", "success"), job(2, "lint", "spellcheck", "warning"), job(3, "build", "build", "success"), job(4, "test", "e2e", "failed")],
+            ..Default::default()
+        };
+        let text = |l: &Line| l.spans.iter().map(|s| s.content.to_string()).collect::<String>();
+        let (wide, links) = pipeline_lines(Some(&mr), 0, 80);
+        assert_eq!(links.iter().filter(|l| l.3.contains("/jobs/")).count(), 4, "every job is a link");
+        assert_eq!(links[0].0, 2, "the first job sits on the first line inside the boxes");
+        // Header, top border, two job lines, bottom border, blank, summary.
+        assert_eq!(wide.len(), 7);
+        assert!(text(&wide[2]).contains("─▶"), "stages are joined on the first job line");
+        let w = wide[1].width();
+        assert!(wide[1..5].iter().all(|l| l.width() == w), "every box line is equally wide");
+        assert!(text(&wide[6]).contains("✗ e2e failed") && text(&wide[6]).contains("! 1 allowed to fail"));
+        // Too narrow for two boxes: one stage per row.
+        let (narrow, _) = pipeline_lines(Some(&mr), 0, 20);
+        assert_eq!(narrow.iter().filter(|l| text(l).contains('┌')).count(), 3);
+    }
+
+    #[test]
+    fn cell_cuts_and_pads() {
+        assert_eq!(cell("abc", 5), "abc  ");
+        assert_eq!(cell("abcdef", 4), "abc…");
+    }
 
     #[test]
     fn link_row_wraps_each_cell_and_keeps_its_width() {

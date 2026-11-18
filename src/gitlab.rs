@@ -11,7 +11,7 @@ const TTL: Duration = Duration::from_secs(60);
 /// While a pipeline runs, so its jobs move along on screen.
 const RUNNING_TTL: Duration = Duration::from_secs(10);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Mr {
     pub iid: u64,
     pub project_id: u64,
@@ -20,6 +20,7 @@ pub struct Mr {
     pub state: String,
     /// success, failed, running, pending, canceled, ...
     pub pipeline: Option<String>,
+    pub pipeline_url: Option<String>,
     /// GitLab's detailed_merge_status: mergeable, not_approved, draft_status, ...
     pub merge_status: Option<String>,
     pub threads: Vec<Thread>,
@@ -32,9 +33,11 @@ pub struct Job {
     pub id: u64,
     pub name: String,
     pub stage: String,
+    /// GitLab's job status, except a failure that `allow_failure` permits is "warning", as GitLab shows it.
     pub status: String,
     /// Seconds, once the job has finished.
     pub duration: Option<f64>,
+    pub url: String,
 }
 
 impl Mr {
@@ -126,6 +129,7 @@ fn parse_mr(v: &Value) -> Option<Mr> {
         url: v["web_url"].as_str().unwrap_or_default().to_string(),
         state: v["state"].as_str().unwrap_or_default().to_string(),
         pipeline: v["head_pipeline"]["status"].as_str().map(String::from),
+        pipeline_url: v["head_pipeline"]["web_url"].as_str().map(String::from),
         merge_status: v["detailed_merge_status"].as_str().map(String::from),
         threads: vec![],
         jobs: vec![],
@@ -143,8 +147,12 @@ fn parse_jobs(v: &Value) -> Vec<Job> {
                 id: j["id"].as_u64()?,
                 name: j["name"].as_str()?.to_string(),
                 stage: j["stage"].as_str()?.to_string(),
-                status: j["status"].as_str()?.to_string(),
+                status: match j["status"].as_str()? {
+                    "failed" if j["allow_failure"] == true => "warning".to_string(),
+                    s => s.to_string(),
+                },
                 duration: j["duration"].as_f64(),
+                url: j["web_url"].as_str().unwrap_or_default().to_string(),
             })
         })
         .collect();
@@ -289,7 +297,7 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].place(), "src/x.rs:12");
         assert_eq!(threads[0].notes.len(), 2);
-        let mr = Mr { iid: 7, project_id: 1, title: String::new(), url: String::new(), state: String::new(), pipeline: None, merge_status: None, threads: vec![], jobs: vec![] };
+        let mr = Mr { iid: 7, ..mr_stub() };
         assert_eq!(threads[0].as_prompt(&mr), "Review comment on merge request !7 at src/x.rs:12. vilu: Rename this | me: ok. Please address it.");
     }
 
@@ -297,13 +305,15 @@ mod tests {
     fn groups_jobs_into_stages_in_order() {
         let v: Value = serde_json::from_str(
             r#"[{"id":3,"name":"e2e","stage":"test","status":"running","duration":null},
+                {"id":4,"name":"lint","stage":"test","status":"failed","allow_failure":true,"duration":5.0},
                 {"id":1,"name":"build","stage":"build","status":"success","duration":61.5},
                 {"id":2,"name":"unit","stage":"test","status":"success","duration":30.0}]"#,
         )
         .unwrap();
-        let mut mr = Mr { iid: 1, project_id: 1, title: String::new(), url: String::new(), state: String::new(), pipeline: Some("running".into()), merge_status: None, threads: vec![], jobs: parse_jobs(&v) };
+        let mut mr = Mr { pipeline: Some("running".into()), jobs: parse_jobs(&v), ..mr_stub() };
         let stages: Vec<(&str, usize)> = mr.stages().iter().map(|(s, j)| (*s, j.len())).collect();
-        assert_eq!(stages, [("build", 1), ("test", 2)]);
+        assert_eq!(stages, [("build", 1), ("test", 3)]);
+        assert_eq!(mr.jobs.iter().find(|j| j.name == "lint").unwrap().status, "warning");
         assert!(mr.running());
         mr.pipeline = Some("success".into());
         assert!(!mr.running());
@@ -315,5 +325,9 @@ mod tests {
         assert_eq!(failure(push).as_deref(), Some("! [rejected]        b -> b (fetch first)"));
         assert_eq!(failure("\n  404 Not Found\n").as_deref(), Some("404 Not Found"));
         assert_eq!(failure(""), None);
+    }
+
+    fn mr_stub() -> Mr {
+        parse_mr(&serde_json::json!({"iid": 1, "project_id": 1, "title": ""})).unwrap()
     }
 }
