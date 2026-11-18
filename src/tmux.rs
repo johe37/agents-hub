@@ -369,6 +369,48 @@ pub fn ensure_workspace(path: &str) -> Result<String, String> {
     Ok(name)
 }
 
+/// Open a review checkout as a workspace with Claude in it, the review prompt typed but not sent, and switch to it.
+/// A checkout that already has a workspace is only switched to.
+pub fn open_review(dir: &str, name: &str, prompt: &str) -> Result<String, String> {
+    let real = canonical(dir);
+    let open = list_all_panes()
+        .into_iter()
+        .filter(|p| !p.session.starts_with('_'))
+        .find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real);
+    if let Some(p) = open {
+        let _ = switch_client(&p.session);
+        return Ok(format!("Opened the review in {}", p.session));
+    }
+    let name = unique_session_name(name, &list_sessions());
+    let args = chain(&create_commands(&name, dir, "claude", Some("claude"), None));
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    check(run(&refs))?;
+    let _ = switch_client(&name);
+    let pane = list_all_panes().into_iter().find(|p| p.session == name).map(|p| p.pane_id).ok_or("Claude exited at once in the review")?;
+    if !wait_for_claude(&pane) {
+        return Ok(format!("Opened {name}, but Claude took too long to start, so the review prompt is not typed in"));
+    }
+    type_text(&socket_path(), &pane, prompt)?;
+    Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
+}
+
+/// Wait until Claude in pane reports its first hook event: before that it drops typed input.
+fn wait_for_claude(pane: &str) -> bool {
+    let dir = crate::hooks::events_dir();
+    for _ in 0..100 {
+        let started = std::fs::read_dir(&dir).into_iter().flatten().flatten().any(|e| {
+            std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).is_some_and(|v| v["tmux_pane"] == pane)
+        });
+        if started {
+            // shortcut: the input box appears a moment after SessionStart; wait for the prompt on screen if typing still gets lost.
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    false
+}
+
 pub fn canonical(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string())
 }

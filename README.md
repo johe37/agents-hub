@@ -145,6 +145,14 @@ To close the loop: `f` sends a comment to Claude, `p` pushes the fix (and opens 
 first time), `v` resolves the thread with a "Fixed in <commit>" reply you can edit. The **Pipeline** tab (`4`) shows each stage and job
 with its status and duration.
 
+**Reviewing others' merge requests.** MRs where you are a requested reviewer are listed under
+**TO REVIEW**, newest activity first, with author, pipeline and open threads. The panel shows the
+description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
+code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
+opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
+then press `Enter`. Your own checkout is never touched. `x` on a review workspace closes it and
+deletes the checkout. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
+
 Links in the panel (the `!140` line of an MR, "Open the thread in GitLab") are real terminal
 hyperlinks: Ctrl+click (Cmd+click on macOS) opens them in the browser of the computer you sit
 at, also over SSH.

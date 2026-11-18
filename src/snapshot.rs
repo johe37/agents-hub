@@ -117,6 +117,8 @@ pub struct Snapshot {
     pub dirs: Arc<Vec<(String, bool)>>,
     /// Results of background jobs since the last snapshot, as (text, is_error), for toasts.
     pub notices: Vec<(String, bool)>,
+    /// Open MRs where you are a requested reviewer.
+    pub reviews: Vec<crate::gitlab::Mr>,
 }
 
 pub enum Cmd {
@@ -128,6 +130,10 @@ pub enum Cmd {
     ForgetMr(String),
     /// Push the branch checked out at path, opening a draft merge request when asked.
     Publish { path: String, open_mr: bool },
+    /// Fetch the MRs to review again.
+    ForgetReviews,
+    /// Check out an MR from the clone at repo and open it for a review with Claude.
+    StartReview { mr: Box<crate::gitlab::Mr>, repo: String },
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -141,6 +147,7 @@ struct Collector {
     cfg: Config,
     git: GitCache,
     mrs: Arc<crate::gitlab::MrCache>,
+    reviews: Arc<crate::gitlab::ReviewCache>,
     notices: Arc<Mutex<Vec<(String, bool)>>>,
     transcripts: TranscriptCache,
     screens: ScreenCache,
@@ -163,6 +170,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
             speculative: None,
             git: GitCache::default(),
             mrs: Default::default(),
+            reviews: Default::default(),
             notices: Default::default(),
             transcripts: TranscriptCache::default(),
             screens: ScreenCache::default(),
@@ -207,6 +215,18 @@ impl Collector {
                 Ok(Cmd::ForgetMr(path)) => {
                     self.mrs.forget(&path);
                     last = Instant::now() - interval;
+                }
+                Ok(Cmd::ForgetReviews) => {
+                    self.reviews.forget();
+                    last = Instant::now() - interval;
+                }
+                Ok(Cmd::StartReview { mr, repo }) => {
+                    let notices = Arc::clone(&self.notices);
+                    std::thread::spawn(move || {
+                        let name = format!("review-{}-{}", mr.repo(), mr.iid);
+                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_review(&dir, &name, &mr.review_prompt()));
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
+                    });
                 }
                 // Its own thread: a push can take a while, and status updates must keep flowing meanwhile.
                 Ok(Cmd::Publish { path, open_mr }) => {
@@ -286,6 +306,7 @@ impl Collector {
             spares: tmux::spares(&tmux::list_all_panes()).into_iter().collect(),
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
+            reviews: self.reviews.get(),
         }
     }
 

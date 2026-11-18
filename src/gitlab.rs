@@ -1,6 +1,7 @@
 //! Merge request status and unresolved review threads, through the glab CLI.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -10,6 +11,8 @@ use serde_json::Value;
 const TTL: Duration = Duration::from_secs(60);
 /// While a pipeline runs, so its jobs move along on screen.
 const RUNNING_TTL: Duration = Duration::from_secs(10);
+/// MRs waiting for your review: one call per MR, so not too often.
+const REVIEW_TTL: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Default)]
 pub struct Mr {
@@ -26,6 +29,15 @@ pub struct Mr {
     pub threads: Vec<Thread>,
     /// The head pipeline's jobs, oldest first, which is also stage order.
     pub jobs: Vec<Job>,
+    pub author: String,
+    /// Full project path, `craton/auxiliary/craton-cli`.
+    pub project: String,
+    /// Last activity, seconds since the epoch.
+    pub updated: u64,
+    pub description: String,
+    pub draft: bool,
+    /// Usernames; only fetched for MRs you review.
+    pub approved_by: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +53,24 @@ pub struct Job {
 }
 
 impl Mr {
+    /// The repo's own name, `craton-cli`.
+    pub fn repo(&self) -> &str {
+        self.project.rsplit('/').next().unwrap_or(&self.project)
+    }
+
+    /// Where its code is checked out for a review.
+    pub fn review_dir(&self) -> PathBuf {
+        reviews_dir().join(format!("{}-{}", self.repo(), self.iid))
+    }
+
+    /// The prompt that starts a review; one line, so typing it does not send it.
+    pub fn review_prompt(&self) -> String {
+        format!(
+            "Review merge request !{} in {}: \"{}\" by {}. Its code is checked out in this directory; see the change with `glab mr diff {} -R {}`. Look for bugs, risky changes and missing tests, and list each finding with its file and line. Don't post anything on GitLab.",
+            self.iid, self.project, self.title, self.author, self.iid, self.project
+        )
+    }
+
     pub fn running(&self) -> bool {
         matches!(self.pipeline.as_deref(), Some("running" | "pending" | "created" | "preparing" | "waiting_for_resource"))
     }
@@ -133,7 +163,34 @@ fn parse_mr(v: &Value) -> Option<Mr> {
         merge_status: v["detailed_merge_status"].as_str().map(String::from),
         threads: vec![],
         jobs: vec![],
+        author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
+        project: v["references"]["full"].as_str().and_then(|r| r.split('!').next()).unwrap_or_default().to_string(),
+        updated: v["updated_at"].as_str().and_then(epoch).unwrap_or(0),
+        description: v["description"].as_str().unwrap_or_default().to_string(),
+        draft: v["draft"] == true,
+        approved_by: vec![],
     })
+}
+
+/// Seconds since the epoch for GitLab's `2026-11-18T13:42:24.086+01:00`.
+fn epoch(s: &str) -> Option<u64> {
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let secs = num(11..13)? * 3600 + num(14..16)? * 60 + num(17..19)?;
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    let zone = &s[19..];
+    let tz = zone.rfind(['+', '-']).filter(|_| !zone.ends_with('Z')).and_then(|i| {
+        let sign = if zone.as_bytes()[i] == b'-' { -1 } else { 1 };
+        let h: i64 = zone.get(i + 1..i + 3)?.parse().ok()?;
+        let m: i64 = zone.get(i + 4..i + 6)?.parse().ok()?;
+        Some(sign * (h * 3600 + m * 60))
+    });
+    u64::try_from(days * 86400 + secs - tz.unwrap_or(0)).ok()
 }
 
 /// Jobs sorted by id: GitLab creates them stage by stage, so this is also stage order.
@@ -189,6 +246,12 @@ fn parse_threads(v: &Value) -> Vec<Thread> {
 fn fetch(cwd: &str, branch: &str) -> Option<Mr> {
     let v: Value = serde_json::from_str(&glab(cwd, &["mr", "view", branch, "-F", "json"]).ok()?).ok()?;
     let mut mr = parse_mr(&v)?;
+    fill(cwd, &mut mr, &v);
+    Some(mr)
+}
+
+/// Add the unresolved threads and the pipeline's jobs to an MR fetched as v.
+fn fill(cwd: &str, mr: &mut Mr, v: &Value) {
     // The MR's own project id, so MRs from forks resolve to the right project.
     let path = format!("projects/{}/merge_requests/{}/discussions?per_page=100", mr.project_id, mr.iid);
     if let Ok(text) = glab(cwd, &["api", &path]) {
@@ -201,7 +264,114 @@ fn fetch(cwd: &str, branch: &str) -> Option<Mr> {
             mr.jobs = serde_json::from_str(&text).map(|v| parse_jobs(&v)).unwrap_or_default();
         }
     }
-    Some(mr)
+}
+
+/// Open MRs where user is a requested reviewer, newest activity first.
+fn fetch_reviews(user: &str) -> Option<Vec<Mr>> {
+    let home = crate::config::home().display().to_string();
+    let list: Value = serde_json::from_str(&glab(&home, &["api", &format!("merge_requests?scope=all&state=opened&reviewer_username={user}&per_page=50")]).ok()?).ok()?;
+    let ids: Vec<(u64, u64)> = list.as_array()?.iter().filter_map(|m| Some((m["project_id"].as_u64()?, m["iid"].as_u64()?))).collect();
+    // The list leaves out the pipeline, so fetch each MR; in parallel, since they are independent.
+    let mut mrs: Vec<Mr> = std::thread::scope(|s| {
+        let handles: Vec<_> = ids
+            .iter()
+            .map(|&(project, iid)| {
+                let home = &home;
+                s.spawn(move || {
+                    let v: Value = serde_json::from_str(&glab(home, &["api", &format!("projects/{project}/merge_requests/{iid}")]).ok()?).ok()?;
+                    let mut mr = parse_mr(&v)?;
+                    fill(home, &mut mr, &v);
+                    if let Ok(text) = glab(home, &["api", &format!("projects/{project}/merge_requests/{iid}/approvals")]) {
+                        let a: Value = serde_json::from_str(&text).unwrap_or_default();
+                        mr.approved_by = a["approved_by"].as_array().into_iter().flatten().filter_map(|u| u["user"]["username"].as_str().map(String::from)).collect();
+                    }
+                    Some(mr)
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+    });
+    mrs.sort_by_key(|m| std::cmp::Reverse(m.updated));
+    Some(mrs)
+}
+
+pub fn reviews_dir() -> PathBuf {
+    crate::config::cache_dir().join("reviews")
+}
+
+/// The local clone of project among the scanned dirs: one whose remote is the project, else one with its name.
+pub fn find_clone(dirs: &[(String, bool)], project: &str) -> Option<String> {
+    let name = project.rsplit('/').next()?;
+    let clones: Vec<&String> = dirs.iter().filter(|(p, repo)| *repo && Path::new(p).file_name().is_some_and(|n| n == name)).map(|(p, _)| p).collect();
+    let is_project = |p: &&&String| run(p, 5, "git", &["remote", "-v"]).is_ok_and(|r| r.contains(&format!("{project}.git")) || r.contains(&format!("{project} ")));
+    clones.iter().find(is_project).or(clones.first()).map(|p| p.to_string())
+}
+
+/// The clone URL of project on the same host and protocol as remote, `git@host:a/b.git` or `https://host/a/b.git`.
+fn project_url(remote: &str, project: &str) -> Option<String> {
+    match remote.split_once("://") {
+        Some((scheme, rest)) => Some(format!("{scheme}://{}/{project}.git", rest.split('/').next()?)),
+        None => Some(format!("{}:{project}.git", remote.split_once(':')?.0)),
+    }
+}
+
+/// Check out the MR's latest code in its own worktree of the clone at repo, and return that directory.
+/// Fetching from the MR's project works for MRs from forks too: GitLab keeps every MR's head there.
+pub fn checkout(repo: &str, mr: &Mr) -> Result<String, String> {
+    let remote = run(repo, 5, "git", &["remote"])?.lines().next().ok_or("The clone has no remote")?.to_string();
+    let remote_url = run(repo, 5, "git", &["remote", "get-url", &remote])?;
+    let url = project_url(remote_url.trim(), &mr.project).ok_or("Can't make out the clone's remote URL")?;
+    run(repo, 120, "git", &["fetch", &url, &format!("refs/merge-requests/{}/head", mr.iid)])?;
+    let sha = run(repo, 5, "git", &["rev-parse", "FETCH_HEAD"])?.trim().to_string();
+    let dir = mr.review_dir();
+    let d = dir.display().to_string();
+    if dir.exists() {
+        run(&d, 30, "git", &["checkout", "--detach", &sha])?;
+    } else {
+        std::fs::create_dir_all(reviews_dir()).map_err(|e| e.to_string())?;
+        run(repo, 60, "git", &["worktree", "add", "--detach", &d, &sha])?;
+    }
+    Ok(d)
+}
+
+/// Delete a review checkout, including anything changed in it.
+pub fn remove_checkout(dir: &str) -> Result<(), String> {
+    run(dir, 30, "git", &["worktree", "remove", "--force", dir]).map(|_| ())
+}
+
+/// MRs to review, refreshed in the background like `MrCache`.
+#[derive(Default)]
+pub struct ReviewCache {
+    state: Mutex<(Option<Instant>, Vec<Mr>)>,
+    busy: Mutex<bool>,
+    user: Mutex<Option<String>>,
+}
+
+impl ReviewCache {
+    pub fn get(self: &Arc<Self>) -> Vec<Mr> {
+        let (at, mrs) = self.state.lock().unwrap().clone();
+        if at.is_none_or(|at| at.elapsed() > REVIEW_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
+            let me = Arc::clone(self);
+            std::thread::spawn(move || {
+                let home = crate::config::home().display().to_string();
+                let user = me.user.lock().unwrap().clone().or_else(|| {
+                    let v: Value = serde_json::from_str(&glab(&home, &["api", "user"]).ok()?).ok()?;
+                    v["username"].as_str().map(String::from)
+                });
+                *me.user.lock().unwrap() = user.clone();
+                let fresh = user.and_then(|u| fetch_reviews(&u));
+                let mut state = me.state.lock().unwrap();
+                // Keep the old list when GitLab is unreachable; try again after the TTL either way.
+                *state = (Some(Instant::now()), fresh.unwrap_or_else(|| state.1.clone()));
+                *me.busy.lock().unwrap() = false;
+            });
+        }
+        mrs
+    }
+
+    pub fn forget(&self) {
+        self.state.lock().unwrap().0 = None;
+    }
 }
 
 pub fn reply(cwd: &str, mr: &Mr, thread: &str, body: &str) -> Result<(), String> {
@@ -249,7 +419,8 @@ pub struct MrCache {
 impl MrCache {
     pub fn get(self: &Arc<Self>, cwd: &str, branch: &str) -> Option<Mr> {
         // shortcut: assumes MRs never come from the default branch; skips a glab call per repo and minute.
-        if matches!(branch, "main" | "master") {
+        // A detached checkout, like a review, is "(detached)": no branch to look up.
+        if matches!(branch, "main" | "master") || branch.starts_with('(') {
             return None;
         }
         let key = (cwd.to_string(), branch.to_string());
@@ -330,4 +501,26 @@ mod tests {
     fn mr_stub() -> Mr {
         parse_mr(&serde_json::json!({"iid": 1, "project_id": 1, "title": ""})).unwrap()
     }
+
+    #[test]
+    fn parses_gitlab_times() {
+        assert_eq!(epoch("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(epoch("2026-11-18T13:42:24.086+01:00"), epoch("2026-11-18T12:42:24Z"));
+        assert_eq!(epoch("2000-03-01T00:00:00.000Z"), Some(951868800));
+    }
+
+    #[test]
+    fn builds_project_urls_like_the_remote() {
+        assert_eq!(project_url("git@git.basalt.se:lubo/craton-cli.git", "craton/auxiliary/craton-cli").as_deref(), Some("git@git.basalt.se:craton/auxiliary/craton-cli.git"));
+        assert_eq!(project_url("https://git.basalt.se/lubo/x.git", "a/b").as_deref(), Some("https://git.basalt.se/a/b.git"));
+        assert_eq!(project_url("ssh://git@host:2222/lubo/x.git", "a/b").as_deref(), Some("ssh://git@host:2222/a/b.git"));
+    }
+
+    #[test]
+    fn reads_review_fields() {
+        let mr = parse_mr(&serde_json::json!({"iid": 140, "project_id": 2954, "title": "T", "author": {"username": "vilu"},
+            "references": {"full": "craton/auxiliary/craton-cli!140"}, "draft": true})).unwrap();
+        assert_eq!((mr.project.as_str(), mr.repo(), mr.author.as_str(), mr.draft), ("craton/auxiliary/craton-cli", "craton-cli", "vilu", true));
+    }
 }
+

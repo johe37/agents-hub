@@ -385,6 +385,23 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             }
             (l, right)
         }
+        Row::Review(i) => {
+            let m = &app.snap.reviews[i];
+            let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
+            let mut r = vec![s(m.author.clone(), fg(colors().dim))];
+            if m.draft {
+                r.push(s(" draft", fg(colors().dim)));
+            }
+            if m.pipeline.is_some() {
+                r.push(Span::raw(" "));
+                r.push(pipeline_symbol(m.pipeline.as_deref()));
+            }
+            if !m.threads.is_empty() {
+                r.push(s(format!("  {COMMENT} {}", m.threads.len()), fg(colors().warning)));
+            }
+            r.push(s(format!(" {:>3}", age(m.updated)), fg(colors().dim)));
+            (l, r)
+        }
         Row::Thread(wi, ti) => {
             let th = &app.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti];
             let mut l = vec![s(branch, fg(colors().border).bold()), s(format!("{COMMENT} "), fg(colors().warning))];
@@ -718,6 +735,50 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     }
 }
 
+/// An MR you are asked to review: what it is, its threads, approvals and pipeline.
+fn review_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
+    let status = [m.draft.then(|| "draft".to_string()), m.pipeline.as_ref().map(|p| format!("pipeline {p}")), m.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let banner = vec![
+        Line::from(vec![s(format!("!{} ", m.iid), fg(colors().accent).bold()), s(format!("by {}", m.author), fg(colors().fg)), s(format!("  ·  updated {} ago", age(m.updated)), fg(colors().dim))]),
+        Line::from(vec![pipeline_symbol(m.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]),
+        Line::from(s("c checks it out and opens Claude with a review prompt; nothing is sent until you press Enter.", fg(colors().dim))),
+    ];
+    let mut body_links = vec![];
+    let body = match app.tab {
+        0 if m.description.trim().is_empty() => vec![Line::from(s("No description.", fg(colors().muted)))],
+        0 => m.description.lines().map(|l| Line::from(s(l.to_string(), fg(colors().fg)))).collect(),
+        1 if m.threads.is_empty() => vec![Line::from(s("No unresolved threads.", fg(colors().muted)))],
+        1 => m
+            .threads
+            .iter()
+            .flat_map(|th| {
+                let mut out = vec![Line::from(vec![s(format!("{COMMENT} "), fg(colors().warning)), s(th.place(), fg(colors().muted))])];
+                out.extend(th.notes.iter().map(|n| Line::from(vec![s(format!("  {}: ", n.author), fg(colors().accent).bold()), s(n.body.split_whitespace().collect::<Vec<_>>().join(" "), fg(colors().fg))])));
+                out.push(Line::default());
+                out
+            })
+            .collect(),
+        2 if m.approved_by.is_empty() => vec![Line::from(s("No approvals yet.", fg(colors().muted)))],
+        2 => m.approved_by.iter().map(|u| Line::from(vec![s("✓ ", fg(colors().success)), s(u.clone(), fg(colors().fg))])).collect(),
+        _ => {
+            let (lines, links) = pipeline_lines(Some(m), t, app.hits.detail.width);
+            body_links = links;
+            lines
+        }
+    };
+    Side {
+        title: m.title.clone(),
+        meta: Line::from(s(format!(" {} ", m.project), fg(colors().dim))),
+        color: if m.threads.is_empty() { colors().info } else { colors().warning },
+        banner,
+        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude"))],
+        tabs: [("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())],
+        body,
+        link: Some((0, m.url.clone())),
+        body_links,
+    }
+}
+
 fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let t = tick(app);
     let (wi, side) = match app.current() {
@@ -729,6 +790,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             (wi, agent_side(app, a, wi.map(|w| &app.snap.workspaces[w]), t))
         }
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
+        Some(Row::Review(i)) => (None, review_side(app, &app.snap.reviews[i], t)),
         _ => {
             let block = panel(Line::from(s(" Claude Hub ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
@@ -1202,6 +1264,11 @@ const HELP: &[(&str, &str)] = &[
     ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
     ("v", "resolve the thread, with an optional reply (\"Fixed in <commit>\")"),
     ("p", "push the workspace's branch; opens a draft merge request if it has none"),
+    ("", ""),
+    ("", "To review (merge requests where you are a reviewer)"),
+    ("Enter", "open the merge request in GitLab (over SSH: Ctrl+click its link in the panel)"),
+    ("c", "check it out in its own worktree and open Claude with a review prompt (not sent)"),
+    ("x", "on a review workspace: close it and delete its checkout"),
     ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
     ("", ""),
     ("", "From any terminal"),
