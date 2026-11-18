@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::{ACTIVITY_WINDOW, Action, App, FLASH, Focus, Modal, Row};
+use crate::app::{Action, App, FLASH, Focus, Modal, Row};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::input::Input;
@@ -19,8 +19,6 @@ use crate::tmux::key_label;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const MAX_MESSAGE_LINES: usize = 40;
-const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-const SPARK_BUCKETS: usize = 12;
 
 fn s(text: impl Into<String>, style: Style) -> Span<'static> {
     Span::styled(text.into(), style)
@@ -56,28 +54,25 @@ fn status_color(status: Status) -> Color {
     }
 }
 
-/// Event counts per bucket over ACTIVITY_WINDOW, oldest first.
-fn buckets(ages_ms: impl Iterator<Item = u128>) -> [u32; SPARK_BUCKETS] {
-    let span = ACTIVITY_WINDOW.as_millis() / SPARK_BUCKETS as u128;
-    let mut b = [0; SPARK_BUCKETS];
-    for age in ages_ms {
-        if let Some(i) = SPARK_BUCKETS.checked_sub(1 + (age / span) as usize) {
-            b[i] += 1;
-        }
-    }
-    b
+/// Share of the context window in use.
+fn context_fill(tokens: u64) -> f32 {
+    // shortcut: transcripts don't name the window size; assume 200k until usage proves it is a 1M window.
+    let window = if tokens > 200_000 { 1_000_000 } else { 200_000 };
+    (tokens as f32 / window as f32).min(1.0)
 }
 
-fn sparkline(app: &App, key: &str, color: Color) -> Vec<Span<'static>> {
-    let Some(times) = app.activity.get(key) else { return vec![] };
-    let b = buckets(times.iter().map(|t| t.elapsed().as_millis()));
-    let max = (*b.iter().max().unwrap_or(&0)).max(3);
-    b.iter()
-        .map(|&n| match n {
-            0 => s("·", fg(colors().border)),
-            n => s(SPARK[((n * 7) / max) as usize], fg(lerp(colors().dim, color, n as f32 / max as f32))),
-        })
-        .collect()
+fn context_gauge(tokens: u64) -> Vec<Span<'static>> {
+    let c = colors();
+    let fill = context_fill(tokens);
+    let color = if fill < 0.5 { lerp(c.success, c.warning, fill * 2.0) } else { lerp(c.warning, c.error, (fill - 0.5) * 2.0) };
+    let n = (fill * 8.0).round() as usize;
+    vec![s("▰".repeat(n), fg(color)), s("▱".repeat(8 - n), fg(c.border)), s(format!(" {:>3}%", (fill * 100.0).round()), fg(c.dim))]
+}
+
+/// How long the agent has waited for you, warming from yellow to red over 15 minutes.
+fn waiting_timer(since: u64) -> Span<'static> {
+    let mins = crate::state::now().saturating_sub(since) as f32 / 60.0;
+    s(format!("⏳ {}", age(since)), fg(lerp(colors().warning, colors().error, mins / 15.0)).bold())
 }
 
 /// Text in a rounded pill; caps need a Nerd Font, which the user's prompt already relies on.
@@ -340,9 +335,16 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             if a.workspace.is_none() {
                 detail.push(s(format!("  {}", a.name()), fg(colors().dim).italic()));
             }
-            let mut right = sparkline(app, &a.key, status_color(a.status));
-            if a.session.is_some() {
-                right.push(s(format!(" {:>3}", age(a.timestamp())), fg(colors().dim)));
+            let mut right = vec![];
+            if a.status == Status::Waiting && a.session.is_some() {
+                right.push(waiting_timer(a.timestamp()));
+            } else {
+                if let Some(tokens) = a.transcript.as_ref().and_then(|t| t.context_tokens).filter(|_| a.status.alive()) {
+                    right.extend(context_gauge(tokens));
+                }
+                if a.session.is_some() {
+                    right.push(s(format!(" {:>3}", age(a.timestamp())), fg(colors().dim)));
+                }
             }
             if !detail.is_empty() {
                 // The title keeps at least half the room; the detail gets the rest.
@@ -1019,12 +1021,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn buckets_put_recent_events_last() {
-        let span = ACTIVITY_WINDOW.as_millis() / SPARK_BUCKETS as u128;
-        let b = buckets([0, 1, span, ACTIVITY_WINDOW.as_millis() - 1, ACTIVITY_WINDOW.as_millis()].into_iter());
-        assert_eq!(b[SPARK_BUCKETS - 1], 2);
-        assert_eq!(b[SPARK_BUCKETS - 2], 1);
-        assert_eq!(b[0], 1);
-        assert_eq!(b.iter().sum::<u32>(), 4);
+    fn context_fill_picks_window() {
+        assert_eq!(context_fill(100_000), 0.5);
+        assert_eq!(context_fill(500_000), 0.5);
+        assert_eq!(context_fill(5_000_000), 1.0);
     }
 }
