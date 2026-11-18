@@ -44,7 +44,7 @@ mouse = true
 refresh_seconds = 2
 stale_minutes = 60
 prewarm = true               # keep a started shell ready per workspace
-hub_key = "C-q"              # tmux key that brings you back to the hub from any terminal
+hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
 ```
 
@@ -93,7 +93,7 @@ picker after you clone a new repo.
 
 | Where | Key | Action |
 |---|---|---|
-| Anywhere | `Ctrl+Q` or click **◀ Claude Hub** | Back to the hub |
+| Anywhere | `Alt+Q` or click **◀ Claude Hub** | Back to the hub |
 | Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
@@ -107,14 +107,14 @@ picker after you clone a new repo.
 | Hub | `q` | Leave. Everything keeps running |
 
 Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
-or press `Ctrl+Q` to go back), the workspace name and path, its windows (click to switch) and
+or press `Alt+Q` to go back), the workspace name and path, its windows (click to switch) and
 how many Claude sessions wait for you.
 
 Opening a directory that already has a workspace jumps to it instead of creating a
 second one.
 
-`Enter` on an agent takes you to it: plain Claude Code in its terminal. `Ctrl+Q` brings you
-back. Ctrl+Q is free in Claude Code, zsh and nvim, and it is typeable on every keyboard layout. `Esc` cannot do that job: Claude, nvim and the shell all use it themselves.
+`Enter` on an agent takes you to it: plain Claude Code in its terminal. `Alt+Q` brings you
+back. Alt+Q is free in Claude Code and nvim, and it is easy to reach with the left hand. (In zsh it shadows `push-line`.) `Esc` cannot do that job: Claude, nvim and the shell all use it themselves.
 
 Quick answers do not need the trip. Press `r`, type a message and press `Enter`: the hub types
 it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
