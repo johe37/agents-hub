@@ -13,7 +13,7 @@ ahead/behind.
 
 The panel follows the selected row. A workspace shows what is open in it. An agent shows what
 it waits for, your last request and its last reply. A terminal shows its screen. Terminal
-previews need the `pyte` package (installed with the hub); the hub streams each terminal's
+previews are rendered in color: the hub streams each terminal's
 output to `~/.local/state/claude-hub/screens/` and replays it, because `tmux capture-pane`
 crashes some tmux builds. A terminal opened before the hub started piping it shows its
 screen from the next output on.
@@ -25,12 +25,14 @@ yourself.
 
 ## Install
 
-Requires Python 3.11+ and tmux.
+Requires Rust (cargo) and tmux.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -e .
+cargo install --path .
 ```
+
+This puts `claude-hub` in `~/.cargo/bin`. Run `cargo install --path .` again after
+pulling changes; the next `claude-hub` restarts the hub UI on the new binary.
 
 ## Configure (optional)
 
@@ -50,22 +52,22 @@ All keys are optional. The default for `roots` is `~/repos`.
 ## Install the hooks
 
 ```sh
-.venv/bin/claude-hub install-hooks
+claude-hub install-hooks
 ```
 
-This adds a small shell script (`src/claude_hub/hook.sh`) to the hooks in
-`~/.claude/settings.json`. It replaces older claude-hub hooks. The command shows what it
+This adds `claude-hub report` to the hooks in `~/.claude/settings.json`. It replaces
+older claude-hub hooks, including the `hook.sh` of the Python version. The command shows what it
 changes and asks first. It saves a backup as `settings.json.bak`.
 
 The hook runs on every Claude tool call, so it does almost nothing: it stores the latest
-event per session (about 5 ms) and the hub reads it.
+event per session (about 3 ms) and the hub picks it up at once.
 
 Only Claude sessions started after this report status.
 
 ## Run
 
 ```sh
-.venv/bin/claude-hub
+claude-hub
 ```
 
 This starts the hub, or reconnects to it if it already runs. Press `n` to open your
@@ -130,7 +132,7 @@ cost come from the same file.
 
 - The hub's tmux server loads your own `~/.tmux.conf` first, so your prefix and key
   bindings work. The hub then sets its own status bar and mouse settings on top.
-- Running `claude-hub` restarts the hub UI when the code has changed since it started.
+- Running `claude-hub` restarts the hub UI when the binary has changed since it started.
 - New terminals open instantly because the hub keeps one started shell per workspace in
   a hidden `_pool` session, and starts one for the directory you highlight in the picker.
   Turn it off with `prewarm = false`.
