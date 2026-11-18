@@ -78,9 +78,8 @@ pub struct Toast {
 }
 
 impl Toast {
-    /// How long it stays; a link stays long enough to reach for the mouse.
     pub fn life(&self) -> Duration {
-        Duration::from_secs(if self.link.is_some() { 12 } else { 4 })
+        Duration::from_secs(4)
     }
 }
 
