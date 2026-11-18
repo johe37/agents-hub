@@ -26,6 +26,8 @@ pub enum Row {
     Terminal(usize, usize),
     /// (workspace, thread) indexes: an unresolved review thread on the workspace's merge request.
     Thread(usize, usize),
+    /// An open MR where you are a requested reviewer, by index into the snapshot's reviews.
+    Review(usize),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -316,6 +318,19 @@ impl App {
             }
             v
         };
+        let reviews: Vec<usize> = (0..self.snap.reviews.len())
+            .filter(|&i| {
+                let m = &self.snap.reviews[i];
+                self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
+            })
+            .collect();
+        if !reviews.is_empty() {
+            if !rows.is_empty() {
+                rows.push((String::new(), Row::Gap));
+            }
+            rows.push((String::new(), Row::Header("TO REVIEW", reviews.len())));
+            rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
+        }
         let (outside, closed) = (section(true), section(false));
         if !outside.is_empty() {
             if !rows.is_empty() {
@@ -358,6 +373,22 @@ impl App {
         Some((ws, mr, mr.threads.get(ti)?))
     }
 
+    pub fn current_review(&self) -> Option<&crate::gitlab::Mr> {
+        let Some(Row::Review(i)) = self.current() else { return None };
+        self.snap.reviews.get(i)
+    }
+
+    /// Check out the selected MR in its own worktree and open it with Claude, ready to review.
+    fn start_review(&mut self) {
+        let Some(mr) = self.current_review().cloned() else { return };
+        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
+            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
+            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
+        };
+        self.notify(format!("Checking out !{} from {}…", mr.iid, shorten(&repo)), false);
+        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo });
+    }
+
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
             Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
@@ -391,6 +422,10 @@ impl App {
     /// show here when the side panel is hidden. The rest are in help.
     pub fn actions(&self, side_visible: bool) -> Vec<(&'static str, &'static str, Action)> {
         let mut v = vec![];
+        if !side_visible && self.current_review().is_some() {
+            v.push(("↵", "open in GitLab", Action::Open));
+            v.push(("c", "review with Claude", Action::NewWindow("claude")));
+        }
         if !side_visible && self.current_thread().is_some() {
             v.push(("r", "reply", Action::Reply));
             v.push(("v", "resolve", Action::Resolve));
@@ -426,6 +461,7 @@ impl App {
         match action {
             Action::Open => self.open(),
             Action::NewWorkspace => self.open_picker(""),
+            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review(),
             Action::NewWindow(kind) => self.new_window(kind),
             Action::Close => self.close(),
             Action::Rename => {
@@ -522,6 +558,10 @@ impl App {
                 }
             }
             Some(Row::Workspace(i)) => tmux::switch_client(&self.snap.workspaces[i].name),
+            Some(Row::Review(_)) => {
+                let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
+                return self.open_url(&url);
+            }
             Some(Row::Thread(..)) => {
                 let Some((_, mr, th)) = self.current_thread() else { return };
                 let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
@@ -622,8 +662,16 @@ impl App {
             }
             Some(Row::Workspace(i)) => {
                 let ws = &self.snap.workspaces[i];
-                let name = ws.name.clone();
-                (format!("Close workspace '{name}' and all its {} window(s)?", ws.windows.len()), Box::new(move || tmux::kill_session(&name)))
+                let (name, path) = (ws.name.clone(), ws.path.clone());
+                if std::path::Path::new(&path).starts_with(crate::gitlab::reviews_dir()) {
+                    let close = move || {
+                        tmux::kill_session(&name)?;
+                        crate::gitlab::remove_checkout(&path).map_err(Fail::Error)
+                    };
+                    (format!("Close review workspace '{}' and delete its checkout of the merge request?", ws.name), Box::new(close))
+                } else {
+                    (format!("Close workspace '{name}' and all its {} window(s)?", ws.windows.len()), Box::new(move || tmux::kill_session(&name)))
+                }
             }
             Some(Row::Terminal(wi, ti)) => {
                 let ws = &self.snap.workspaces[wi];
@@ -710,6 +758,10 @@ impl App {
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
     fn refresh_mr(&mut self) {
+        if self.current_review().is_some() {
+            let _ = self.cmd.send(Cmd::ForgetReviews);
+            return self.notify("Refreshing the merge requests to review…", false);
+        }
         let Some(ws) = self.current_workspace() else { return };
         let (path, text) = (ws.path.clone(), format!("Refreshing the merge request of {}…", ws.name));
         let _ = self.cmd.send(Cmd::ForgetMr(path));
