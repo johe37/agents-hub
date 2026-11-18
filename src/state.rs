@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::hooks::events_dir;
+use crate::config::home;
+use crate::hooks::{events_dir, valid_id};
 use crate::transcript::tool_summary;
 
 const PRUNE_AFTER: u64 = 24 * 3600;
@@ -42,6 +43,18 @@ pub struct Session {
     pub tool: Option<String>,
     pub permission_mode: Option<String>,
     path: PathBuf,
+}
+
+impl Session {
+    /// Store the session as done with its turn, so the hub stops showing it as waiting for you.
+    pub fn mark_done(&self) -> std::io::Result<()> {
+        let mut record: Value = serde_json::from_slice(&std::fs::read(&self.path)?)?;
+        record["event"]["hook_event_name"] = "Stop".into();
+        let tmp = self.path.with_extension("done");
+        std::fs::write(&tmp, record.to_string())?;
+        // shortcut: a hook event landing between the read and the rename is lost; the agent's next event fixes the status.
+        std::fs::rename(&tmp, &self.path)
+    }
 }
 
 pub fn now() -> u64 {
@@ -131,6 +144,58 @@ pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_m
     sessions
 }
 
+/// A running interactive Claude, from Claude Code's own registry.
+pub struct Live {
+    pub pid: u32,
+    pub session_id: String,
+    pub cwd: String,
+    pub status: Status,
+    /// (tmux socket, pane id), from the process environment.
+    pub tmux: Option<(String, String)>,
+}
+
+// shortcut: ~/.claude/sessions is Claude Code's internal registry, not a public API; if its format changes, outside agents without hooks vanish and adopting needs a fallback (e.g. scanning /proc for claude).
+pub fn live_claudes() -> Vec<Live> {
+    let Ok(rd) = std::fs::read_dir(home().join(".claude/sessions")) else { return vec![] };
+    rd.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| {
+            let v: Value = serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?;
+            if v["kind"] != "interactive" {
+                return None;
+            }
+            let pid = u32::try_from(v["pid"].as_u64()?).ok()?;
+            // The registry outlives crashed processes, and pids get reused.
+            if std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim() != "claude" {
+                return None;
+            }
+            let session_id = opt(&v["sessionId"]).filter(|id| valid_id(id))?;
+            let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+            let var = |name: &str| {
+                let prefix = format!("{name}=");
+                environ.split(|&b| b == 0).find_map(|kv| kv.strip_prefix(prefix.as_bytes())).map(|v| String::from_utf8_lossy(v).into_owned())
+            };
+            let tmux = var("TMUX").and_then(|t| t.split(',').next().map(String::from)).zip(var("TMUX_PANE"));
+            let status = match v["status"].as_str() {
+                Some("busy") => Status::Working,
+                Some("idle") => Status::Idle,
+                _ => Status::Unknown,
+            };
+            Some(Live { pid, session_id, cwd: opt(&v["cwd"]).unwrap_or_default(), status, tmux })
+        })
+        .collect()
+}
+
+/// Where Claude Code keeps the transcripts of sessions started in cwd.
+fn project_dir(cwd: &str) -> String {
+    cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+pub fn transcript_for(cwd: &str, session_id: &str) -> Option<String> {
+    let p = home().join(".claude/projects").join(project_dir(cwd)).join(format!("{session_id}.jsonl"));
+    p.exists().then(|| p.display().to_string())
+}
+
 pub fn age(ts: u64) -> String {
     let secs = now().saturating_sub(ts);
     for (unit, size) in [("d", 86400), ("h", 3600), ("m", 60)] {
@@ -139,4 +204,13 @@ pub fn age(ts: u64) -> String {
         }
     }
     format!("{secs}s")
+}
+
+#[cfg(test)]
+mod live_tests {
+    #[test]
+    fn project_dir_mangles_like_claude_code() {
+        assert_eq!(super::project_dir("/var/home/me/repos/agents-hub"), "-var-home-me-repos-agents-hub");
+        assert_eq!(super::project_dir("/a/b.c_d"), "-a-b-c-d");
+    }
 }

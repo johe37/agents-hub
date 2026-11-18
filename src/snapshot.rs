@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::git::{GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs};
 use crate::hooks::events_dir;
 use crate::screens::{ScreenCache, log_path, screens_dir};
-use crate::state::{Session, Status, load_sessions};
+use crate::state::{Live, Session, Status, live_claudes, load_sessions, transcript_for};
 use crate::theme::{BAR, BG, FG, WARNING};
 use crate::tmux::{self, Pane, POOL_SESSION};
 use crate::transcript::{Transcript, TranscriptCache};
@@ -58,6 +58,10 @@ pub struct Agent {
     pub git: Option<GitStatus>,
     /// (tmux socket, pane id) where the agent reads its input.
     pub target: Option<(String, String)>,
+    /// The Claude process, from Claude Code's registry; needed to adopt it.
+    pub pid: Option<u32>,
+    /// For agents without hook data, found through the registry.
+    transcript_path: Option<String>,
 }
 
 impl Agent {
@@ -77,6 +81,10 @@ impl Agent {
         self.workspace.clone().unwrap_or_else(|| basename(&self.path))
     }
 
+    pub fn session_id(&self) -> Option<&str> {
+        self.key.strip_prefix("agent:")
+    }
+
     pub fn timestamp(&self) -> u64 {
         self.session.as_ref().map_or(0, |s| s.timestamp)
     }
@@ -90,6 +98,8 @@ impl Agent {
 pub fn basename(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.into())
 }
+
+const MAX_CLOSED: usize = 8;
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
@@ -202,6 +212,8 @@ impl Collector {
             .filter(|s| s.status.alive() && s.tmux_socket.as_deref().is_some_and(|sock| tmux::canonical(sock) == self.hub_socket))
             .filter_map(|s| Some((s.tmux_pane.clone()?, s.clone())))
             .collect();
+        let mut closed: Vec<Session> = sessions.iter().filter(|s| !s.status.alive() && !s.cwd.is_empty()).cloned().collect();
+        closed.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
         let elsewhere: Vec<Session> = sessions
             .iter()
             .filter(|s| s.status.alive() && !s.tmux_pane.as_ref().is_some_and(|p| in_hub.contains_key(p)))
@@ -217,7 +229,7 @@ impl Collector {
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
-        let agents = self.agents(&workspaces, elsewhere);
+        let agents = self.agents(&workspaces, elsewhere, live_claudes(), closed);
         write_summary(&sessions);
 
         if self.need_scan {
@@ -293,14 +305,19 @@ impl Collector {
         self.screens.forget(&all_panes.iter().map(|p| p.pane_id.clone()).collect());
     }
 
-    fn agents(&self, workspaces: &[Workspace], elsewhere: Vec<Session>) -> Vec<Agent> {
+    fn agents(&self, workspaces: &[Workspace], elsewhere: Vec<Session>, mut live: Vec<Live>, closed: Vec<Session>) -> Vec<Agent> {
         let hub = tmux::socket_path();
+        let in_pane = |l: &Live, socket: &str, pane: &str| l.tmux.as_ref().is_some_and(|(s, p)| p == pane && tmux::canonical(s) == tmux::canonical(socket));
         let mut agents = vec![];
         for ws in workspaces {
             for w in ws.windows.iter().filter(|w| w.is_claude()) {
+                let l = live.iter().position(|l| in_pane(l, &hub, &w.pane_id)).map(|i| live.swap_remove(i));
+                let status = w.claude.as_ref().map(|s| s.status).or(l.as_ref().map(|l| l.status)).unwrap_or(Status::Unknown);
                 agents.push(Agent {
+                    pid: l.as_ref().map(|l| l.pid),
+                    transcript_path: l.as_ref().and_then(|l| transcript_for(&l.cwd, &l.session_id)),
                     key: w.claude.as_ref().map_or(format!("window:{}", w.window_id), |s| format!("agent:{}", s.session_id)),
-                    status: w.claude.as_ref().map_or(Status::Unknown, |s| s.status),
+                    status,
                     session: w.claude.clone(),
                     workspace: Some(ws.name.clone()),
                     window_id: Some(w.window_id.clone()),
@@ -315,7 +332,11 @@ impl Collector {
         let git = &self.git;
         let statuses = par_map(&elsewhere, |s| (!s.cwd.is_empty()).then(|| git.repo_root(&s.cwd)).flatten().map(|r| git.status(&r)));
         for (s, st) in elsewhere.into_iter().zip(statuses) {
+            // Same session, or the same pane when the registry lags behind a /clear.
+            let l = live.iter().position(|l| l.session_id == s.session_id || s.tmux_socket.as_deref().zip(s.tmux_pane.as_deref()).is_some_and(|(sock, p)| in_pane(l, sock, p))).map(|i| live.swap_remove(i));
             agents.push(Agent {
+                pid: l.map(|l| l.pid),
+                transcript_path: None,
                 key: format!("agent:{}", s.session_id),
                 status: s.status,
                 target: s.tmux_socket.clone().zip(s.tmux_pane.clone()),
@@ -328,8 +349,46 @@ impl Collector {
                 git: st,
             });
         }
+        // Running Claudes that never reported through the hooks.
+        for l in live.into_iter().filter(|l| !l.tmux.as_ref().is_some_and(|(s, _)| tmux::canonical(s) == hub)) {
+            agents.push(Agent {
+                key: format!("agent:{}", l.session_id),
+                status: l.status,
+                session: None,
+                workspace: None,
+                window_id: None,
+                window_name: None,
+                git: (!l.cwd.is_empty()).then(|| git.repo_root(&l.cwd)).flatten().map(|r| git.status(&r)),
+                transcript_path: transcript_for(&l.cwd, &l.session_id),
+                target: l.tmux,
+                pid: Some(l.pid),
+                path: l.cwd,
+                transcript: None,
+            });
+        }
+        // Recently closed sessions, so they can be resumed; skip ones already running again.
+        let closed: Vec<Session> = closed.into_iter().filter(|s| !agents.iter().any(|a| a.session_id() == Some(&s.session_id))).take(MAX_CLOSED).collect();
+        let statuses = par_map(&closed, |s| git.repo_root(&s.cwd).map(|r| git.status(&r)));
+        for (s, st) in closed.into_iter().zip(statuses) {
+            agents.push(Agent {
+                key: format!("agent:{}", s.session_id),
+                status: s.status,
+                // The pane is gone or runs something else now, so never send it input.
+                target: None,
+                pid: None,
+                transcript_path: None,
+                path: s.cwd.clone(),
+                session: Some(s),
+                workspace: None,
+                window_id: None,
+                window_name: None,
+                transcript: None,
+                git: st,
+            });
+        }
         let tc = &self.transcripts;
-        let transcripts = par_map(&agents, |a| a.session.as_ref().and_then(|s| s.transcript_path.as_deref()).and_then(|p| tc.get(p)));
+        let transcripts =
+            par_map(&agents, |a| a.session.as_ref().and_then(|s| s.transcript_path.as_deref()).or(a.transcript_path.as_deref()).and_then(|p| tc.get(p)));
         for (a, t) in agents.iter_mut().zip(transcripts) {
             a.transcript = t;
         }

@@ -19,6 +19,8 @@ pub struct Transcript {
     pub model: Option<String>,
     pub turns: u32,
     pub cost_usd: Option<f64>,
+    /// Set when the conversation moved to a new session (resume, continue); its transcript has the rest.
+    continued_in: Option<String>,
     offset: u64,
 }
 
@@ -91,6 +93,7 @@ fn apply(t: &mut Transcript, r: &Value) {
             }
         }
         Some("cost-state") => t.cost_usd = r["totalCostUSD"].as_f64(),
+        Some("continued-in") => t.continued_in = r["continuedInSessionId"].as_str().filter(|id| crate::hooks::valid_id(id)).map(String::from),
         _ => {}
     }
 }
@@ -101,8 +104,35 @@ pub struct TranscriptCache {
     items: Mutex<HashMap<String, Transcript>>,
 }
 
+/// The transcript of session id: next to path, or in another project dir when the cwd changed.
+fn sibling(path: &str, id: &str) -> Option<String> {
+    let name = format!("{id}.jsonl");
+    let p = std::path::Path::new(path);
+    let next = p.with_file_name(&name);
+    if next.exists() {
+        return Some(next.display().to_string());
+    }
+    let projects = p.parent()?.parent()?;
+    std::fs::read_dir(projects).ok()?.flatten().map(|d| d.path().join(&name)).find(|p| p.exists()).map(|p| p.display().to_string())
+}
+
 impl TranscriptCache {
+    /// The latest state of the conversation that started in path, following it into newer sessions.
     pub fn get(&self, path: &str) -> Option<Transcript> {
+        let mut t = self.read(path)?;
+        let mut path = path.to_string();
+        // Bounded, in case transcripts ever point at each other.
+        for _ in 0..8 {
+            let Some(next) = t.continued_in.as_deref().and_then(|id| sibling(&path, id)) else { break };
+            let Some(n) = self.read(&next) else { break };
+            let title = t.title.take();
+            (t, path) = (n, next);
+            t.title = t.title.take().or(title);
+        }
+        Some(t)
+    }
+
+    fn read(&self, path: &str) -> Option<Transcript> {
         let size = std::fs::metadata(path).ok()?.len();
         let mut t = self.items.lock().unwrap().get(path).cloned().unwrap_or_default();
         if t.offset > size {
@@ -147,5 +177,24 @@ mod tests {
         assert_eq!(t.title.as_deref(), Some("Bug fix"));
         assert_eq!(t.last_text.as_deref(), Some("done"));
         assert_eq!(t.last_tool.as_deref(), Some("Bash: ls"));
+    }
+
+    #[test]
+    fn follows_continued_sessions() {
+        let dir = std::env::temp_dir().join(format!("claude-hub-test-{}", std::process::id()));
+        let project = dir.join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let line = |v: Value| format!("{v}\n");
+        let old = project.join("aaa.jsonl");
+        std::fs::write(&old, line(json!({"type": "ai-title", "aiTitle": "Old title"})) + &line(json!({"type": "user", "message": {"content": "old"}}))).unwrap();
+        std::fs::write(project.join("bbb.jsonl"), line(json!({"type": "user", "message": {"content": "new"}}))).unwrap();
+        let cache = TranscriptCache::default();
+        assert_eq!(cache.get(old.to_str().unwrap()).unwrap().last_prompt.as_deref(), Some("old"));
+        let mut f = std::fs::OpenOptions::new().append(true).open(&old).unwrap();
+        std::io::Write::write_all(&mut f, line(json!({"type": "continued-in", "continuedInSessionId": "bbb"})).as_bytes()).unwrap();
+        let t = cache.get(old.to_str().unwrap()).unwrap();
+        assert_eq!(t.last_prompt.as_deref(), Some("new"));
+        assert_eq!(t.title.as_deref(), Some("Old title"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

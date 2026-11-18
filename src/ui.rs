@@ -1,13 +1,13 @@
 //! Drawing the hub.
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::{Action, App, Focus, Modal, Row};
+use crate::app::{ACTIVITY_WINDOW, Action, App, FLASH, Focus, Modal, Row};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::input::Input;
@@ -18,9 +18,12 @@ use crate::theme::*;
 use crate::tmux::key_label;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const MAX_FILES: usize = 20;
 const MAX_MESSAGE_LINES: usize = 40;
 const C_HOVER: Color = hex("#2A2D2E");
+const C_CLAUDE: Color = hex("#D97757");
+const TITLE_STOPS: [Color; 3] = [C_CLAUDE, C_PURPLE, C_INFO];
+const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+const SPARK_BUCKETS: usize = 12;
 
 fn s(text: impl Into<String>, style: Style) -> Span<'static> {
     Span::styled(text.into(), style)
@@ -45,6 +48,44 @@ fn status_symbol(status: Status, t: u128) -> Span<'static> {
         Status::Ended => s("✗", fg(C_DIM)),
         Status::Stale => s("?", fg(C_DIM)),
     }
+}
+
+fn status_color(status: Status) -> Color {
+    match status {
+        Status::Waiting => C_WARNING,
+        Status::Working => C_INFO,
+        Status::Idle => C_SUCCESS,
+        _ => C_DIM,
+    }
+}
+
+/// Event counts per bucket over ACTIVITY_WINDOW, oldest first.
+fn buckets(ages_ms: impl Iterator<Item = u128>) -> [u32; SPARK_BUCKETS] {
+    let span = ACTIVITY_WINDOW.as_millis() / SPARK_BUCKETS as u128;
+    let mut b = [0; SPARK_BUCKETS];
+    for age in ages_ms {
+        if let Some(i) = SPARK_BUCKETS.checked_sub(1 + (age / span) as usize) {
+            b[i] += 1;
+        }
+    }
+    b
+}
+
+fn sparkline(app: &App, key: &str, color: Color) -> Vec<Span<'static>> {
+    let Some(times) = app.activity.get(key) else { return vec![] };
+    let b = buckets(times.iter().map(|t| t.elapsed().as_millis()));
+    let max = (*b.iter().max().unwrap_or(&0)).max(3);
+    b.iter()
+        .map(|&n| match n {
+            0 => s("·", fg(C_BORDER)),
+            n => s(SPARK[((n * 7) / max) as usize], fg(lerp(C_DIM, color, n as f32 / max as f32))),
+        })
+        .collect()
+}
+
+/// Text in a rounded pill; caps need a Nerd Font, which the user's prompt already relies on.
+fn pill(text: String, fg_c: Color, bg_c: Color, on: Color) -> Vec<Span<'static>> {
+    vec![s("\u{e0b6}", fg(bg_c).bg(on)), s(text, fg(fg_c).bg(bg_c).bold()), s("\u{e0b4}", fg(bg_c).bg(on))]
 }
 
 fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
@@ -132,27 +173,31 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Block::new().style(Style::new().bg(C_BAR)), area);
-    let left = Line::from(vec![
-        s(" ◆ ", fg(C_ACCENT).bold()),
-        s("Claude Hub", fg(C_BRIGHT).bold()),
-        s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(C_DIM)),
-    ]);
-    let count = |st: Status| app.snap.agents.iter().filter(|a| a.status == st).count();
     let t = tick(app);
+    let title = "Claude Hub";
+    let n = title.chars().count() as f32;
+    let mut left = vec![s(" ✻ ", fg(gradient(&TITLE_STOPS, t as f32 / 4000.0)).bold())];
+    // A slow shimmer across the title.
+    left.extend(title.chars().enumerate().map(|(i, c)| s(c.to_string(), fg(gradient(&TITLE_STOPS, i as f32 / n / 2.0 - t as f32 / 4000.0)).bold())));
+    left.push(s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(C_DIM)));
+    let left = Line::from(left);
+    let count = |st: Status| app.snap.agents.iter().filter(|a| a.status == st).count();
     let mut right = vec![];
     let waiting = count(Status::Waiting);
     if waiting > 0 {
-        right.push(s(format!(" ◉ {waiting} need you "), Style::new().fg(C_BG).bg(C_WARNING).bold()));
-        right.push(Span::raw("  "));
+        let pulse = ((t as f32 / 600.0 * std::f32::consts::PI).sin() + 1.0) / 2.0;
+        right.extend(pill(format!("◉ {waiting} need you"), C_BG, lerp(hex("#8A7200"), C_WARNING, pulse), C_BAR));
+        right.push(Span::raw(" "));
     }
     let working = count(Status::Working);
     if working > 0 {
-        right.push(status_symbol(Status::Working, t));
-        right.push(s(format!(" {working} working  "), fg(C_INFO)));
+        right.extend(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), C_BRIGHT, hex("#0E4A80"), C_BAR));
+        right.push(Span::raw(" "));
     }
     let idle = count(Status::Idle);
     if idle > 0 {
-        right.push(s(format!("○ {idle} idle  "), fg(C_SUCCESS)));
+        right.extend(pill(format!("○ {idle} idle"), C_BRIGHT, hex("#1B5E2A"), C_BAR));
+        right.push(Span::raw(" "));
     }
     let n = app.snap.workspaces.len();
     right.push(s(format!("{n} workspace{} ", if n == 1 { "" } else { "s" }), fg(C_MUTED)));
@@ -215,6 +260,16 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let lines: Vec<Line> = (app.offset..(app.offset + h).min(app.rows.len())).map(|i| row_line(app, i, width)).collect();
     f.render_widget(Paragraph::new(lines), inner);
 
+    if let Some(y) = app.selected.checked_sub(app.offset).filter(|&y| y < h) {
+        let y = inner.y + y as u16;
+        for x in inner.x..inner.right() {
+            let frac = (x - inner.x) as f32 / inner.width.max(1) as f32;
+            if let Some(cell) = f.buffer_mut().cell_mut(Position::new(x, y)) {
+                cell.set_bg(lerp(hex("#0B5394"), hex("#122233"), frac));
+            }
+        }
+    }
+
     if app.rows.len() > h {
         let thumb_h = (h * h / app.rows.len()).max(1);
         let thumb_y = app.offset * (h - thumb_h) / (app.rows.len() - h).max(1);
@@ -233,15 +288,19 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
     let t = tick(app);
     let is_child = |j: usize| matches!(app.rows.get(j).map(|r| r.1), Some(Row::Agent(_) | Row::Terminal(..)));
     let branch = if is_child(i + 1) { "├─ " } else { "╰─ " };
-    let marker = if selected { s("▌", fg(C_ACCENT)) } else { Span::raw(" ") };
+    let marker = match row {
+        _ if selected => s("▌", fg(C_BRIGHT)),
+        Row::Workspace(wi) => match app.worst(&app.agents_of(&app.snap.workspaces[wi])) {
+            Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
+            _ => Span::raw(" "),
+        },
+        _ => Span::raw(" "),
+    };
     let w = width.saturating_sub(1);
 
     let (left, right): (Vec<Span>, Vec<Span>) = match row {
         Row::Gap => (vec![], vec![]),
-        Row::Header => {
-            let n = app.rows.iter().filter(|(k, r)| matches!(r, Row::Agent(i) if app.snap.agents[*i].workspace.is_none()) && !k.is_empty()).count();
-            (vec![s(format!("OUTSIDE CLAUDE HUB · {n}"), fg(C_MUTED).bold())], vec![])
-        }
+        Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(C_MUTED).bold())], vec![]),
         Row::Workspace(wi) => {
             let ws = &app.snap.workspaces[wi];
             let agents = app.agents_of(ws);
@@ -284,7 +343,10 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             if a.workspace.is_none() {
                 detail.push(s(format!("  {}", a.name()), fg(C_DIM).italic()));
             }
-            let right = if a.session.is_some() { vec![s(age(a.timestamp()), fg(C_DIM))] } else { vec![] };
+            let mut right = sparkline(app, &a.key, status_color(a.status));
+            if a.session.is_some() {
+                right.push(s(format!(" {:>3}", age(a.timestamp())), fg(C_DIM)));
+            }
             if !detail.is_empty() {
                 // The title keeps at least half the room; the detail gets the rest.
                 let room = w.saturating_sub(width_of(&right) + 2);
@@ -316,9 +378,15 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         spans.extend(right);
     }
     let mut line = Line::from(spans);
+    let flash = match row {
+        Row::Agent(ai) => app.changed.get(&app.snap.agents[ai].key).map(|at| (status_color(app.snap.agents[ai].status), at.elapsed())),
+        _ => None,
+    };
     if selected {
         line = line.style(Style::new().bg(C_SELECTION));
-    } else if app.hover == Some(i) && !matches!(row, Row::Gap | Row::Header) {
+    } else if let Some((color, el)) = flash.filter(|(_, el)| *el < FLASH) {
+        line = line.style(Style::new().bg(lerp(lerp(C_BG, color, 0.45), C_BG, el.as_secs_f32() / FLASH.as_secs_f32())));
+    } else if app.hover == Some(i) && !matches!(row, Row::Gap | Row::Header(..)) {
         line = line.style(Style::new().bg(C_HOVER));
     }
     line
@@ -326,9 +394,10 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
 
 // ---- detail panel ----
 
-fn heading(lines: &mut Vec<Line<'static>>, text: impl Into<String>) {
-    lines.push(Line::default());
-    lines.push(Line::from(s(text.into(), fg(C_MUTED).bold())));
+const MAX_PROMPT_LINES: usize = 6;
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 /// Enough markdown for Claude's replies: headings, lists, code blocks, `code` and **bold**.
@@ -370,57 +439,91 @@ fn markdown(text: &str) -> Vec<Line<'static>> {
     out
 }
 
-fn status_lines(a: &Agent) -> Vec<Line<'static>> {
+
+/// What the agent is doing, and one line of detail.
+fn headline(a: &Agent) -> (String, Option<String>) {
     let sess = a.session.as_ref();
     let t = a.transcript.as_ref();
-    let when = sess.map_or(String::new(), |s| format!(" · {}", age(s.timestamp)));
-    let mut out = vec![];
     match a.status {
         Status::Waiting => {
-            let sess = sess.unwrap();
-            let reason = waiting_reason(sess.notification_type.as_deref()).unwrap_or("Waiting for you");
-            out.push(Line::from(s(format!("◉ {reason}{when}"), fg(C_WARNING).bold())));
-            if let Some(m) = &sess.message {
-                out.push(Line::from(s(m.clone(), fg(C_MODIFIED))));
-            }
+            let reason = waiting_reason(sess.and_then(|s| s.notification_type.as_deref())).unwrap_or("Waiting for you");
             // The hook keeps only the latest event, so the tool behind a permission prompt comes from the transcript.
-            if a.needs_permission() {
-                if let Some(tool) = t.and_then(|t| t.last_tool.clone()) {
-                    out.push(Line::from(vec![s("  ", fg(C_FG)), s(tool, fg(C_BRIGHT).bg(C_PANEL))]));
-                }
-            }
-            if a.target.is_some() {
-                let mut l = vec![];
-                if a.needs_permission() {
-                    l.extend([s(" y ", fg(C_BG).bg(C_SUCCESS).bold()), s(" approve  ", fg(C_MUTED)), s(" d ", fg(C_BRIGHT).bg(C_ERROR).bold()), s(" deny  ", fg(C_MUTED))]);
-                }
-                l.extend([s(" r ", fg(C_FG).bg(C_INPUT)), s(" reply", fg(C_MUTED))]);
-                out.push(Line::default());
-                out.push(Line::from(l));
-            }
+            let tool = if a.needs_permission() { t.and_then(|t| t.last_tool.clone()) } else { None };
+            (reason.into(), tool.or_else(|| sess.and_then(|s| s.message.clone())))
         }
-        Status::Working => {
-            out.push(Line::from(s(format!("● Working{when}"), fg(C_INFO).bold())));
-            if let Some(tool) = sess.and_then(|s| s.tool.clone()).or_else(|| t.and_then(|t| t.last_tool.clone())) {
-                out.push(Line::from(s(tool, fg(C_FG))));
-            }
+        Status::Working => ("Working".into(), sess.and_then(|s| s.tool.clone()).or_else(|| t.and_then(|t| t.last_tool.clone()))),
+        Status::Idle => ("Done with its turn".into(), Some("Enter opens it to continue.".into())),
+        Status::Ended | Status::Stale => ("Closed".into(), Some("Enter resumes it in a Claude Hub workspace.".into())),
+        _ => ("No status".into(), Some("Started before claude-hub hooks were installed.".into())),
+    }
+}
+
+fn meta_line(name: Option<&str>, path: &str, git: Option<&GitStatus>) -> Line<'static> {
+    let mut v = vec![Span::raw(" ")];
+    if let Some(n) = name {
+        v.push(s(format!("{n}  "), fg(C_MUTED)));
+    }
+    v.push(s(format!("{}  ", shorten(path)), fg(C_DIM)));
+    v.extend(git_spans(git));
+    v.push(Span::raw(" "));
+    Line::from(v)
+}
+
+fn chat_lines(a: &Agent) -> Vec<Line<'static>> {
+    let Some(t) = &a.transcript else { return vec![Line::from(s("No conversation yet.", fg(C_MUTED)))] };
+    let mut out = vec![];
+    if let Some(p) = &t.last_prompt {
+        out.push(Line::from(s("You", fg(C_ACCENT).bold())));
+        let lines: Vec<&str> = p.lines().collect();
+        for l in lines.iter().take(MAX_PROMPT_LINES) {
+            out.push(Line::from(vec![s("│ ", fg(C_ACCENT)), s(l.chars().take(300).collect::<String>(), fg(C_FG))]));
         }
-        Status::Idle => {
-            out.push(Line::from(s(format!("○ Idle{when}"), fg(C_SUCCESS).bold())));
-            out.push(Line::from(s("Done with its turn. Open it to continue.", fg(C_MUTED))));
+        if lines.len() > MAX_PROMPT_LINES {
+            out.push(Line::from(vec![s("│ ", fg(C_ACCENT)), s("…", fg(C_DIM))]));
         }
-        _ => {
-            out.push(Line::from(s("· No status", fg(C_DIM))));
-            out.push(Line::from(s("Started before claude-hub hooks were installed.", fg(C_MUTED))));
+        out.push(Line::default());
+    }
+    if let Some(text) = &t.last_text {
+        out.push(Line::from(s("✻ Claude", fg(C_CLAUDE).bold())));
+        let all: Vec<&str> = text.lines().collect();
+        if all.len() > MAX_MESSAGE_LINES {
+            out.push(Line::from(s("… earlier lines hidden, Enter opens the full conversation", fg(C_DIM).italic())));
         }
+        out.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
+    }
+    let mut parts: Vec<String> = t.model.iter().cloned().collect();
+    if t.turns > 0 {
+        parts.push(format!("{} turn{}", t.turns, plural(t.turns as usize)));
+    }
+    if let Some(c) = t.cost_usd.filter(|c| *c > 0.0) {
+        parts.push(format!("${c:.2}"));
+    }
+    if let Some(sess) = &a.session {
+        parts.extend(sess.permission_mode.as_ref().map(|m| format!("{m} mode")));
+        parts.push(sess.session_id.chars().take(8).collect());
+    }
+    if !parts.is_empty() {
+        out.push(Line::default());
+        out.push(Line::from(s(parts.join(" · "), fg(C_DIM))));
     }
     out
 }
 
-fn file_lines(lines: &mut Vec<Line<'static>>, g: Option<&GitStatus>) {
-    let Some(g) = g.filter(|g| !g.files.is_empty()) else { return };
-    heading(lines, format!("Changed files ({})", g.files.len()));
-    for (status, path) in g.files.iter().take(MAX_FILES) {
+fn change_lines(g: Option<&GitStatus>) -> Vec<Line<'static>> {
+    let Some(g) = g else { return vec![Line::from(s("Not a git repository.", fg(C_MUTED)))] };
+    if g.files.is_empty() {
+        return vec![Line::from(vec![s("✓ ", fg(C_SUCCESS).bold()), s("Working tree clean", fg(C_FG))])];
+    }
+    let n = g.files.len();
+    let mut out = vec![
+        Line::from(vec![
+            s(format!("{n} file{} changed", plural(n)), fg(C_FG).bold()),
+            s(format!("   +{}", g.added), fg(C_SUCCESS)),
+            s(format!(" −{}", g.removed), fg(C_ERROR)),
+        ]),
+        Line::default(),
+    ];
+    for (status, path) in &g.files {
         let letter = status.chars().find(|&c| c != '.').unwrap_or('M');
         let color = match letter {
             '?' | 'A' => C_SUCCESS,
@@ -428,123 +531,209 @@ fn file_lines(lines: &mut Vec<Line<'static>>, g: Option<&GitStatus>) {
             'R' => C_INFO,
             _ => C_MODIFIED,
         };
-        lines.push(Line::from(vec![s(format!("{letter}  "), fg(color)), s(path.clone(), fg(C_FG))]));
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let mut l = vec![s(format!("{letter}  "), fg(color).bold()), s(name.to_string(), fg(C_BRIGHT))];
+        if !dir.is_empty() {
+            l.push(s(format!("  {dir}"), fg(C_DIM)));
+        }
+        out.push(Line::from(l));
     }
-    if g.files.len() > MAX_FILES {
-        lines.push(Line::from(s(format!("… {} more", g.files.len() - MAX_FILES), fg(C_DIM))));
-    }
+    out
 }
 
-fn meta_line(name: Option<&str>, path: &str, git: Option<&GitStatus>) -> Line<'static> {
-    let mut v = vec![];
-    if let Some(n) = name {
-        v.push(s(format!("{n}  "), fg(C_FG).bold()));
-    }
-    v.push(s(format!("{}  ", shorten(path)), fg(C_DIM)));
-    v.extend(git_spans(git));
-    Line::from(v)
+/// What the panel shows for an agent or workspace: a banner for what needs you, then tabs.
+struct Side {
+    title: String,
+    meta: Line<'static>,
+    color: Color,
+    banner: Vec<Line<'static>>,
+    buttons: Vec<(&'static str, &'static str, Color, Action)>,
+    tabs: [(&'static str, usize); 3],
+    body: Vec<Line<'static>>,
 }
 
-fn agent_detail(a: &Agent) -> Vec<Line<'static>> {
-    let mut lines = vec![meta_line(Some(&a.name()), &a.path, a.git.as_ref())];
-    if a.workspace.is_none() {
+fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
+    let color = status_color(a.status);
+    let (head, detail) = headline(a);
+    let when = a.session.as_ref().map_or(String::new(), |s| format!("  · {}", age(s.timestamp)));
+    let mut banner = vec![Line::from(vec![status_symbol(a.status, t), s(format!(" {head}"), fg(color).bold()), s(when, fg(C_DIM))])];
+    if let Some(d) = detail {
+        let style = if a.needs_permission() { fg(C_BRIGHT).bg(C_PANEL) } else { fg(C_FG) };
+        banner.push(Line::from(s(d.lines().next().unwrap_or_default().to_string(), style)));
+    }
+    if a.workspace.is_none() && a.status.alive() {
         let where_ = a.session.as_ref().and_then(|s| s.tmux_session.clone()).map_or("its own terminal".into(), |s| format!("tmux session {s}"));
-        lines.push(Line::from(s(format!("Runs outside Claude Hub, in {where_}."), fg(C_MUTED).italic())));
+        banner.push(Line::from(s(format!("Runs outside Claude Hub, in {where_}."), fg(C_MUTED).italic())));
     }
-    lines.push(Line::default());
-    lines.extend(status_lines(a));
-    let t = a.transcript.as_ref();
-    if let Some(p) = t.and_then(|t| t.last_prompt.as_ref()) {
-        heading(&mut lines, "Your last request");
-        lines.push(Line::from(s(p.chars().take(400).collect::<String>(), fg(C_FG))));
-    }
-    if let Some(text) = t.and_then(|t| t.last_text.as_ref()) {
-        heading(&mut lines, "Last message");
-        let all: Vec<&str> = text.lines().collect();
-        lines.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
-    }
-    file_lines(&mut lines, a.git.as_ref());
-    if let Some(sess) = &a.session {
-        let mut parts = vec![];
-        if let Some(t) = t {
-            parts.extend(t.model.clone());
-            if t.turns > 0 {
-                parts.push(format!("{} turn{}", t.turns, if t.turns == 1 { "" } else { "s" }));
-            }
-            if let Some(c) = t.cost_usd.filter(|c| *c > 0.0) {
-                parts.push(format!("${c:.2}"));
-            }
+    let mut buttons = vec![];
+    if a.status == Status::Waiting && a.target.is_some() {
+        if a.needs_permission() {
+            buttons.push(("y", "approve", C_SUCCESS, Action::Approve));
+            buttons.push(("d", "deny", C_ERROR, Action::Deny));
         }
-        if let Some(m) = &sess.permission_mode {
-            parts.push(format!("{m} mode"));
-        }
-        parts.push(sess.session_id.chars().take(8).collect());
-        heading(&mut lines, "Session");
-        lines.push(Line::from(s(parts.join(" · "), fg(C_DIM))));
+        buttons.push(("r", "reply", C_INPUT, Action::Reply));
     }
-    lines
+    if a.status == Status::Waiting {
+        buttons.push(("m", "done", C_INPUT, Action::MarkDone));
+    }
+    if !a.status.alive() && a.session_id().is_some() {
+        buttons.push(("↵", "resume", C_ACCENT, Action::Open));
+    }
+    if a.workspace.is_none() && a.status.alive() && a.pid.is_some() {
+        buttons.push(("a", "adopt into the hub", C_ACCENT, Action::Adopt));
+    }
+    let git = a.git.as_ref();
+    let body = match app.tab {
+        0 => chat_lines(a),
+        1 => change_lines(git),
+        _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(C_MUTED)))],
+        _ => vec![],
+    };
+    Side {
+        title: a.title(),
+        meta: meta_line(Some(&a.name()), &a.path, git),
+        color,
+        banner,
+        buttons,
+        tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len()))],
+        body,
+    }
 }
 
-fn workspace_detail(app: &App, ws: &Workspace) -> Vec<Line<'static>> {
-    let mut lines = vec![meta_line(None, &ws.path, ws.git.as_ref())];
+fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     let agents = app.agents_of(ws);
-    let terms = ws.windows.iter().filter(|w| !w.is_claude()).count();
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
-    lines.push(Line::from(s(format!("{} Claude session{} · {terms} terminal{}", agents.len(), plural(agents.len()), plural(terms)), fg(C_MUTED))));
-    if ws.windows.is_empty() || agents.is_empty() && terms == 0 {
-        lines.push(Line::default());
-        lines.push(Line::from(vec![s("Nothing open yet. ", fg(C_MUTED)), s("c", fg(C_FG).bold()), s(" starts Claude, ", fg(C_MUTED)), s("t", fg(C_FG).bold()), s(" a terminal.", fg(C_MUTED))]));
-    }
-    if !agents.is_empty() {
-        heading(&mut lines, "Agents");
-        for &i in &agents {
-            let a = &app.snap.agents[i];
-            let head = status_lines(a).into_iter().next().map(|l| l.to_string()).unwrap_or_default();
-            let style = if a.status == Status::Waiting { fg(C_BRIGHT).bold() } else { fg(C_FG) };
-            lines.push(Line::from(vec![status_symbol(a.status, tick(app)), s(format!(" {}", a.title()), style), s(format!("  {}", head.chars().skip(2).collect::<String>()), fg(C_MUTED))]));
+    let count = |st: Status| agents.iter().filter(|&&i| app.snap.agents[i].status == st).count();
+    let (color, symbol, head, detail) = match app.worst(&agents) {
+        Some(st @ Status::Waiting) => {
+            let n = count(st);
+            (C_WARNING, status_symbol(st, t), format!("{n} agent{} need{} you", plural(n), if n == 1 { "s" } else { "" }), None)
         }
+        Some(st @ Status::Working) => {
+            let n = count(st);
+            (C_INFO, status_symbol(st, t), format!("{n} agent{} working", plural(n)), None)
+        }
+        Some(_) => (C_SUCCESS, s("○", fg(C_SUCCESS)), "Nothing needs you".into(), None),
+        None => (C_DIM, s("▪", fg(C_DIM)), "Nothing running".into(), Some("c starts Claude, t opens a terminal.")),
+    };
+    let mut banner = vec![Line::from(vec![symbol, s(format!(" {head}"), fg(color).bold())])];
+    banner.extend(detail.map(|d| Line::from(s(d, fg(C_MUTED)))));
+    let body = match app.tab {
+        0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(C_MUTED)))],
+        0 => agents
+            .iter()
+            .flat_map(|&i| {
+                let a = &app.snap.agents[i];
+                let (head, detail) = headline(a);
+                let style = if a.status == Status::Waiting { fg(C_BRIGHT).bold() } else { fg(C_FG) };
+                let detail = detail.map_or(String::new(), |d| format!(" · {}", d.lines().next().unwrap_or_default()));
+                [
+                    Line::from(vec![status_symbol(a.status, t), s(format!(" {}", a.title()), style)]),
+                    Line::from(vec![s("  ", Style::new()), s(head, fg(status_color(a.status))), s(detail, fg(C_DIM))]),
+                    Line::default(),
+                ]
+            })
+            .collect(),
+        1 => change_lines(ws.git.as_ref()),
+        _ => vec![],
+    };
+    Side {
+        title: ws.name.clone(),
+        meta: meta_line(None, &ws.path, ws.git.as_ref()),
+        color,
+        banner,
+        buttons: vec![],
+        tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len())],
+        body,
     }
-    file_lines(&mut lines, ws.git.as_ref());
-    lines
 }
 
 fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
-    let row = app.current();
     let t = tick(app);
-    let (title, body, windows_of): (Line<'static>, Vec<Line<'static>>, Option<(usize, Option<String>)>) = match row {
+    let (wi, side) = match app.current() {
+        Some(Row::Terminal(wi, ti)) => return draw_terminal(f, app, area, wi, ti),
         Some(Row::Agent(i)) => {
             let a = &app.snap.agents[i];
             let wi = a.workspace.as_ref().and_then(|n| app.snap.workspaces.iter().position(|w| &w.name == n));
-            (Line::from(vec![s(" ", Style::new()), status_symbol(a.status, t), s(format!(" {} ", a.title()), fg(C_BRIGHT).bold())]), agent_detail(a), wi.map(|w| (w, a.window_id.clone())))
+            (wi, agent_side(app, a, wi.map(|w| &app.snap.workspaces[w]), t))
         }
-        Some(Row::Workspace(wi)) => {
-            let ws = &app.snap.workspaces[wi];
-            (Line::from(s(format!(" {} ", ws.name), fg(C_BRIGHT).bold())), workspace_detail(app, ws), Some((wi, None)))
+        Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
+        _ => {
+            let block = panel(Line::from(s(" Claude Hub ", fg(C_BRIGHT).bold())), false);
+            let inner = block.inner(area).inner(Margin::new(2, 1));
+            f.render_widget(block, area);
+            let text = vec![Line::from(s("No workspaces yet.", fg(C_BRIGHT).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(C_MUTED)))];
+            f.render_widget(Paragraph::new(text), inner);
+            app.hits.detail = Rect::default();
+            return;
         }
-        Some(Row::Terminal(wi, ti)) => return draw_terminal(f, app, area, wi, ti),
-        _ => (
-            Line::from(s(" Claude Hub ", fg(C_BRIGHT).bold())),
-            vec![Line::from(s("No workspaces yet.", fg(C_BRIGHT).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(C_MUTED)))],
-            None,
-        ),
     };
-    let block = panel(title, false);
-    let inner = block.inner(area).inner(ratatui::layout::Margin::new(1, 0));
+    let block = panel(Line::from(s(format!(" {} ", side.title), fg(C_BRIGHT).bold())), false).title_bottom(side.meta);
+    let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
 
+    let buttons_h = if side.buttons.is_empty() { 0 } else { 2 };
+    let banner_h = side.banner.len() as u16 + buttons_h + 2;
     let reply_h = if app.current_agent().is_some_and(|a| a.target.is_some()) { 3 } else { 0 };
-    let windows = windows_of.as_ref().map(|(wi, _)| *wi).map(|wi| app.snap.workspaces[wi].windows.len() as u16 + 2).unwrap_or(0);
-    let windows = windows.min(inner.height.saturating_sub(reply_h + 4) / 2);
-    let [body_area, win_area, reply_area] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(windows), Constraint::Length(reply_h)]).areas(inner);
+    let [banner_area, _, tabs_area, body_area, reply_area] =
+        Layout::vertical([Constraint::Length(banner_h), Constraint::Length(1), Constraint::Length(2), Constraint::Min(1), Constraint::Length(reply_h)]).areas(inner);
+
+    // The banner: what needs you, tinted in the status color.
+    let banner_block = Block::new()
+        .borders(Borders::LEFT)
+        .border_type(BorderType::Thick)
+        .border_style(fg(side.color))
+        .style(Style::new().bg(lerp(C_BG, side.color, 0.12)))
+        .padding(Padding::new(1, 1, 1, 1));
+    let banner_inner = banner_block.inner(banner_area);
+    f.render_widget(banner_block, banner_area);
+    f.render_widget(Paragraph::new(side.banner), banner_inner);
+    if buttons_h > 0 {
+        let mut x = banner_inner.x;
+        let y = banner_inner.bottom() - 1;
+        for (key, label, color, action) in side.buttons {
+            let key_fg = if color == C_INPUT { C_FG } else { C_BG };
+            let line = Line::from(vec![s(format!(" {key} "), fg(key_fg).bg(color).bold()), s(format!(" {label}  "), fg(C_MUTED))]);
+            let w = line.width() as u16;
+            let rect = Rect::new(x, y, w.min(banner_inner.right().saturating_sub(x)), 1);
+            f.render_widget(Paragraph::new(line), rect);
+            app.hits.buttons.push((rect, action));
+            x += w;
+        }
+    }
+
+    // Tabs, with the active one underlined in the accent color.
+    let mut x = tabs_area.x;
+    let mut under = vec![];
+    for (i, (label, n)) in side.tabs.iter().enumerate() {
+        let active = app.tab == i;
+        let mut spans = vec![s(format!(" {label}"), if active { fg(C_BRIGHT).bold() } else { fg(C_MUTED) })];
+        if *n > 0 {
+            spans.push(s(format!(" {n}"), fg(if active { C_ACCENT } else { C_DIM })));
+        }
+        spans.push(Span::raw(" "));
+        let w = width_of(&spans) as u16;
+        let rect = Rect::new(x, tabs_area.y, w.min(tabs_area.right().saturating_sub(x)), 1);
+        f.render_widget(Paragraph::new(Line::from(spans)), rect);
+        app.hits.buttons.push((rect, Action::Tab(i)));
+        under.push(s(if active { "━" } else { "─" }.repeat(w as usize), fg(if active { C_ACCENT } else { C_BORDER })));
+        x += w + 1;
+        under.push(s("─", fg(C_BORDER)));
+    }
+    under.push(s("─".repeat(tabs_area.right().saturating_sub(x) as usize), fg(C_BORDER)));
+    f.render_widget(Paragraph::new(Line::from(under)), Rect { y: tabs_area.y + 1, height: 1, ..tabs_area });
+
+    let body_area = body_area.inner(Margin::new(0, 1));
     app.hits.detail = body_area;
-
-    let max_scroll = (body.len() as u16).saturating_sub(4);
-    app.detail_scroll = app.detail_scroll.min(max_scroll);
-    f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }).scroll((app.detail_scroll, 0)), body_area);
-
-    if let Some((wi, own)) = windows_of.filter(|_| windows > 0) {
-        draw_windows(f, app, win_area, wi, own.as_deref());
+    match wi {
+        Some(wi) if app.tab == 2 => {
+            let own = app.current_agent().and_then(|a| a.window_id.clone());
+            draw_windows(f, app, body_area, wi, own.as_deref());
+        }
+        _ => {
+            let max_scroll = (side.body.len() as u16).saturating_sub(4);
+            app.detail_scroll = app.detail_scroll.min(max_scroll);
+            f.render_widget(Paragraph::new(side.body).wrap(Wrap { trim: false }).scroll((app.detail_scroll, 0)), body_area);
+        }
     }
     if reply_h > 0 {
         draw_reply(f, app, reply_area);
@@ -554,13 +743,15 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
 /// The workspace's windows, each clickable.
 fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option<&str>) {
     let ws = app.snap.workspaces[wi].clone();
-    f.render_widget(Paragraph::new(s("Windows", fg(C_MUTED).bold())), Rect { height: 1, y: area.y + 1, ..area });
+    if ws.windows.is_empty() {
+        f.render_widget(Paragraph::new(s("No windows. c starts Claude, t a terminal.", fg(C_MUTED))), area);
+    }
     for (n, w) in ws.windows.iter().enumerate() {
-        let y = area.y + 2 + n as u16;
+        let y = area.y + n as u16;
         if y >= area.bottom() {
             break;
         }
-        let kind = if w.is_claude() { s("✻ ", fg(C_ACCENT)) } else { s("❯ ", fg(C_MUTED)) };
+        let kind = if w.is_claude() { s("✻ ", fg(C_CLAUDE)) } else { s("❯ ", fg(C_MUTED)) };
         let mut spans = vec![s(format!("{} ", w.index), fg(C_DIM)), kind, s(w.name.clone(), fg(C_INFO).underlined())];
         if w.command != w.name && w.command != "claude" {
             spans.push(s(format!("  {}", w.command), fg(C_DIM)));
@@ -656,11 +847,23 @@ fn draw_toast(f: &mut Frame, app: &App, area: Rect) {
     let Some(t) = &app.toast else { return };
     let w = (t.text.chars().count() as u16 + 4).min(area.width.saturating_sub(4)).max(10);
     let lines = (t.text.chars().count() as u16 / w.saturating_sub(4).max(1)) + 1;
-    let rect = Rect::new(area.right().saturating_sub(w + 2), area.y + 1, w, lines + 2);
-    let color = if t.error { C_ERROR } else { C_SUCCESS };
+    let ms = t.at.elapsed().as_millis() as f32;
+    let ease = 1.0 - (1.0 - (ms / 220.0).min(1.0)).powi(3);
+    let slide = ((w + 2) as f32 * (1.0 - ease)) as u16;
+    let x = area.right().saturating_sub(w + 2) + slide;
+    let rect = Rect::new(x, area.y + 1, w.min(area.right().saturating_sub(x)), lines + 2);
+    if rect.width < 3 {
+        return;
+    }
+    let (color, icon) = if t.error { (C_ERROR, "✗") } else { (C_SUCCESS, "✓") };
+    let fade = ((ms - 3200.0) / 800.0).clamp(0.0, 1.0);
     f.render_widget(Clear, rect);
-    let block = Block::bordered().border_type(BorderType::Rounded).border_style(fg(color)).style(Style::new().bg(C_PANEL));
-    f.render_widget(Paragraph::new(s(t.text.clone(), fg(C_BRIGHT))).wrap(Wrap { trim: true }).block(block), rect);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(fg(lerp(color, C_BORDER, fade)))
+        .title(s(format!(" {icon} "), fg(color).bold()))
+        .style(Style::new().bg(C_PANEL));
+    f.render_widget(Paragraph::new(s(t.text.clone(), fg(lerp(C_BRIGHT, C_MUTED, fade)))).wrap(Wrap { trim: true }).block(block), rect);
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
@@ -690,9 +893,13 @@ const HELP: &[(&str, &str)] = &[
     ("c / t / e", "new Claude / terminal / nvim in the workspace"),
     ("x", "close the agent, terminal or workspace"),
     ("R", "rename the workspace"),
+    ("a", "adopt an agent running outside the hub into a workspace"),
+    ("m", "mark done: clear waiting on the agent or workspace"),
+    ("↵ on closed", "resume a recently closed agent in a workspace"),
     ("r", "reply: type a message, Enter sends it to the agent"),
     ("y / d", "approve / deny a permission prompt"),
     ("j k / arrows", "move   g G  top / bottom"),
+    ("Tab / 1 2 3", "switch the panel tab: chat, changes, windows"),
     ("PgUp / PgDn", "scroll the detail panel"),
     ("/", "filter, Esc clears"),
     ("q", "leave (everything keeps running)"),
@@ -807,4 +1014,19 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
         f.render_widget(Paragraph::new(lines), list);
     }
     f.render_widget(Paragraph::new(Picker::hint()), hint);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buckets_put_recent_events_last() {
+        let span = ACTIVITY_WINDOW.as_millis() / SPARK_BUCKETS as u128;
+        let b = buckets([0, 1, span, ACTIVITY_WINDOW.as_millis() - 1, ACTIVITY_WINDOW.as_millis()].into_iter());
+        assert_eq!(b[SPARK_BUCKETS - 1], 2);
+        assert_eq!(b[SPARK_BUCKETS - 2], 1);
+        assert_eq!(b[0], 1);
+        assert_eq!(b.iter().sum::<u32>(), 4);
+    }
 }

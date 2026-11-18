@@ -23,7 +23,7 @@ pub fn report() {
     }
     let Ok(event) = serde_json::from_str::<Value>(&input) else { return };
     let Some(id) = event["session_id"].as_str() else { return };
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !valid_id(id) {
         return;
     }
     // Sent to every open session when another one finishes; it would hide this session's real state.
@@ -45,6 +45,11 @@ pub fn report() {
     if std::fs::write(&tmp, record.to_string()).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join(format!("{id}.json")));
     }
+}
+
+/// Session ids end up in file names and shell commands.
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn is_ours(command: &str) -> bool {
