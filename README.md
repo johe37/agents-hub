@@ -113,6 +113,8 @@ picker after you clone a new repo.
 | Hub | `w` | Jump to the next agent waiting for you |
 | Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel |
 | Thread | `Enter` / `r` / `f` | Open in GitLab / reply in the thread / put it in Claude's prompt |
+| Thread | `v` | Resolve the thread, posting an optional reply first (pre-filled with `Fixed in <commit>.`) |
+| Hub | `p` | Push the workspace's branch; opens a draft merge request when it has none |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `?` | Help |
@@ -137,7 +139,10 @@ denies, and the panel shows the tool call it wants to run.
 threads. Each thread is listed under the workspace. Select one to read it, `r` to reply in
 GitLab, `f` to put it in the workspace's Claude prompt and jump there (edit it, then `Enter` sends), `Enter` to open it in the browser. This
 uses `glab`, so run `glab auth login` once. MR data refreshes every minute in the background,
-every 10 seconds while a pipeline runs. `Ctrl+R` on a workspace fetches it right away. The **Pipeline** tab (`4`) shows each stage and job
+every 10 seconds while a pipeline runs. `Ctrl+R` on a workspace fetches it right away.
+
+To close the loop: `f` sends a comment to Claude, `p` pushes the fix (and opens a draft MR the
+first time), `v` resolves the thread with a "Fixed in <commit>" reply you can edit. The **Pipeline** tab (`4`) shows each stage and job
 with its status and duration.
 
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub

@@ -657,6 +657,14 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         banner.push(Line::from(vec![s(format!("!{} ", mr.iid), fg(colors().accent).bold()), s(mr.title.clone(), fg(colors().fg))]));
         banner.push(Line::from(vec![pipeline_symbol(mr.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted)), s(format!("  ·  {} open thread{}", mr.threads.len(), plural(mr.threads.len())), fg(colors().dim))]));
     }
+    if let Some(g) = &ws.git {
+        let branch = g.branch.as_deref().unwrap_or_default();
+        if ws.mr.is_none() && !branch.is_empty() && !matches!(branch, "main" | "master") {
+            banner.push(Line::from(s("No merge request yet · p pushes and opens a draft", fg(colors().dim))));
+        } else if g.ahead > 0 {
+            banner.push(Line::from(s(format!("{} commit{} not pushed · p pushes", g.ahead, plural(g.ahead as usize)), fg(colors().dim))));
+        }
+    }
     let body = match app.tab {
         0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(colors().muted)))],
         0 => agents
@@ -809,8 +817,10 @@ fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option
 
 fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
     let active = app.focus == Focus::Reply;
-    let placeholder = if let Some((_, mr, _)) = app.current_thread() {
-        format!("Reply on !{} in GitLab · r to type, Enter posts", mr.iid)
+    let placeholder = if app.resolving {
+        "Enter resolves the thread; write something first to post it as a reply".to_string()
+    } else if let Some((_, mr, _)) = app.current_thread() {
+        format!("Reply on !{} in GitLab · r to type, v to resolve, Enter posts", mr.iid)
     } else if app.current_agent().unwrap().needs_permission() {
         let a = app.current_agent().unwrap();
         format!("Answer {}: y approves, d denies, or write what to do instead", a.name())
@@ -820,7 +830,7 @@ fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(fg(if active { colors().accent } else { colors().border }))
-        .title(s(" Reply ", fg(if active { colors().bright } else { colors().muted })))
+        .title(s(if app.resolving { " Resolve " } else { " Reply " }, fg(if active { colors().bright } else { colors().muted })))
         .style(Style::new().bg(colors().panel));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -959,7 +969,7 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
     let [head, body_area, reply_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)]).areas(inner);
-    let hint = Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · ↵ opens it in GitLab", fg(colors().dim))]);
+    let hint = Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · v resolves", fg(colors().dim))]);
     f.render_widget(Paragraph::new(vec![Line::default(), hint]), head);
     let mut lines = vec![];
     for n in &th.notes {
@@ -1058,6 +1068,8 @@ const HELP: &[(&str, &str)] = &[
     ("Enter", "open the thread in GitLab"),
     ("r", "reply in the thread"),
     ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
+    ("v", "resolve the thread, with an optional reply (\"Fixed in <commit>\")"),
+    ("p", "push the workspace's branch; opens a draft merge request if it has none"),
     ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
     ("", ""),
     ("", "From any terminal"),
