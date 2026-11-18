@@ -2,6 +2,8 @@
 
 One place for your Claude Code sessions and the terminals around them.
 
+![The hub with three workspaces, one agent waiting for permission](docs/screenshot.png)
+
 The hub lists your **workspaces**, the ones that need you first. A workspace is a directory
 with its Claude sessions, shells and editors. Under each workspace you see its **agents**
 (every running Claude session, titled by its task, with status and what it does right now)
@@ -25,7 +27,8 @@ yourself.
 
 ## Install
 
-Requires Rust (cargo) and tmux.
+Requires Linux (the hub reads `/proc`), tmux, Rust (cargo) and Claude Code. `e` opens
+nvim, so install it if you want that key.
 
 ```sh
 cargo install --path .
@@ -33,6 +36,23 @@ cargo install --path .
 
 This puts `claude-hub` in `~/.cargo/bin`. Run `cargo install --path .` again after
 pulling changes; the next `claude-hub` restarts the hub UI on the new binary.
+
+### Install the hooks
+
+The hub gets the status of each agent from Claude Code hooks:
+
+```sh
+claude-hub install-hooks
+```
+
+This adds `claude-hub report` to the hooks in `~/.claude/settings.json`. It replaces
+older claude-hub hooks, including the `hook.sh` of the Python version. The command shows what it
+changes and asks first. It saves a backup as `settings.json.bak`.
+
+The hook runs on every Claude tool call, so it does almost nothing: it stores the latest
+event per session (about 3 ms) and the hub picks it up at once.
+
+Only Claude sessions started after this report status.
 
 ## Configure (optional)
 
@@ -49,21 +69,6 @@ theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-ni
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
-
-## Install the hooks
-
-```sh
-claude-hub install-hooks
-```
-
-This adds `claude-hub report` to the hooks in `~/.claude/settings.json`. It replaces
-older claude-hub hooks, including the `hook.sh` of the Python version. The command shows what it
-changes and asks first. It saves a backup as `settings.json.bak`.
-
-The hook runs on every Claude tool call, so it does almost nothing: it stores the latest
-event per session (about 3 ms) and the hub picks it up at once.
-
-Only Claude sessions started after this report status.
 
 ## Run
 
@@ -94,6 +99,8 @@ picker after you clone a new repo.
 | Where | Key | Action |
 |---|---|---|
 | Anywhere | `Alt+Q` or click **◀ Claude Hub** | Back to the hub |
+| Hub | `j` / `k` or `↓` / `↑` | Move down / up |
+| Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F` | First / last row, page up / down |
 | Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
@@ -101,9 +108,13 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
+| Hub | `m` | Mark the agent as done, so it stops showing as waiting |
+| Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
+| Hub | `Tab` / `Shift+Tab` or `1`–`3` | Switch the tab in the detail panel |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
+| Hub | `?` | Help |
 | Hub | `q` | Leave. Everything keeps running |
 
 Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
@@ -121,7 +132,9 @@ it into the agent's terminal for you. When an agent asks for permission, `y` app
 denies, and the panel shows the tool call it wants to run.
 
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
-shows their status and messages and can reply to them, but cannot jump to them.
+shows their status and messages and can reply to them, but cannot jump to them. Press `a`
+to adopt one: the hub stops the process and resumes the session with `claude --resume` in
+a new window of the workspace for its directory.
 
 Mouse: a click selects a row. A second click on the selected row (or a double-click)
 opens it. Click a terminal in the detail panel to jump to it.
@@ -138,6 +151,5 @@ cost come from the same file.
 - New terminals open instantly because the hub keeps one started shell per workspace in
   a hidden `_pool` session, and starts one for the directory you highlight in the picker.
   Turn it off with `prewarm = false`.
-
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
 - To stop everything: `tmux -L claude-hub kill-server`.
