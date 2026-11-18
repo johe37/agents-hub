@@ -1198,8 +1198,11 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_toast(f: &mut Frame, app: &App, area: Rect) {
     let Some(t) = &app.toast else { return };
-    let w = (t.text.chars().count() as u16 + 4).min(area.width.saturating_sub(4)).max(10);
-    let lines = (t.text.chars().count() as u16 / w.saturating_sub(4).max(1)) + 1;
+    // The link shows without its scheme; the full address is what Ctrl+click opens.
+    let shown = t.link.as_deref().map(|u| format!("↗ {}", u.split_once("://").map_or(u, |(_, rest)| rest)));
+    let widest = shown.as_deref().map_or(0, |l| l.chars().count()).max(t.text.chars().count());
+    let w = (widest as u16 + 4).min(area.width.saturating_sub(4)).max(10);
+    let lines = (t.text.chars().count() as u16 / w.saturating_sub(4).max(1)) + 1 + u16::from(shown.is_some());
     let ms = t.at.elapsed().as_millis() as f32;
     let ease = 1.0 - (1.0 - (ms / 220.0).min(1.0)).powi(3);
     let slide = ((w + 2) as f32 * (1.0 - ease)) as u16;
@@ -1209,14 +1212,20 @@ fn draw_toast(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let (color, icon) = if t.error { (colors().error, "✗") } else { (colors().success, "✓") };
-    let fade = ((ms - 3200.0) / 800.0).clamp(0.0, 1.0);
+    let fade = ((ms - t.life().as_millis() as f32 + 800.0) / 800.0).clamp(0.0, 1.0);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(fg(lerp(color, colors().border, fade)))
         .title(s(format!(" {icon} "), fg(color).bold()))
         .style(Style::new().bg(colors().panel));
+    let inner = block.inner(rect);
     f.render_widget(Paragraph::new(s(t.text.clone(), fg(lerp(colors().bright, colors().muted, fade)))).wrap(Wrap { trim: true }).block(block), rect);
+    if let (Some(shown), Some(url)) = (shown, &t.link) {
+        let row = Rect { y: inner.bottom().saturating_sub(1), height: 1, ..inner };
+        f.render_widget(Paragraph::new(s(cell(&shown, row.width as usize), fg(colors().accent))), row);
+        link_row(f, row, url);
+    }
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
