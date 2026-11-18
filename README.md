@@ -83,7 +83,7 @@ picker after you clone a new repo.
 | Where | Key | Action |
 |---|---|---|
 | Workspace | Click **◀ Claude Hub** | Back to the hub (or tmux prefix + `s`, pick `_hub`) |
-| Hub | `Enter` | Open the agent or the workspace |
+| Hub | `Enter` | Open the conversation, or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
 | Hub | `x` | Close the agent or the workspace |
@@ -93,6 +93,10 @@ picker after you clone a new repo.
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `q` | Leave. Everything keeps running |
+| Conversation | `r`, `y` / `d` | Reply, approve, deny |
+| Conversation | `t` | The agent's terminal, for when you need it |
+| Conversation | `End` | Jump to the newest step |
+| Conversation | `Esc` / `q` | Back to the list |
 
 Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
 to go back), the workspace name and path, its windows (click to switch) and how many
@@ -101,10 +105,15 @@ Claude sessions wait for you.
 Opening a directory that already has a workspace jumps to it instead of creating a
 second one.
 
-You answer agents from the hub. Press `r`, type a message and press `Enter`: the hub types
-it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
-denies, and the panel shows the tool call it wants to run. You handle several waiting agents
-without leaving the list.
+`Enter` on an agent opens its **conversation**: your prompts, Claude's replies rendered as
+Markdown, and every tool call as a line you can click to see its result. The view follows the
+agent live. It is read from the transcript, so it works for every session, also those started
+outside the hub.
+
+You answer agents without a terminal. Press `r`, type a message and press `Enter`: the hub
+types it into the agent's terminal for you. When an agent asks for permission, `y` approves and
+`d` denies, and the view shows the tool call it wants to run. This works both in the list and in
+the conversation. The terminal itself is one key away (`t`) for the times you need it.
 
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them.
