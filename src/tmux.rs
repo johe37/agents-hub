@@ -153,6 +153,7 @@ set -g pane-active-border-style "fg={accent}"
 set -g mode-style "bg={selection},fg={bright}"
 bind -n MouseDown1Status if -F "#{{==:#{{mouse_status_range}},hub}}" "new-session -A -s {HUB_SESSION} {hub_cmd}" "select-window -t ="
 bind -n {key} new-session -A -s {HUB_SESSION} {hub_cmd}
+set -g @hub_key {key}
 # The session and window lists hide the pool of spare shells.
 bind s choose-tree -Zs -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"
 bind w choose-tree -Zw -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"
@@ -193,7 +194,14 @@ pub fn server_running() -> bool {
     run(&["list-sessions"]).is_some_and(|o| o.status.success())
 }
 
-pub fn source_config(config: &str) {
+pub fn source_config(config: &str, hub_key: &str) {
+    // source-file adds bindings but never removes them, so drop the previous hub key first.
+    // Servers started before @hub_key existed used the old default, C-q.
+    let old = run(&["show-options", "-gqv", "@hub_key"]).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let old = old.filter(|k| !k.is_empty()).unwrap_or_else(|| "C-q".into());
+    if old != hub_key {
+        run(&["unbind-key", "-n", &old]);
+    }
     run(&["source-file", config]);
 }
 
