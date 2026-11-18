@@ -1049,7 +1049,7 @@ const HELP: &[(&str, &str)] = &[
     ("r", "reply: type a message, Enter sends it to the agent"),
     ("y / d", "approve / deny a permission prompt"),
     ("j k / arrows", "move   g G  top / bottom"),
-    ("Tab / 1 2 3 4", "switch the panel tab: chat, changes, windows, pipeline"),
+    ("h l / ← → / Tab", "previous / next panel tab: chat, changes, windows, pipeline (or 1–4)"),
     ("PgUp / PgDn", "scroll the detail panel"),
     ("/", "filter, Esc clears"),
     ("q", "leave (everything keeps running)"),

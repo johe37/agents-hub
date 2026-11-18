@@ -111,7 +111,7 @@ picker after you clone a new repo.
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
-| Hub | `Tab` / `Shift+Tab` or `1`–`4` | Switch the tab in the detail panel |
+| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel |
 | Thread | `Enter` / `r` / `f` | Open in GitLab / reply in the thread / put it in Claude's prompt |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |

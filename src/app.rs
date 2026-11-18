@@ -779,8 +779,8 @@ impl App {
                 self.build_rows();
             }
             KeyCode::Enter => self.act(Action::Open),
-            KeyCode::Tab => self.act(Action::Tab((self.tab + 1) % 4)),
-            KeyCode::BackTab => self.act(Action::Tab((self.tab + 3) % 4)),
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.act(Action::Tab((self.tab + 1) % 4)),
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.act(Action::Tab((self.tab + 3) % 4)),
             KeyCode::Char(c @ '1'..='4') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
