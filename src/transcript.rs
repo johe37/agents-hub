@@ -16,6 +16,8 @@ pub struct Transcript {
     pub last_prompt: Option<String>,
     pub last_text: Option<String>,
     pub last_tool: Option<String>,
+    /// Name and full input of the last tool call, to show exactly what a permission prompt is about.
+    pub last_tool_call: Option<(String, Value)>,
     pub model: Option<String>,
     pub turns: u32,
     pub cost_usd: Option<f64>,
@@ -102,7 +104,10 @@ fn apply(t: &mut Transcript, r: &Value) {
                             t.last_text = Some(tail(text, TEXT_LIMIT));
                         }
                     }
-                    Some("tool_use") => t.last_tool = tool_summary(block["name"].as_str(), &block["input"]),
+                    Some("tool_use") => {
+                        t.last_tool = tool_summary(block["name"].as_str(), &block["input"]);
+                        t.last_tool_call = block["name"].as_str().map(|n| (n.to_string(), block["input"].clone()));
+                    }
                     _ => {}
                 }
             }
@@ -192,6 +197,7 @@ mod tests {
         assert_eq!(t.title.as_deref(), Some("Bug fix"));
         assert_eq!(t.last_text.as_deref(), Some("done"));
         assert_eq!(t.last_tool.as_deref(), Some("Bash: ls"));
+        assert_eq!(t.last_tool_call.as_ref().map(|(n, i)| (n.as_str(), i["command"].as_str())), Some(("Bash", Some("ls\nrm"))));
         apply(&mut t, &json!({"type": "user", "message": {"content": "next"}}));
         assert_eq!(t.last_text, None);
     }

@@ -180,6 +180,39 @@ The title of an agent comes from its transcript: the title Claude Code gives the
 or the first prompt until then. The last message, the last request, the model and the
 cost come from the same file.
 
+## Town view
+
+```sh
+claude-hub town            # opens the town in your browser
+claude-hub town --demo     # a made-up town, to see what it looks like
+```
+
+The same data as the hub, drawn as a small pixel art town. Every workspace is a house,
+and so is every repo where an agent runs. Every agent is a person:
+
+| You see | It means |
+|---|---|
+| Someone at a window, a tool icon above the roof (✎ edit, 🔍 search, ⚙ bash…) | Working |
+| Someone outside the door with a blinking **!**, and a **!** over the roof | Needs your permission |
+| Someone on the bench with a **?** bubble (a plain bubble when done) | Waits for your reply, or is done |
+| **z z z** | Asleep: idle for longer than `stale_minutes`, or stale |
+| A tent in the camp at the edge of town | Runs outside the hub |
+
+On the houses, scaffolding or loose bricks mean uncommitted changes, a raised flag on the
+mailbox means commits to push, and a letter in it means commits to pull. A cottage without a
+mailbox is not a git repo. Smoking chimneys are terminals running something, lamp posts are
+open editors, and lit windows mean someone is active there. Hover a house for its branch.
+
+Click a house or a person to open the panel: what the agent waits for, the exact tool call
+it wants to run, your last request, its last reply, changed files, model and cost. You can
+reply, approve and deny from there, just like `r`, `y` and `d` in the hub. The counter in the
+corner shows how many agents wait for you; click it to go to the next one. Drag to move,
+scroll to zoom. The town follows your clock, and dark mode makes it night.
+
+The server listens on 127.0.0.1 only. The page gets a random token in its URL, and the
+server refuses requests without it or from other origins, so other web pages cannot see
+your agents or answer them. Options: `--port N`, `--no-open`.
+
 ## Notes
 
 - The hub's tmux server loads your own `~/.tmux.conf` first, so your prefix and key

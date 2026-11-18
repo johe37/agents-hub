@@ -872,20 +872,14 @@ impl App {
         self.modal = Some(Modal::Confirm { question, then, yes: false, done: None });
     }
 
-    /// Keys that answer Claude Code's permission dialog: Enter takes the highlighted "Yes", Escape declines.
     fn answer(&mut self, approve: bool) {
-        let Some(a) = self.current_agent().filter(|a| a.needs_permission()) else { return };
-        let (what, key) = if approve { ("Approved", "Enter") } else { ("Denied", "Escape") };
-        self.send(a.clone(), what, |sock, pane| tmux::send_key(sock, pane, key));
+        let Some(a) = self.current_agent().filter(|a| a.needs_permission()).cloned() else { return };
+        self.send(&a, a.answer(approve));
     }
 
-    fn send(&mut self, a: Agent, what: &str, f: impl Fn(&str, &str) -> Result<(), String>) {
-        let Some((sock, pane)) = &a.target else {
-            self.notify("The hub does not know where this agent reads its input.", true);
-            return;
-        };
-        match f(sock, pane) {
-            Ok(()) => self.notify(format!("{what} → {}", a.title()), false),
+    fn send(&mut self, a: &Agent, result: Result<&str, String>) {
+        match result {
+            Ok(what) => self.notify(format!("{what} → {}", a.title()), false),
             Err(e) => self.notify(e, true),
         }
         self.refresh();
@@ -905,15 +899,11 @@ impl App {
             return;
         }
         let Some(a) = self.current_agent().cloned() else { return };
-        let lower = text.to_lowercase();
-        if a.needs_permission() && matches!(lower.as_str(), "y" | "yes") {
-            self.answer(true);
-        } else if a.needs_permission() && matches!(lower.as_str(), "n" | "no" | "d") {
-            self.answer(false);
-        } else {
+        let result = a.respond(&text);
+        if result == Ok("Sent") {
             self.sent.insert(a.key.clone(), (text.clone(), Instant::now()));
-            self.send(a, "Sent", |sock, pane| tmux::send_text(sock, pane, &text));
         }
+        self.send(&a, result);
     }
 
     /// Post the text in the selected thread, if any, then mark the thread resolved.

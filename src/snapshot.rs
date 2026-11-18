@@ -104,6 +104,34 @@ impl Agent {
         self.status == Status::Waiting
             && self.session.as_ref().is_some_and(|s| s.notification_type.as_deref() == Some("permission_prompt"))
     }
+
+    fn input_pane(&self) -> Result<(&str, &str), String> {
+        self.target.as_ref().map(|(s, p)| (s.as_str(), p.as_str())).ok_or_else(|| "The hub does not know where this agent reads its input.".into())
+    }
+
+    /// Answer Claude Code's permission dialog: Enter takes the highlighted "Yes", Escape declines.
+    /// Returns what was done, for a confirmation message.
+    pub fn answer(&self, approve: bool) -> Result<&'static str, String> {
+        if !self.needs_permission() {
+            return Err("This agent does not ask for permission now.".into());
+        }
+        let (sock, pane) = self.input_pane()?;
+        let (what, key) = if approve { ("Approved", "Enter") } else { ("Denied", "Escape") };
+        tmux::send_key(sock, pane, key).map(|_| what)
+    }
+
+    /// y/n answers a permission prompt; anything else is typed to the agent and sent.
+    pub fn respond(&self, text: &str) -> Result<&'static str, String> {
+        let lower = text.to_lowercase();
+        if self.needs_permission() && matches!(lower.as_str(), "y" | "yes") {
+            self.answer(true)
+        } else if self.needs_permission() && matches!(lower.as_str(), "n" | "no" | "d") {
+            self.answer(false)
+        } else {
+            let (sock, pane) = self.input_pane()?;
+            tmux::send_text(sock, pane, text).map(|_| "Sent")
+        }
+    }
 }
 
 pub fn basename(path: &str) -> String {
@@ -183,10 +211,13 @@ struct Collector {
     need_scan: bool,
     /// Transcripts of live agents. Claude writes its replies there without a hook event.
     watched: Vec<String>,
+    /// Collect what only the TUI shows: terminal previews, merge requests and pooled shells.
+    tui: bool,
 }
 
 /// Start the collector thread. It sends a Snapshot whenever data may have changed.
-pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Receiver<Snapshot>) {
+/// With `tui` false (the town) it skips terminal previews, merge requests and pooled shells.
+pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>, tui: bool) -> (Sender<Cmd>, Receiver<Snapshot>) {
     let (cmd_tx, cmd_rx) = channel();
     let (snap_tx, snap_rx) = channel();
     std::thread::spawn(move || {
@@ -208,6 +239,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             transcripts: TranscriptCache::default(),
             screens,
             cfg,
+            tui,
         };
         c.run(cmd_rx, snap_tx);
     });
@@ -316,12 +348,16 @@ impl Collector {
             .collect();
 
         let mut workspaces = self.workspaces(&panes, &in_hub);
-        self.previews(&mut workspaces, &all_panes);
+        if self.tui {
+            self.previews(&mut workspaces, &all_panes);
+        }
 
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
         for (ws, st) in workspaces.iter_mut().zip(statuses) {
-            ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b));
+            if self.tui {
+                ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b));
+            }
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
@@ -339,11 +375,13 @@ impl Collector {
                 recent.push(s.cwd.clone());
             }
         }
-        if self.cfg.prewarm {
+        if self.tui && self.cfg.prewarm {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
-        self.fill_claude(&all_panes);
+        if self.tui {
+            self.fill_claude(&all_panes);
+        }
         let pool = tmux::list_all_panes();
         Snapshot {
             workspaces,
@@ -586,7 +624,7 @@ impl Collector {
 
     fn prewarm(&mut self, path: Option<String>) {
         self.speculative = path.clone();
-        let Some(path) = path.filter(|p| self.cfg.prewarm && std::path::Path::new(p).is_dir()) else { return };
+        let Some(path) = path.filter(|p| self.tui && self.cfg.prewarm && std::path::Path::new(p).is_dir()) else { return };
         let current = tmux::spares(&tmux::list_all_panes());
         if !current.iter().any(|(p, _)| *p == path) {
             tmux::spawn_spare(&path);

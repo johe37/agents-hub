@@ -11,6 +11,7 @@ mod snapshot;
 mod state;
 mod theme;
 mod tmux;
+mod town;
 mod transcript;
 mod ui;
 mod usage;
@@ -20,12 +21,13 @@ use std::process::ExitCode;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | town [--port N] [--no-open] [--demo] | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
+  town            show your workspaces as a pixel art town in the browser
   report          hook handler: read hook JSON from stdin
   statusline      status line command: store plan usage for the hub
   install-hooks   add claude-hub hooks and status line to ~/.claude/settings.json";
@@ -69,7 +71,7 @@ fn run_ui(cfg: config::Config) -> ExitCode {
         tmux::hide_hub_status();
     }
     let screens = std::sync::Arc::default();
-    let (cmd, snaps) = snapshot::spawn(cfg.clone(), std::sync::Arc::clone(&screens));
+    let (cmd, snaps) = snapshot::spawn(cfg.clone(), std::sync::Arc::clone(&screens), true);
     let mouse = cfg.mouse;
     let mut app = app::App::new(cfg.clone(), cmd, screens);
     let mut term = ratatui::init();
@@ -110,6 +112,11 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             ExitCode::SUCCESS
         }
+        Some("town") if args[1..].iter().any(|a| a == "-h" || a == "--help") => {
+            println!("{}", town::USAGE);
+            ExitCode::SUCCESS
+        }
+        Some("town") => town::run(config::load(), &args[1..]),
         Some("ui") => {
             let mut cfg = config::load();
             cfg.mouse &= !args.iter().any(|a| a == "--no-mouse");

@@ -85,7 +85,7 @@ fn pill(text: String, fg_c: Color, bg_c: Color, on: Color) -> Vec<Span<'static>>
     vec![s("\u{e0b6}", fg(bg_c).bg(on)), s(text, fg(fg_c).bg(bg_c).bold()), s("\u{e0b4}", fg(bg_c).bg(on))]
 }
 
-fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
+pub(crate) fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
     match kind? {
         "permission_prompt" => Some("Needs your permission"),
         "idle_prompt" => Some("Waiting for your input"),
@@ -500,7 +500,7 @@ fn markdown(text: &str) -> Vec<Line<'static>> {
 
 
 /// What the agent is doing, and one line of detail.
-fn headline(a: &Agent) -> (String, Option<String>) {
+pub(crate) fn headline(a: &Agent) -> (String, Option<String>) {
     let sess = a.session.as_ref();
     let t = a.transcript.as_ref();
     match a.status {
