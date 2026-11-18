@@ -16,6 +16,9 @@ use crate::theme::{colors, css};
 use crate::tmux::{self, Pane, POOL_SESSION};
 use crate::transcript::{Transcript, TranscriptCache};
 
+/// Window name prefix for `claude attach` windows.
+pub const ATTACH_PREFIX: &str = "attach:";
+
 #[derive(Clone)]
 pub struct Window {
     pub index: u32,
@@ -31,7 +34,8 @@ pub struct Window {
 
 impl Window {
     pub fn is_claude(&self) -> bool {
-        self.claude.is_some() || self.command == "claude"
+        // An attach window shows a background agent that already has its own row.
+        (self.claude.is_some() || self.command == "claude") && !self.name.starts_with(ATTACH_PREFIX)
     }
 }
 
@@ -41,6 +45,7 @@ pub struct Workspace {
     pub path: String,
     pub windows: Vec<Window>,
     pub git: Option<GitStatus>,
+    pub mr: Option<crate::gitlab::Mr>,
 }
 
 /// One Claude session: in a hub workspace, outside the hub, or a claude window without hook data.
@@ -62,6 +67,8 @@ pub struct Agent {
     pub pid: Option<u32>,
     /// For agents without hook data, found through the registry.
     transcript_path: Option<String>,
+    /// Lives in Claude Code's background daemon; reached with `claude attach`.
+    pub background: bool,
 }
 
 impl Agent {
@@ -115,6 +122,8 @@ pub enum Cmd {
     Rescan,
     /// Keep a shell ready for the directory highlighted in the picker.
     Prewarm(Option<String>),
+    /// Fetch the merge request of the workspace at this path again.
+    ForgetMr(String),
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -127,6 +136,7 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> 
 struct Collector {
     cfg: Config,
     git: GitCache,
+    mrs: Arc<crate::gitlab::MrCache>,
     transcripts: TranscriptCache,
     screens: ScreenCache,
     hub_socket: String,
@@ -147,6 +157,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
             git: GitCache::default(),
+            mrs: Default::default(),
             transcripts: TranscriptCache::default(),
             screens: ScreenCache::default(),
             cfg,
@@ -187,6 +198,10 @@ impl Collector {
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::Prewarm(path)) => self.prewarm(path),
+                Ok(Cmd::ForgetMr(path)) => {
+                    self.mrs.forget(&path);
+                    last = Instant::now() - interval;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -228,6 +243,7 @@ impl Collector {
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
         for (ws, st) in workspaces.iter_mut().zip(statuses) {
+            ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b));
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
@@ -269,22 +285,28 @@ impl Collector {
         for (_, wp) in by_window {
             let active = wp.iter().find(|p| p.active).unwrap_or(&wp[0]);
             let claude = wp.iter().find_map(|p| claude_by_pane.get(&p.pane_id)).cloned();
+            // In a split window, replies must reach Claude's pane even when a shell next to it has focus.
+            let main = wp
+                .iter()
+                .find(|p| claude_by_pane.contains_key(&p.pane_id))
+                .or_else(|| wp.iter().find(|p| p.command == "claude"))
+                .unwrap_or(active);
             let w = Window {
                 index: active.window_index,
                 name: active.window_name.clone(),
                 window_id: active.window_id.clone(),
-                pane_id: active.pane_id.clone(),
-                command: active.command.clone(),
+                pane_id: main.pane_id.clone(),
+                command: main.command.clone(),
                 claude,
-                width: active.width,
-                height: active.height,
+                width: main.width,
+                height: main.height,
                 screen: None,
             };
             match result.iter_mut().find(|ws| ws.name == active.session) {
                 Some(ws) => ws.windows.push(w),
                 None => {
                     let path = if active.workspace_path.is_empty() { &active.session_path } else { &active.workspace_path };
-                    result.push(Workspace { name: active.session.clone(), path: path.clone(), windows: vec![w], git: None });
+                    result.push(Workspace { name: active.session.clone(), path: path.clone(), windows: vec![w], git: None, mr: None });
                 }
             }
         }
@@ -326,6 +348,7 @@ impl Collector {
                     window_name: Some(w.name.clone()),
                     path: ws.path.clone(),
                     transcript: None,
+                    background: false,
                     git: ws.git.clone(),
                     target: Some((hub.clone(), w.pane_id.clone())),
                 });
@@ -337,6 +360,7 @@ impl Collector {
             // Same session, or the same pane when the registry lags behind a /clear.
             let l = live.iter().position(|l| l.session_id == s.session_id || s.tmux_socket.as_deref().zip(s.tmux_pane.as_deref()).is_some_and(|(sock, p)| in_pane(l, sock, p))).map(|i| live.swap_remove(i));
             agents.push(Agent {
+                background: l.as_ref().is_some_and(|l| l.background),
                 pid: l.map(|l| l.pid),
                 transcript_path: None,
                 key: format!("agent:{}", s.session_id),
@@ -364,9 +388,14 @@ impl Collector {
                 transcript_path: transcript_for(&l.cwd, &l.session_id),
                 target: l.tmux,
                 pid: Some(l.pid),
+                background: l.background,
                 path: l.cwd,
                 transcript: None,
             });
+        }
+        // A background session has no pane to place it by, so it goes to the workspace holding its directory.
+        for a in agents.iter_mut().filter(|a| a.background && a.workspace.is_none()) {
+            a.workspace = workspaces.iter().filter(|w| a.path == w.path || a.path.starts_with(&format!("{}/", w.path))).max_by_key(|w| w.path.len()).map(|w| w.name.clone());
         }
         // Recently closed sessions, so they can be resumed; skip ones already running again.
         let closed: Vec<Session> = closed
@@ -391,6 +420,7 @@ impl Collector {
                 window_id: None,
                 window_name: None,
                 transcript: None,
+                background: false,
                 git: st,
             });
         }

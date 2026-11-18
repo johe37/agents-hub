@@ -111,7 +111,8 @@ picker after you clone a new repo.
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
-| Hub | `Tab` / `Shift+Tab` or `1`–`3` | Switch the tab in the detail panel |
+| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel |
+| Thread | `Enter` / `r` / `f` | Open in GitLab / reply in the thread / put it in Claude's prompt |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `?` | Help |
@@ -130,6 +131,14 @@ back. Alt+Q is free in Claude Code and nvim, and it is easy to reach with the le
 Quick answers do not need the trip. Press `r`, type a message and press `Enter`: the hub types
 it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
 denies, and the panel shows the tool call it wants to run.
+
+**Merge requests.** When a workspace's branch has a GitLab merge request, its row shows
+`!140 ✓  2`: the MR, its pipeline (✓ passed, ✗ failed, ⟳ running) and its unresolved review
+threads. Each thread is listed under the workspace. Select one to read it, `r` to reply in
+GitLab, `f` to put it in the workspace's Claude prompt and jump there (edit it, then `Enter` sends), `Enter` to open it in the browser. This
+uses `glab`, so run `glab auth login` once. MR data refreshes every minute in the background,
+every 10 seconds while a pipeline runs. `Ctrl+R` on a workspace fetches it right away. The **Pipeline** tab (`4`) shows each stage and job
+with its status and duration.
 
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them. Press `a`
