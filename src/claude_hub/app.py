@@ -9,9 +9,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.markup import escape
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.suggester import Suggester
-from textual.widgets import Button, Footer, Input, Label, OptionList, Static
+from textual.widgets import Button, Collapsible, Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from . import fuzzy, tmux
@@ -20,6 +20,7 @@ from .config import Config
 from .git import GitStatus
 from .snapshot import Agent, Collector, Snapshot, Workspace, shorten
 from .state import STATUS_STYLE, age
+from .transcript import Entry, Transcript
 
 WINDOW_KINDS = {"claude": "claude", "shell": None, "nvim": "nvim"}
 
@@ -27,7 +28,7 @@ HELP = """\
 [b]claude-hub[/b]
 
 [b]Agents[/b]
-  Enter           open the agent (or the workspace)
+  Enter           open the conversation (or the workspace)
   n               open a workspace (fuzzy search or type a path)
   c / t / e       new Claude / terminal / nvim in the workspace
   x               close the agent or workspace
@@ -38,6 +39,14 @@ HELP = """\
   PgUp / PgDn     scroll the detail panel
   /               filter, Esc clears
   q               leave (everything keeps running)
+
+[b]In a conversation[/b]
+  r               reply, Enter sends
+  y / d           approve / deny a permission prompt
+  t               the agent's terminal, for when you need it
+  Esc / q         back to the list
+  j k / PgUp PgDn scroll, End jumps to the newest step
+  Click a tool call to see its result.
 
 [b]From any workspace[/b]
   Click ◀ Claude Hub in the top bar, or use your tmux prefix + s
@@ -329,6 +338,7 @@ DENY_KEYS = ("Escape",)
 FILE_STYLE = {"?": T.SUCCESS, "A": T.SUCCESS, "D": T.ERROR, "R": T.INFO, "U": T.ERROR}
 MAX_FILES = 20
 MAX_MESSAGE_LINES = 40
+MAX_ENTRIES = 150
 
 
 def git_text(g: GitStatus | None) -> Text:
@@ -364,7 +374,7 @@ def status_line(a: Agent) -> tuple[Text, Text]:
         if s.notification_type == "permission_prompt" and t and t.last_tool:
             detail.append(("\n" if detail else "") + t.last_tool[:200], style=T.FG)
         if a.target:
-            detail.append("\ny approves · d denies · r replies", style=T.MUTED)
+            detail.append("\ny approves · d denies · r replies · Enter opens the conversation", style=T.MUTED)
     elif a.status == "working":
         head.append("Working" + when, style=T.INFO)
         tool = (s.tool if s else None) or (t.last_tool if t else None)
@@ -542,6 +552,189 @@ class DetailPanel(VerticalScroll):
             lines.append(f"[@click=app.open_window({ws.name!r}, {w.window_id!r})]{label}[/]{command}{marker}")
         lines.append(f"[{T.MUTED}]t new terminal · e nvim · c Claude[/]")
         return "\n".join(lines)
+
+
+def needs_permission(a: Agent) -> bool:
+    return a.status == "waiting" and a.session is not None and a.session.notification_type == "permission_prompt"
+
+
+def reply_placeholder(a: Agent) -> str:
+    if needs_permission(a):
+        return f"Answer {a.name}: y approves, d denies, or write what to do instead"
+    return f"Message to {a.name} · r to type, Enter sends"
+
+
+def tool_title(e: Entry) -> str:
+    mark = "…" if e.result is None else ("✗" if e.is_error else "✓")
+    return f"{mark} {e.text[:140]}"
+
+
+class ConversationScreen(Screen):
+    """The agent's conversation, read from its transcript. Replies go to its terminal."""
+
+    DEFAULT_CSS = """
+    ConversationScreen { background: $background; }
+    #conv-top { height: 2; background: $surface; border-bottom: solid #2B2B2B; padding: 0 1; }
+    #log { height: 1fr; padding: 0 2; scrollbar-size: 1 1; }
+    #log .user { background: #2A2D2E; border-left: thick #0078D4; padding: 0 1; margin: 1 0 0 0; }
+    #log .assistant { padding: 0 1; margin: 1 0 0 0; }
+    #log .note { color: $text-muted; text-style: italic; padding: 0 1; }
+    #log Collapsible { margin: 0 0 0 1; padding: 0; border: none; background: $background; }
+    #log CollapsibleTitle { color: #9D9D9D; padding: 0; }
+    #log CollapsibleTitle:hover { color: #FFFFFF; background: #2A2D2E; }
+    #log Collapsible.error CollapsibleTitle { color: #F85149; }
+    #log Collapsible > Contents { padding: 0 0 0 3; }
+    #log .result { color: #9D9D9D; }
+    #conv-state { height: auto; padding: 0 2; margin-top: 1; }
+    #ask { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "back", "Back"),
+        Binding("q", "back", show=False),
+        Binding("r", "reply", "Reply"),
+        Binding("y", "approve", "Approve"),
+        Binding("d", "deny", "Deny"),
+        Binding("t", "terminal", "Terminal"),
+        Binding("end", "bottom", "Newest"),
+        Binding("j", "scroll_log(1)", show=False),
+        Binding("k", "scroll_log(-1)", show=False),
+    ]
+
+    def __init__(self, key: str) -> None:
+        super().__init__()
+        self.key = key
+        self.agent_now: Agent | None = None
+        self._version = -1
+        self._mounted = 0
+        self._pending: dict[int, Collapsible] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="conv-top")
+        yield VerticalScroll(id="log")
+        yield Static("", id="conv-state")
+        yield Input(placeholder="", id="ask")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#log").focus()
+        self.tick()
+        self.set_interval(1.0, self.tick)
+
+    @work(thread=True, exclusive=True, group="conversation")
+    def tick(self) -> None:
+        app: HubApp = self.app
+        agent = app.agent(self.key)
+        path = agent.session.transcript_path if agent and agent.session else None
+        transcript = app.collector.transcripts.get(path)
+        app.call_from_thread(self.apply, agent, transcript)
+
+    def apply(self, agent: Agent | None, t: Transcript | None) -> None:
+        if agent is not None:
+            self.agent_now = agent
+        a = self.agent_now
+        top = Text()
+        if a is None:
+            top.append("This agent is gone.", style=T.MUTED)
+        else:
+            top.append(f" ✻ {a.title}", style=f"bold {T.BRIGHT}")
+            top.append(f"   {a.name}  ", style=T.MUTED)
+            top.append_text(git_text(a.git))
+            if agent is None:
+                top.append("   ended", style=T.DIM)
+        self.query_one("#conv-top", Static).update(top)
+        if a is not None:
+            head, detail = status_line(a)
+            self.query_one("#conv-state", Static).update(Text.assemble(head, "  ", detail.split("\n")[0] if detail else ""))
+            self.query_one("#ask", Input).placeholder = reply_placeholder(a)
+        self.refresh_bindings()
+        if t is None or t.version == self._version:
+            return
+        self._version = t.version
+        self._show_entries(t)
+
+    def _show_entries(self, t: Transcript) -> None:
+        log = self.query_one("#log", VerticalScroll)
+        first = self._mounted == 0
+        at_bottom = first or log.scroll_y >= log.max_scroll_y - 1
+
+        for index, widget in list(self._pending.items()):
+            e = t.entries[index]
+            if e.result is not None:
+                widget.title = tool_title(e)
+                widget.set_class(e.is_error, "error")
+                widget.query_one(".result", Static).update(Text(e.result or "(no output)"))
+                del self._pending[index]
+
+        start = self._mounted
+        widgets = []
+        if first and len(t.entries) > MAX_ENTRIES:
+            start = len(t.entries) - MAX_ENTRIES
+            widgets.append(Static(f"… {start} earlier steps not shown", classes="note"))
+        for index in range(start, len(t.entries)):
+            e = t.entries[index]
+            if e.kind == "user":
+                widgets.append(Static(Text(e.text), classes="user"))
+            elif e.kind == "assistant":
+                widgets.append(Static(Markdown(e.text, code_theme="github-dark"), classes="assistant"))
+            else:
+                body = Static(Text(e.result if e.result is not None else "running…"), classes="result")
+                box = Collapsible(body, title=tool_title(e), collapsed=True, classes="error" if e.is_error else "")
+                if e.result is None:
+                    self._pending[index] = box
+                widgets.append(box)
+        self._mounted = len(t.entries)
+        if widgets:
+            log.mount(*widgets)
+            if at_bottom:
+                self.call_after_refresh(log.scroll_end, animate=False)
+
+    def check_action(self, action: str, parameters: tuple) -> bool:
+        # False hides the key in the footer; None would only grey it out.
+        a = self.agent_now
+        if action in ("approve", "deny"):
+            return bool(a and needs_permission(a))
+        if action == "reply":
+            return bool(a and a.target)
+        if action == "terminal":
+            return bool(a and a.in_hub)
+        return True
+
+    def action_back(self) -> None:
+        if self.query_one("#ask", Input).has_focus:
+            self.query_one("#log").focus()
+        else:
+            self.dismiss()
+
+    def action_reply(self) -> None:
+        if self.agent_now and self.agent_now.target:
+            self.query_one("#ask", Input).focus()
+
+    def action_approve(self) -> None:
+        if self.agent_now and needs_permission(self.agent_now):
+            self.app._send(self.agent_now, "Approved", tmux.send_keys, *APPROVE_KEYS)
+
+    def action_deny(self) -> None:
+        if self.agent_now and needs_permission(self.agent_now):
+            self.app._send(self.agent_now, "Denied", tmux.send_keys, *DENY_KEYS)
+
+    def action_terminal(self) -> None:
+        if self.agent_now:
+            self.app.open_terminal(self.agent_now)
+
+    def action_bottom(self) -> None:
+        self.query_one("#log", VerticalScroll).scroll_end(animate=False)
+
+    def action_scroll_log(self, direction: int) -> None:
+        log = self.query_one("#log", VerticalScroll)
+        log.scroll_relative(y=3 * direction, animate=False)
+
+    @on(Input.Submitted, "#ask")
+    def on_ask(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        self.query_one("#ask", Input).value = ""
+        self.query_one("#log").focus()
+        if text and self.agent_now:
+            self.app.send_reply(self.agent_now, text)
 
 
 class HubApp(App):
@@ -755,23 +948,27 @@ class HubApp(App):
         agent = row if isinstance(row, Agent) and row.target else None
         reply.set_class(agent is not None, "visible")
         if agent is not None:
-            if self._needs_permission(agent):
-                reply.placeholder = f"Answer {agent.name}: y approves, d denies, or write what to do instead"
-            else:
-                reply.placeholder = f"Message to {agent.name} · r to type, Enter sends"
+            reply.placeholder = reply_placeholder(agent)
         self.refresh_bindings()
 
     @staticmethod
     def _needs_permission(a: Agent) -> bool:
-        return a.status == "waiting" and a.session is not None and a.session.notification_type == "permission_prompt"
+        return needs_permission(a)
 
-    def check_action(self, action: str, parameters: tuple) -> bool | None:
+    def agent(self, key: str) -> Agent | None:
+        if self.snapshot is None:
+            return None
+        return next((a for a in self.snapshot.agents if a.key == key), None)
+
+    def check_action(self, action: str, parameters: tuple) -> bool:
+        if action in ("filter", "help") and isinstance(self.screen, ConversationScreen):
+            return action == "help"
         if action in ("approve", "deny"):
             row = self._current()
-            return True if isinstance(row, Agent) and self._needs_permission(row) else None
+            return isinstance(row, Agent) and self._needs_permission(row)
         if action == "reply":
             row = self._current()
-            return True if isinstance(row, Agent) and row.target else None
+            return isinstance(row, Agent) and bool(row.target)
         return True
 
     def _send(self, agent: Agent, what: str, fn, *args) -> None:
@@ -801,21 +998,30 @@ class HubApp(App):
         if isinstance(row, Agent) and row.target:
             self.query_one("#reply", Input).focus()
 
+    def send_reply(self, agent: Agent, text: str) -> None:
+        """Interpret a typed reply: y/n answers a permission prompt, anything else is typed to the agent."""
+        if self._needs_permission(agent) and text.lower() in ("y", "yes"):
+            self._send(agent, "Approved", tmux.send_keys, *APPROVE_KEYS)
+        elif self._needs_permission(agent) and text.lower() in ("n", "no", "d"):
+            self._send(agent, "Denied", tmux.send_keys, *DENY_KEYS)
+        else:
+            self._send(agent, "Sent", tmux.send_text, text)
+
+    def open_terminal(self, agent: Agent) -> None:
+        if agent.in_hub:
+            self._run(tmux.jump_to_window, agent.workspace.name, agent.window.window_id)
+        else:
+            where = f"tmux session '{agent.session.tmux_session}'" if agent.session and agent.session.tmux_session else "its own terminal"
+            self.notify(f"This agent runs outside Claude Hub, in {where}. Switch to it there.")
+
     @on(Input.Submitted, "#reply")
     def on_reply_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         row = self._current()
-        box = self.query_one("#reply", Input)
-        box.value = ""
+        self.query_one("#reply", Input).value = ""
         self.query_one(AgentList).focus()
-        if not text or not isinstance(row, Agent):
-            return
-        if self._needs_permission(row) and text.lower() in ("y", "yes"):
-            self._send(row, "Approved", tmux.send_keys, *APPROVE_KEYS)
-        elif self._needs_permission(row) and text.lower() in ("n", "no", "d"):
-            self._send(row, "Denied", tmux.send_keys, *DENY_KEYS)
-        else:
-            self._send(row, "Sent", tmux.send_text, text)
+        if text and isinstance(row, Agent):
+            self.send_reply(row, text)
 
     @on(OptionList.OptionHighlighted)
     def on_highlighted(self) -> None:
@@ -836,11 +1042,7 @@ class HubApp(App):
     def on_selected(self) -> None:
         row = self._current()
         if isinstance(row, Agent):
-            if row.in_hub:
-                self._run(tmux.jump_to_window, row.workspace.name, row.window.window_id)
-            else:
-                where = f"tmux session '{row.session.tmux_session}'" if row.session and row.session.tmux_session else "its own terminal"
-                self.notify(f"This agent runs outside Claude Hub, in {where}. Switch to it there.")
+            self.push_screen(ConversationScreen(row.key))
         elif isinstance(row, Workspace):
             self._run(tmux.switch_client, row.name)
 
