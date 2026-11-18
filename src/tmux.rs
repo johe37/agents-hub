@@ -129,6 +129,8 @@ source-file -q ~/.tmux.conf
 source-file -q ~/.config/tmux/tmux.conf
 set -g default-terminal "tmux-256color"
 set -as terminal-features ",*:RGB"
+# Pass clickable links (OSC 8) on to your terminal.
+set -as terminal-features ",*:hyperlinks"
 set -g escape-time 10
 set -g mouse on
 set -g history-limit 50000

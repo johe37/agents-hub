@@ -212,10 +212,6 @@ pub fn head(cwd: &str) -> Option<String> {
     run(cwd, 5, "git", &["rev-parse", "--short", "HEAD"]).ok().map(|s| s.trim().to_string())
 }
 
-pub fn open(url: &str) -> Result<(), String> {
-    Command::new("xdg-open").arg(url).spawn().map(|_| ()).map_err(|e| format!("xdg-open: {e}"))
-}
-
 /// Push the checked-out branch, setting its upstream on the first push, then open a draft MR when asked.
 pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
     let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();

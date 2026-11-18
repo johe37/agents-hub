@@ -525,10 +525,7 @@ impl App {
             Some(Row::Thread(..)) => {
                 let Some((_, mr, th)) = self.current_thread() else { return };
                 let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
-                if let Err(e) = crate::gitlab::open(&url) {
-                    self.notify(e, true);
-                }
-                return;
+                return self.open_url(&url);
             }
             Some(Row::Terminal(wi, ti)) => {
                 let ws = &self.snap.workspaces[wi];
@@ -537,6 +534,14 @@ impl App {
             _ => return,
         };
         self.finish(r);
+    }
+
+    /// Open url in a browser on this machine; without a display (over SSH) point to the clickable link instead.
+    fn open_url(&mut self, url: &str) {
+        let display = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        if !(display && std::process::Command::new("xdg-open").arg(url).spawn().is_ok()) {
+            self.notify("No browser on this machine: Ctrl+click the link in the panel instead", false);
+        }
     }
 
     fn new_window(&mut self, kind: &'static str) {

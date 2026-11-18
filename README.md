@@ -145,6 +145,10 @@ To close the loop: `f` sends a comment to Claude, `p` pushes the fix (and opens 
 first time), `v` resolves the thread with a "Fixed in <commit>" reply you can edit. The **Pipeline** tab (`4`) shows each stage and job
 with its status and duration.
 
+Links in the panel (the `!140` line of an MR, "Open the thread in GitLab") are real terminal
+hyperlinks: Ctrl+click (Cmd+click on macOS) opens them in the browser of the computer you sit
+at, also over SSH.
+
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them. Press `a`
 to adopt one: the hub stops the process and resumes the session with `claude --resume` in
