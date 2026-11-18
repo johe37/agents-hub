@@ -58,7 +58,7 @@ impl Default for Config {
             refresh_seconds: 2.0,
             stale_minutes: 60.0,
             prewarm: true,
-            hub_key: "C-q".into(),
+            hub_key: "M-q".into(),
             theme: "dark-modern".into(),
         }
     }
