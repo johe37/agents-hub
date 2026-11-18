@@ -1,7 +1,7 @@
 //! Gathers tmux, hook, git and transcript data into a Snapshot, on a background thread.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -115,6 +115,8 @@ pub struct Snapshot {
     pub recent_dirs: Vec<String>,
     pub spares: HashMap<String, String>,
     pub dirs: Arc<Vec<(String, bool)>>,
+    /// Results of background jobs since the last snapshot, as (text, is_error), for toasts.
+    pub notices: Vec<(String, bool)>,
 }
 
 pub enum Cmd {
@@ -124,6 +126,8 @@ pub enum Cmd {
     Prewarm(Option<String>),
     /// Fetch the merge request of the workspace at this path again.
     ForgetMr(String),
+    /// Push the branch checked out at path, opening a draft merge request when asked.
+    Publish { path: String, open_mr: bool },
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -137,6 +141,7 @@ struct Collector {
     cfg: Config,
     git: GitCache,
     mrs: Arc<crate::gitlab::MrCache>,
+    notices: Arc<Mutex<Vec<(String, bool)>>>,
     transcripts: TranscriptCache,
     screens: ScreenCache,
     hub_socket: String,
@@ -158,6 +163,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
             speculative: None,
             git: GitCache::default(),
             mrs: Default::default(),
+            notices: Default::default(),
             transcripts: TranscriptCache::default(),
             screens: ScreenCache::default(),
             cfg,
@@ -201,6 +207,15 @@ impl Collector {
                 Ok(Cmd::ForgetMr(path)) => {
                     self.mrs.forget(&path);
                     last = Instant::now() - interval;
+                }
+                // Its own thread: a push can take a while, and status updates must keep flowing meanwhile.
+                Ok(Cmd::Publish { path, open_mr }) => {
+                    let (mrs, notices) = (Arc::clone(&self.mrs), Arc::clone(&self.notices));
+                    std::thread::spawn(move || {
+                        let r = crate::gitlab::publish(&path, open_mr);
+                        mrs.forget(&path);
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Push failed: {e}"), true), |m| (m, false)));
+                    });
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -270,6 +285,7 @@ impl Collector {
             recent_dirs: recent,
             spares: tmux::spares(&tmux::list_all_panes()).into_iter().collect(),
             dirs: self.dirs.clone(),
+            notices: std::mem::take(&mut *self.notices.lock().unwrap()),
         }
     }
 

@@ -88,14 +88,34 @@ impl Thread {
 }
 
 fn glab(cwd: &str, args: &[&str]) -> Result<String, String> {
-    // coreutils timeout, so a slow GitLab cannot hang the caller.
-    let out = Command::new("timeout").arg("20").arg("glab").args(args).current_dir(cwd).output().map_err(|e| format!("glab: {e}"))?;
+    run(cwd, 20, "glab", args)
+}
+
+/// Run a program in cwd. On failure, the line of its error output that says what went wrong.
+fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, String> {
+    // coreutils timeout, so a slow GitLab or remote cannot hang the caller.
+    let out = Command::new("timeout")
+        .arg(secs.to_string())
+        .arg(program)
+        .args(args)
+        .current_dir(cwd)
+        // Never wait for a password prompt nobody can see.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{program}: {e}"))?;
     if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        let err = String::from_utf8_lossy(&out.stderr);
-        Err(err.lines().find(|l| !l.trim().is_empty()).unwrap_or("glab failed").trim().to_string())
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }
+    Err(failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or(format!("{program} failed")))
+}
+
+/// The line of error output that says what went wrong.
+fn failure(stderr: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    // git push starts with "To <remote>"; the useful part is the error or rejection further down.
+    let line = lines.iter().find(|l| l.starts_with("error:") || l.starts_with("fatal:") || l.starts_with("! [")).or(lines.first());
+    line.map(|l| l.to_string())
 }
 
 fn parse_mr(v: &Value) -> Option<Mr> {
@@ -181,9 +201,39 @@ pub fn reply(cwd: &str, mr: &Mr, thread: &str, body: &str) -> Result<(), String>
     glab(cwd, &["api", "-X", "POST", &path, "-f", &format!("body={body}")]).map(|_| ())
 }
 
+/// Mark a review thread resolved.
+pub fn resolve(cwd: &str, mr: &Mr, thread: &str) -> Result<(), String> {
+    let path = format!("projects/{}/merge_requests/{}/discussions/{thread}", mr.project_id, mr.iid);
+    glab(cwd, &["api", "-X", "PUT", &path, "-f", "resolved=true"]).map(|_| ())
+}
+
+/// The short id of the commit checked out in cwd.
+pub fn head(cwd: &str) -> Option<String> {
+    run(cwd, 5, "git", &["rev-parse", "--short", "HEAD"]).ok().map(|s| s.trim().to_string())
+}
+
 pub fn open(url: &str) -> Result<(), String> {
     Command::new("xdg-open").arg(url).spawn().map(|_| ()).map_err(|e| format!("xdg-open: {e}"))
 }
+
+/// Push the checked-out branch, setting its upstream on the first push, then open a draft MR when asked.
+pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
+    let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
+    if run(cwd, 5, "git", &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
+        run(cwd, 120, "git", &["push"])?;
+    } else {
+        let remotes = run(cwd, 5, "git", &["remote"])?;
+        let remote = remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string();
+        run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
+    }
+    if !open_mr {
+        return Ok(format!("Pushed {branch}"));
+    }
+    let out = glab(cwd, &["mr", "create", "--draft", "--fill", "--yes"])?;
+    let url = out.lines().map(str::trim).find(|l| l.contains("/merge_requests/")).unwrap_or_default();
+    Ok(format!("Pushed {branch} and opened a draft merge request {url}"))
+}
+
 
 /// MRs per (workspace path, branch). Lookups never wait for the network: a stale entry starts a fetch in the background.
 #[derive(Default)]
@@ -261,5 +311,13 @@ mod tests {
         assert!(mr.running());
         mr.pipeline = Some("success".into());
         assert!(!mr.running());
+    }
+
+    #[test]
+    fn failure_skips_the_push_preamble() {
+        let push = "To git.basalt.se:lubo/x.git\n ! [rejected]        b -> b (fetch first)\nerror: failed to push some refs\n";
+        assert_eq!(failure(push).as_deref(), Some("! [rejected]        b -> b (fetch first)"));
+        assert_eq!(failure("\n  404 Not Found\n").as_deref(), Some("404 Not Found"));
+        assert_eq!(failure(""), None);
     }
 }

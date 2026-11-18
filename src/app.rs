@@ -47,12 +47,15 @@ pub enum Action {
     MarkDone,
     NextWaiting,
     Forward,
+    Resolve,
+    Publish,
     Confirm(bool),
 }
 
 pub enum Modal {
     Help,
-    Confirm { question: String, then: Box<dyn Fn() -> Res>, yes: bool },
+    /// `done` is shown when `then` succeeds.
+    Confirm { question: String, then: Box<dyn Fn() -> Res>, yes: bool, done: Option<String> },
     Rename { from: String, input: Input },
     Picker(Picker),
 }
@@ -92,6 +95,8 @@ pub struct App {
     pub filter: Input,
     pub reply: Input,
     pub focus: Focus,
+    /// The reply box resolves the selected review thread instead of only replying.
+    pub resolving: bool,
     pub modal: Option<Modal>,
     pub toast: Option<Toast>,
     pub detail_scroll: u16,
@@ -126,6 +131,7 @@ impl App {
             filter: Input::default(),
             reply: Input::default(),
             focus: Focus::List,
+            resolving: false,
             modal: None,
             toast: None,
             detail_scroll: 0,
@@ -190,6 +196,9 @@ impl App {
             }
         }
         self.changed.retain(|_, t| t.elapsed() < FLASH);
+        for (text, error) in &snap.notices {
+            self.notify(text.clone(), *error);
+        }
         self.snap = snap;
         self.loaded = true;
         self.build_rows();
@@ -382,6 +391,11 @@ impl App {
     /// show here when the side panel is hidden. The rest are in help.
     pub fn actions(&self, side_visible: bool) -> Vec<(&'static str, &'static str, Action)> {
         let mut v = vec![];
+        if !side_visible && self.current_thread().is_some() {
+            v.push(("r", "reply", Action::Reply));
+            v.push(("v", "resolve", Action::Resolve));
+            v.push(("f", "to claude", Action::Forward));
+        }
         if !side_visible && let Some(a) = self.current_agent() {
             if a.status == Status::Waiting && a.target.is_some() {
                 if a.needs_permission() {
@@ -421,6 +435,14 @@ impl App {
                 }
             }
             Action::Forward => self.forward(),
+            Action::Resolve => {
+                let Some((ws, _, _)) = self.current_thread() else { return };
+                let text = crate::gitlab::head(&ws.path).map_or(String::new(), |sha| format!("Fixed in {sha}."));
+                self.reply.set(&text);
+                self.resolving = true;
+                self.focus = Focus::Reply;
+            }
+            Action::Publish => self.publish(),
             Action::Reply => {
                 if self.current_agent().is_some_and(|a| a.target.is_some()) || self.current_thread().is_some() {
                     self.focus = Focus::Reply;
@@ -446,9 +468,12 @@ impl App {
             }
             Action::JumpWindow(session, window) => self.finish(tmux::jump_to_window(&session, &window)),
             Action::Confirm(yes) => {
-                if let Some(Modal::Confirm { then, .. }) = self.modal.take() {
+                if let Some(Modal::Confirm { then, done, .. }) = self.modal.take() {
                     if yes {
                         let r = then();
+                        if let (Ok(()), Some(text)) = (&r, done) {
+                            self.notify(text, false);
+                        }
                         self.finish(r);
                     }
                 }
@@ -567,7 +592,7 @@ impl App {
         let path = a.path.clone();
         let cut = if matches!(a.status, Status::Working | Status::Waiting) { " It is in the middle of a turn, which gets cut off." } else { "" };
         let question = format!("Adopt '{}'? It stops where it runs now and continues in a Claude Hub workspace for {}.{cut}", a.title(), shorten(&path));
-        self.modal = Some(Modal::Confirm { question, then: Box::new(move || tmux::adopt(pid, &id, &path)), yes: false });
+        self.modal = Some(Modal::Confirm { question, then: Box::new(move || tmux::adopt(pid, &id, &path)), yes: false, done: None });
     }
 
     fn close(&mut self) {
@@ -581,7 +606,7 @@ impl App {
                         Ok(o) => Err(Fail::Error(format!("claude stop: {}", String::from_utf8_lossy(&o.stderr).trim()))),
                         Err(e) => Err(Fail::Error(format!("claude stop: {e}"))),
                     };
-                    self.modal = Some(Modal::Confirm { question: format!("Stop background agent '{}'? This ends its Claude session.", a.title()), then: Box::new(stop), yes: false });
+                    self.modal = Some(Modal::Confirm { question: format!("Stop background agent '{}'? This ends its Claude session.", a.title()), then: Box::new(stop), yes: false, done: None });
                     return;
                 }
                 let (Some(ws), Some(w)) = (a.workspace.clone(), a.window_id.clone()) else {
@@ -603,7 +628,7 @@ impl App {
             _ => return,
         };
         // Start on No, so a stray Enter never closes anything.
-        self.modal = Some(Modal::Confirm { question, then, yes: false });
+        self.modal = Some(Modal::Confirm { question, then, yes: false, done: None });
     }
 
     /// Keys that answer Claude Code's permission dialog: Enter takes the highlighted "Yes", Escape declines.
@@ -647,6 +672,35 @@ impl App {
         } else {
             self.send(a, "Sent", |sock, pane| tmux::send_text(sock, pane, &text));
         }
+    }
+
+    /// Post the text in the selected thread, if any, then mark the thread resolved.
+    fn resolve(&mut self, text: String) {
+        let Some((ws, mr, th)) = self.current_thread() else { return };
+        let (path, done) = (ws.path.clone(), format!("Resolved the thread at {} on !{}", th.place(), mr.iid));
+        let r = (if text.is_empty() { Ok(()) } else { crate::gitlab::reply(&path, mr, &th.id, &text) }).and_then(|()| crate::gitlab::resolve(&path, mr, &th.id));
+        match r {
+            Ok(()) => self.notify(done, false),
+            Err(e) => self.notify(format!("GitLab: {e}"), true),
+        }
+        let _ = self.cmd.send(Cmd::ForgetMr(path));
+    }
+
+    /// Push the workspace's branch after asking, and open a draft merge request when it has none.
+    fn publish(&mut self) {
+        let Some(ws) = self.current_workspace() else { return };
+        let Some(branch) = ws.git.as_ref().and_then(|g| g.branch.clone()) else {
+            self.notify("This workspace is not on a git branch", true);
+            return;
+        };
+        let open_mr = ws.mr.is_none() && !matches!(branch.as_str(), "main" | "master");
+        let what = if open_mr { " and open a draft merge request" } else { "" };
+        let (cmd, path) = (self.cmd.clone(), ws.path.clone());
+        let then = move || {
+            let _ = cmd.send(Cmd::Publish { path: path.clone(), open_mr });
+            Ok(())
+        };
+        self.modal = Some(Modal::Confirm { question: format!("Push {branch}{what}?"), then: Box::new(then), yes: false, done: Some(format!("Pushing {branch}…")) });
     }
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
@@ -747,11 +801,18 @@ impl App {
             }
             Focus::Reply => {
                 match k.code {
-                    KeyCode::Esc => self.focus = Focus::List,
+                    KeyCode::Esc => {
+                        self.focus = Focus::List;
+                        if std::mem::take(&mut self.resolving) {
+                            self.reply = Input::default();
+                        }
+                    }
                     KeyCode::Enter => {
                         let text = std::mem::take(&mut self.reply).text.trim().to_string();
                         self.focus = Focus::List;
-                        if !text.is_empty() {
+                        if std::mem::take(&mut self.resolving) {
+                            self.resolve(text);
+                        } else if !text.is_empty() {
                             self.send_reply(text);
                         }
                     }
@@ -792,6 +853,8 @@ impl App {
             KeyCode::Char('m') => self.act(Action::MarkDone),
             KeyCode::Char('w') => self.act(Action::NextWaiting),
             KeyCode::Char('f') => self.act(Action::Forward),
+            KeyCode::Char('v') => self.act(Action::Resolve),
+            KeyCode::Char('p') => self.act(Action::Publish),
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),
