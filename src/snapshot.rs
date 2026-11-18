@@ -45,6 +45,7 @@ pub struct Workspace {
     pub path: String,
     pub windows: Vec<Window>,
     pub git: Option<GitStatus>,
+    pub mr: Option<crate::gitlab::Mr>,
 }
 
 /// One Claude session: in a hub workspace, outside the hub, or a claude window without hook data.
@@ -121,6 +122,8 @@ pub enum Cmd {
     Rescan,
     /// Keep a shell ready for the directory highlighted in the picker.
     Prewarm(Option<String>),
+    /// Fetch the merge request of the workspace at this path again.
+    ForgetMr(String),
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -133,6 +136,7 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> 
 struct Collector {
     cfg: Config,
     git: GitCache,
+    mrs: Arc<crate::gitlab::MrCache>,
     transcripts: TranscriptCache,
     screens: ScreenCache,
     hub_socket: String,
@@ -153,6 +157,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
             git: GitCache::default(),
+            mrs: Default::default(),
             transcripts: TranscriptCache::default(),
             screens: ScreenCache::default(),
             cfg,
@@ -193,6 +198,10 @@ impl Collector {
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::Prewarm(path)) => self.prewarm(path),
+                Ok(Cmd::ForgetMr(path)) => {
+                    self.mrs.forget(&path);
+                    last = Instant::now() - interval;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -234,6 +243,7 @@ impl Collector {
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
         for (ws, st) in workspaces.iter_mut().zip(statuses) {
+            ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b));
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
@@ -296,7 +306,7 @@ impl Collector {
                 Some(ws) => ws.windows.push(w),
                 None => {
                     let path = if active.workspace_path.is_empty() { &active.session_path } else { &active.workspace_path };
-                    result.push(Workspace { name: active.session.clone(), path: path.clone(), windows: vec![w], git: None });
+                    result.push(Workspace { name: active.session.clone(), path: path.clone(), windows: vec![w], git: None, mr: None });
                 }
             }
         }

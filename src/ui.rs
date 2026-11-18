@@ -10,6 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::app::{Action, App, FLASH, Focus, Modal, Row};
 use crate::config::shorten;
 use crate::git::GitStatus;
+use crate::gitlab;
 use crate::input::Input;
 use crate::picker::{self, Picker};
 use crate::snapshot::{Agent, Workspace};
@@ -17,6 +18,7 @@ use crate::state::{Status, age};
 use crate::theme::*;
 use crate::tmux::key_label;
 
+const COMMENT: &str = "\u{f0e5}";
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const MAX_MESSAGE_LINES: usize = 40;
 
@@ -282,7 +284,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
     let row = app.rows[i].1;
     let selected = i == app.selected;
     let t = tick(app);
-    let is_child = |j: usize| matches!(app.rows.get(j).map(|r| r.1), Some(Row::Agent(_) | Row::Terminal(..)));
+    let is_child = |j: usize| matches!(app.rows.get(j).map(|r| r.1), Some(Row::Agent(_) | Row::Terminal(..) | Row::Thread(..)));
     let branch = if is_child(i + 1) { "├─ " } else { "╰─ " };
     let marker = match row {
         _ if selected => s("▌", fg(colors().bright)),
@@ -317,6 +319,22 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             }
             if terms > 0 {
                 r.push(s(format!(" ❯{terms}"), fg(colors().dim)));
+            }
+            if let Some(mr) = &ws.mr {
+                r.push(s(format!("  !{} ", mr.iid), fg(colors().muted)));
+                if mr.state == "opened" {
+                    r.push(pipeline_symbol(mr.pipeline.as_deref()));
+                    if mr.running() && !mr.jobs.is_empty() {
+                        let done = mr.jobs.iter().filter(|j| finished(&j.status)).count();
+                        r.push(s(format!(" {done}/{}", mr.jobs.len()), fg(colors().info)));
+                    }
+                } else {
+                    r.push(s(mr.state.clone(), fg(colors().dim)));
+                }
+                if !mr.threads.is_empty() {
+                    // Nerd Font icons can draw wider than one cell, so the count gets a space of its own.
+                    r.push(s(format!("  {COMMENT} {}", mr.threads.len()), fg(colors().warning)));
+                }
             }
             (l, r)
         }
@@ -365,6 +383,17 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
                 l.extend(detail);
             }
             (l, right)
+        }
+        Row::Thread(wi, ti) => {
+            let th = &app.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti];
+            let mut l = vec![s(branch, fg(colors().border).bold()), s(format!("{COMMENT} "), fg(colors().warning))];
+            if let Some(n) = th.notes.first() {
+                l.push(s(n.author.clone(), fg(colors().fg).bold()));
+                l.push(s(format!("  {}", th.place()), fg(colors().muted)));
+                l.push(s(format!("  {}", n.body.split_whitespace().collect::<Vec<_>>().join(" ")), fg(colors().dim)));
+            }
+            let replies = th.notes.len().saturating_sub(1);
+            (l, if replies > 0 { vec![s(format!("↩{replies}"), fg(colors().dim))] } else { vec![] })
         }
         Row::Terminal(wi, ti) => {
             let win = &app.snap.workspaces[wi].windows[ti];
@@ -553,7 +582,7 @@ struct Side {
     color: Color,
     banner: Vec<Line<'static>>,
     buttons: Vec<(&'static str, &'static str, Color, Action)>,
-    tabs: [(&'static str, usize); 3],
+    tabs: [(&'static str, usize); 4],
     body: Vec<Line<'static>>,
 }
 
@@ -591,6 +620,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     let body = match app.tab {
         0 => chat_lines(a),
         1 => change_lines(git),
+        3 => pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t),
         _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(colors().muted)))],
         _ => vec![],
     };
@@ -600,7 +630,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
         color,
         banner,
         buttons,
-        tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len()))],
+        tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len())), ("Pipeline", ws.and_then(|w| w.mr.as_ref()).map_or(0, |m| m.jobs.len()))],
         body,
     }
 }
@@ -622,6 +652,11 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     };
     let mut banner = vec![Line::from(vec![symbol, s(format!(" {head}"), fg(color).bold())])];
     banner.extend(detail.map(|d| Line::from(s(d, fg(colors().muted)))));
+    if let Some(mr) = &ws.mr {
+        let status = [mr.pipeline.as_deref().map(|p| format!("pipeline {p}")), mr.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+        banner.push(Line::from(vec![s(format!("!{} ", mr.iid), fg(colors().accent).bold()), s(mr.title.clone(), fg(colors().fg))]));
+        banner.push(Line::from(vec![pipeline_symbol(mr.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted)), s(format!("  ·  {} open thread{}", mr.threads.len(), plural(mr.threads.len())), fg(colors().dim))]));
+    }
     let body = match app.tab {
         0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(colors().muted)))],
         0 => agents
@@ -639,6 +674,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
             })
             .collect(),
         1 => change_lines(ws.git.as_ref()),
+        3 => pipeline_lines(ws.mr.as_ref(), t),
         _ => vec![],
     };
     Side {
@@ -647,7 +683,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         color,
         banner,
         buttons: vec![],
-        tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len())],
+        tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
         body,
     }
 }
@@ -656,6 +692,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let t = tick(app);
     let (wi, side) = match app.current() {
         Some(Row::Terminal(wi, ti)) => return draw_terminal(f, app, area, wi, ti),
+        Some(Row::Thread(..)) => return draw_thread(f, app, area),
         Some(Row::Agent(i)) => {
             let a = &app.snap.agents[i];
             let wi = a.workspace.as_ref().and_then(|n| app.snap.workspaces.iter().position(|w| &w.name == n));
@@ -772,11 +809,13 @@ fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option
 
 fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
     let active = app.focus == Focus::Reply;
-    let a = app.current_agent().unwrap();
-    let placeholder = if a.needs_permission() {
+    let placeholder = if let Some((_, mr, _)) = app.current_thread() {
+        format!("Reply on !{} in GitLab · r to type, Enter posts", mr.iid)
+    } else if app.current_agent().unwrap().needs_permission() {
+        let a = app.current_agent().unwrap();
         format!("Answer {}: y approves, d denies, or write what to do instead", a.name())
     } else {
-        format!("Message to {} · r to type, Enter sends", a.name())
+        format!("Message to {} · r to type, Enter sends", app.current_agent().unwrap().name())
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -830,6 +869,108 @@ fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize)
             f.render_widget(Paragraph::new(lines[skip..].to_vec()).style(fg(colors().fg)), screen_inner);
         }
     }
+}
+
+fn pipeline_symbol(status: Option<&str>) -> Span<'static> {
+    match status {
+        Some("success") => s("✓", fg(colors().success)),
+        Some("failed") => s("✗", fg(colors().error)),
+        Some("running" | "pending" | "created" | "preparing" | "waiting_for_resource") => s("⟳", fg(colors().info)),
+        Some(_) => s("·", fg(colors().dim)),
+        None => s("", Style::new()),
+    }
+}
+
+fn finished(status: &str) -> bool {
+    matches!(status, "success" | "failed" | "canceled" | "skipped")
+}
+
+fn job_symbol(status: &str, t: u128) -> Span<'static> {
+    match status {
+        "success" => s("✓", fg(colors().success)),
+        "failed" => s("✗", fg(colors().error).bold()),
+        "running" => s(SPINNER[(t / 80) as usize % SPINNER.len()], fg(colors().info)),
+        "manual" => s("▸", fg(colors().muted)),
+        "canceled" | "skipped" => s("⊘", fg(colors().dim)),
+        _ => s("○", fg(colors().dim)),
+    }
+}
+
+/// The status a stage shows: its most pressing job.
+fn stage_status<'a>(jobs: &[&'a gitlab::Job]) -> &'a str {
+    let rank = |s: &str| match s {
+        "failed" => 0,
+        "running" => 1,
+        "pending" | "created" | "preparing" | "waiting_for_resource" => 2,
+        "manual" => 3,
+        "success" => 4,
+        _ => 5,
+    };
+    jobs.iter().map(|j| j.status.as_str()).min_by_key(|s| rank(s)).unwrap_or("created")
+}
+
+fn duration(secs: f64) -> String {
+    let secs = secs.round() as u64;
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m{:02}s", secs / 60, secs % 60),
+        _ => format!("{}h{:02}m", secs / 3600, secs % 3600 / 60),
+    }
+}
+
+/// The head pipeline: a strip of stages, then every job under its stage.
+fn pipeline_lines(mr: Option<&gitlab::Mr>, t: u128) -> Vec<Line<'static>> {
+    let Some(mr) = mr else { return vec![Line::from(s("No merge request for this branch.", fg(colors().muted)))] };
+    if mr.jobs.is_empty() {
+        return vec![Line::from(s(format!("!{} has no pipeline yet.", mr.iid), fg(colors().muted)))];
+    }
+    let stages = mr.stages();
+    let mut strip = vec![];
+    for (i, (name, jobs)) in stages.iter().enumerate() {
+        if i > 0 {
+            strip.push(s(" ── ", fg(colors().border)));
+        }
+        let st = stage_status(jobs);
+        strip.push(job_symbol(st, t));
+        strip.push(s(format!(" {name}"), if st == "failed" { fg(colors().error).bold() } else { fg(colors().fg) }));
+    }
+    let mut out = vec![Line::from(strip), Line::default()];
+    for (name, jobs) in &stages {
+        let longest = jobs.iter().filter_map(|j| j.duration).fold(None, |m: Option<f64>, d| Some(m.map_or(d, |m| m.max(d))));
+        out.push(Line::from(vec![
+            job_symbol(stage_status(jobs), t),
+            s(format!(" {name:<30}"), fg(colors().bright).bold()),
+            s(longest.map(duration).unwrap_or_default(), fg(colors().dim)),
+        ]));
+        for j in jobs {
+            let when = j.duration.map(duration).unwrap_or_else(|| if j.status == "running" { "running".into() } else { j.status.clone() });
+            out.push(Line::from(vec![s("   ", Style::new()), job_symbol(&j.status, t), s(format!(" {:<27}", j.name), fg(colors().fg)), s(when, fg(colors().dim))]));
+        }
+        out.push(Line::default());
+    }
+    out
+}
+
+/// A review thread: every note in it, with a reply box below.
+fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some((ws, mr, th)) = app.current_thread() else { return };
+    let block = panel(Line::from(vec![s(format!(" {COMMENT} "), fg(colors().warning)), s(format!("{} ", th.place()), fg(colors().bright).bold())]), false)
+        .title_bottom(Line::from(s(format!(" !{} {} ", mr.iid, mr.title), fg(colors().dim))));
+    let inner = block.inner(area).inner(Margin::new(1, 0));
+    f.render_widget(block, area);
+    let [head, body_area, reply_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)]).areas(inner);
+    let hint = Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · ↵ opens it in GitLab", fg(colors().dim))]);
+    f.render_widget(Paragraph::new(vec![Line::default(), hint]), head);
+    let mut lines = vec![];
+    for n in &th.notes {
+        lines.push(Line::from(s(n.author.clone(), fg(colors().accent).bold())));
+        lines.extend(n.body.lines().map(|l| Line::from(s(l.to_string(), fg(colors().fg)))));
+        lines.push(Line::default());
+    }
+    app.detail_scroll = app.detail_scroll.min((lines.len() as u16).saturating_sub(4));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((app.detail_scroll, 0)), body_area);
+    app.hits.detail = body_area;
+    draw_reply(f, app, reply_area);
 }
 
 // ---- footer, toast, modals ----
@@ -908,10 +1049,16 @@ const HELP: &[(&str, &str)] = &[
     ("r", "reply: type a message, Enter sends it to the agent"),
     ("y / d", "approve / deny a permission prompt"),
     ("j k / arrows", "move   g G  top / bottom"),
-    ("Tab / 1 2 3", "switch the panel tab: chat, changes, windows"),
+    ("Tab / 1 2 3 4", "switch the panel tab: chat, changes, windows, pipeline"),
     ("PgUp / PgDn", "scroll the detail panel"),
     ("/", "filter, Esc clears"),
     ("q", "leave (everything keeps running)"),
+    ("", ""),
+    ("", "Merge request threads (listed under a workspace)"),
+    ("Enter", "open the thread in GitLab"),
+    ("r", "reply in the thread"),
+    ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
+    ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
     ("", ""),
     ("", "From any terminal"),
     ("HUBKEY", "back to the hub, or click ◀ Claude Hub in the top bar"),

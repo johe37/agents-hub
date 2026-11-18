@@ -24,6 +24,8 @@ pub enum Row {
     Agent(usize),
     /// (workspace, window) indexes.
     Terminal(usize, usize),
+    /// (workspace, thread) indexes: an unresolved review thread on the workspace's merge request.
+    Thread(usize, usize),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -44,6 +46,7 @@ pub enum Action {
     Adopt,
     MarkDone,
     NextWaiting,
+    Forward,
     Confirm(bool),
 }
 
@@ -248,27 +251,36 @@ impl App {
 
     pub fn build_rows(&mut self) {
         let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
-        let mut sections: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
+        let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
             let agents = self.agents_of(ws);
             let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_claude()).collect();
+            let threads: Vec<usize> = (0..ws.mr.as_ref().map_or(0, |m| m.threads.len())).collect();
             let branch = ws.git.as_ref().and_then(|g| g.branch.as_deref());
             if self.matches(&[Some(&ws.name), Some(&ws.path), branch]) {
-                sections.push((wi, agents, terminals));
+                sections.push((wi, agents, terminals, threads));
             } else {
                 let agents: Vec<usize> = agents.into_iter().filter(|&i| self.agent_matches(&self.snap.agents[i])).collect();
                 let terminals: Vec<usize> = terminals
                     .into_iter()
                     .filter(|&i| self.matches(&[Some(&ws.windows[i].name), Some(&ws.windows[i].command)]))
                     .collect();
-                if !agents.is_empty() || !terminals.is_empty() {
-                    sections.push((wi, agents, terminals));
+                let threads: Vec<usize> = threads
+                    .into_iter()
+                    .filter(|&i| {
+                        let th = &ws.mr.as_ref().unwrap().threads[i];
+                        let first = th.notes.first();
+                        self.matches(&[th.path.as_deref(), first.map(|n| n.author.as_str()), first.map(|n| n.body.as_str())])
+                    })
+                    .collect();
+                if !agents.is_empty() || !terminals.is_empty() || !threads.is_empty() {
+                    sections.push((wi, agents, terminals, threads));
                 }
             }
         }
 
         let mut rows = vec![];
-        for (wi, agents, terminals) in sections {
+        for (wi, agents, terminals, threads) in sections {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
@@ -278,6 +290,9 @@ impl App {
             }
             for ti in terminals {
                 rows.push((format!("term:{}", self.snap.workspaces[wi].windows[ti].window_id), Row::Terminal(wi, ti)));
+            }
+            for ti in threads {
+                rows.push((format!("thread:{}", self.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti].id), Row::Thread(wi, ti)));
             }
         }
         let section = |alive: bool| -> Vec<usize> {
@@ -327,9 +342,16 @@ impl App {
         }
     }
 
+    pub fn current_thread(&self) -> Option<(&Workspace, &crate::gitlab::Mr, &crate::gitlab::Thread)> {
+        let Some(Row::Thread(wi, ti)) = self.current() else { return None };
+        let ws = self.snap.workspaces.get(wi)?;
+        let mr = ws.mr.as_ref()?;
+        Some((ws, mr, mr.threads.get(ti)?))
+    }
+
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
-            Row::Workspace(i) | Row::Terminal(i, _) => return self.snap.workspaces.get(i),
+            Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
             Row::Agent(i) => self.snap.agents[i].workspace.clone()?,
             _ => return None,
         };
@@ -398,8 +420,9 @@ impl App {
                     self.modal = Some(Modal::Rename { input: Input::new(&from), from });
                 }
             }
+            Action::Forward => self.forward(),
             Action::Reply => {
-                if self.current_agent().is_some_and(|a| a.target.is_some()) {
+                if self.current_agent().is_some_and(|a| a.target.is_some()) || self.current_thread().is_some() {
                     self.focus = Focus::Reply;
                 }
             }
@@ -474,6 +497,14 @@ impl App {
                 }
             }
             Some(Row::Workspace(i)) => tmux::switch_client(&self.snap.workspaces[i].name),
+            Some(Row::Thread(..)) => {
+                let Some((_, mr, th)) = self.current_thread() else { return };
+                let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
+                if let Err(e) = crate::gitlab::open(&url) {
+                    self.notify(e, true);
+                }
+                return;
+            }
             Some(Row::Terminal(wi, ti)) => {
                 let ws = &self.snap.workspaces[wi];
                 tmux::jump_to_window(&ws.name, &ws.windows[ti].window_id)
@@ -596,6 +627,17 @@ impl App {
 
     /// y/n answers a permission prompt; anything else is typed to the agent.
     fn send_reply(&mut self, text: String) {
+        if let Some((ws, mr, th)) = self.current_thread() {
+            let (path, done) = (ws.path.clone(), format!("Replied on !{} at {}", mr.iid, th.place()));
+            match crate::gitlab::reply(&path, mr, &th.id, &text) {
+                Ok(()) => {
+                    self.notify(done, false);
+                    let _ = self.cmd.send(Cmd::ForgetMr(path));
+                }
+                Err(e) => self.notify(format!("GitLab: {e}"), true),
+            }
+            return;
+        }
         let Some(a) = self.current_agent().cloned() else { return };
         let lower = text.to_lowercase();
         if a.needs_permission() && matches!(lower.as_str(), "y" | "yes") {
@@ -604,6 +646,33 @@ impl App {
             self.answer(false);
         } else {
             self.send(a, "Sent", |sock, pane| tmux::send_text(sock, pane, &text));
+        }
+    }
+
+    /// Fetch the selected workspace's merge request now instead of waiting for the next round.
+    fn refresh_mr(&mut self) {
+        let Some(ws) = self.current_workspace() else { return };
+        let (path, text) = (ws.path.clone(), format!("Refreshing the merge request of {}…", ws.name));
+        let _ = self.cmd.send(Cmd::ForgetMr(path));
+        self.notify(text, false);
+    }
+
+    /// Type the selected review thread into the workspace's Claude, preferring one that is free, and go there.
+    /// It does not press Enter: you edit the prompt or send it yourself.
+    fn forward(&mut self) {
+        let Some((ws, mr, th)) = self.current_thread() else { return };
+        let prompt = th.as_prompt(mr);
+        let agents = self.agents_of(ws);
+        let pick = agents.iter().map(|&i| &self.snap.agents[i]).filter(|a| a.target.is_some() && a.status.alive()).min_by_key(|a| a.status != Status::Idle).cloned();
+        match pick {
+            Some(a) => {
+                let (Some((sock, pane)), Some(ws), Some(w)) = (&a.target, &a.workspace, &a.window_id) else { return };
+                match tmux::type_text(sock, pane, &prompt) {
+                    Ok(()) => self.finish(tmux::jump_to_window(ws, w)),
+                    Err(e) => self.notify(e, true),
+                }
+            }
+            None => self.notify("No Claude in this workspace. Press c to start one, then f again.", true),
         }
     }
 
@@ -701,6 +770,7 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.move_by(-(self.rows.len() as isize)),
             KeyCode::Char('G') | KeyCode::End => self.move_by(self.rows.len() as isize),
             KeyCode::Char('f') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(page),
+            KeyCode::Char('r') if k.modifiers.contains(KeyModifiers::CONTROL) => self.refresh_mr(),
             KeyCode::Char('b') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(-page),
             KeyCode::PageDown => self.detail_scroll = self.detail_scroll.saturating_add(self.hits.detail.height.saturating_sub(2)),
             KeyCode::PageUp => self.detail_scroll = self.detail_scroll.saturating_sub(self.hits.detail.height.saturating_sub(2)),
@@ -709,9 +779,9 @@ impl App {
                 self.build_rows();
             }
             KeyCode::Enter => self.act(Action::Open),
-            KeyCode::Tab => self.act(Action::Tab((self.tab + 1) % 3)),
-            KeyCode::BackTab => self.act(Action::Tab((self.tab + 2) % 3)),
-            KeyCode::Char(c @ '1'..='3') => self.act(Action::Tab(c as usize - '1' as usize)),
+            KeyCode::Tab => self.act(Action::Tab((self.tab + 1) % 4)),
+            KeyCode::BackTab => self.act(Action::Tab((self.tab + 3) % 4)),
+            KeyCode::Char(c @ '1'..='4') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
@@ -721,6 +791,7 @@ impl App {
             KeyCode::Char('a') => self.act(Action::Adopt),
             KeyCode::Char('m') => self.act(Action::MarkDone),
             KeyCode::Char('w') => self.act(Action::NextWaiting),
+            KeyCode::Char('f') => self.act(Action::Forward),
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),
