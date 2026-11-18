@@ -1,6 +1,7 @@
 //! Drawing the hub.
 
 use ratatui::Frame;
+use ratatui::buffer::CellDiffOption;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -584,6 +585,8 @@ struct Side {
     buttons: Vec<(&'static str, &'static str, Color, Action)>,
     tabs: [(&'static str, usize); 4],
     body: Vec<Line<'static>>,
+    /// A banner line, by index, that Ctrl+click opens in the browser.
+    link: Option<(usize, String)>,
 }
 
 fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
@@ -632,6 +635,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
         buttons,
         tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len())), ("Pipeline", ws.and_then(|w| w.mr.as_ref()).map_or(0, |m| m.jobs.len()))],
         body,
+        link: None,
     }
 }
 
@@ -652,6 +656,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     };
     let mut banner = vec![Line::from(vec![symbol, s(format!(" {head}"), fg(color).bold())])];
     banner.extend(detail.map(|d| Line::from(s(d, fg(colors().muted)))));
+    let link = ws.mr.as_ref().map(|mr| (banner.len(), mr.url.clone()));
     if let Some(mr) = &ws.mr {
         let status = [mr.pipeline.as_deref().map(|p| format!("pipeline {p}")), mr.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
         banner.push(Line::from(vec![s(format!("!{} ", mr.iid), fg(colors().accent).bold()), s(mr.title.clone(), fg(colors().fg))]));
@@ -693,6 +698,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         buttons: vec![],
         tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
         body,
+        link,
     }
 }
 
@@ -737,6 +743,9 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let banner_inner = banner_block.inner(banner_area);
     f.render_widget(banner_block, banner_area);
     f.render_widget(Paragraph::new(side.banner), banner_inner);
+    if let Some((i, url)) = &side.link {
+        link_row(f, Rect { y: banner_inner.y + *i as u16, height: 1, ..banner_inner }, url);
+    }
     if buttons_h > 0 {
         let mut x = banner_inner.x;
         let y = banner_inner.bottom() - 1;
@@ -881,6 +890,23 @@ fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize)
     }
 }
 
+/// Make what is drawn on row a link (OSC 8): Ctrl+click opens url in the browser of the computer you sit at, over SSH too.
+fn link_row(f: &mut Frame, row: Rect, url: &str) {
+    let buf = f.buffer_mut();
+    let filled: Vec<u16> = (row.left()..row.right()).filter(|&x| buf.cell((x, row.y)).is_some_and(|c| !c.symbol().trim().is_empty())).collect();
+    let (Some(&first), Some(&last)) = (filled.first(), filled.last()) else { return };
+    for x in first..=last {
+        let Some(cell) = buf.cell_mut((x, row.y)) else { continue };
+        let sym = cell.symbol().to_string();
+        if sym.width() != 1 {
+            continue;
+        }
+        cell.set_symbol(&format!("\x1b]8;;{url}\x1b\\{sym}\x1b]8;;\x1b\\"));
+        // The escape codes take no room on screen; without this ratatui would count their length.
+        cell.set_diff_option(CellDiffOption::ForcedWidth(std::num::NonZeroU16::MIN));
+    }
+}
+
 fn pipeline_symbol(status: Option<&str>) -> Span<'static> {
     match status {
         Some("success") => s("✓", fg(colors().success)),
@@ -970,7 +996,9 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(block, area);
     let [head, body_area, reply_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)]).areas(inner);
     let hint = Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · v resolves", fg(colors().dim))]);
-    f.render_widget(Paragraph::new(vec![Line::default(), hint]), head);
+    let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
+    f.render_widget(Paragraph::new(vec![Line::default(), hint, Line::from(s("↗ Open the thread in GitLab (Ctrl+click)", fg(colors().accent)))]), head);
+    link_row(f, Rect { y: head.y + 2, height: 1, ..head }, &url);
     let mut lines = vec![];
     for n in &th.notes {
         lines.push(Line::from(s(n.author.clone(), fg(colors().accent).bold())));
@@ -1065,7 +1093,7 @@ const HELP: &[(&str, &str)] = &[
     ("q", "leave (everything keeps running)"),
     ("", ""),
     ("", "Merge request threads (listed under a workspace)"),
-    ("Enter", "open the thread in GitLab"),
+    ("Enter", "open the thread in GitLab (over SSH: Ctrl+click its link in the panel)"),
     ("r", "reply in the thread"),
     ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
     ("v", "resolve the thread, with an optional reply (\"Fixed in <commit>\")"),
@@ -1186,6 +1214,22 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn link_row_wraps_each_cell_and_keeps_its_width() {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(10, 1)).unwrap();
+        term.draw(|f| {
+            f.render_widget(Paragraph::new("ab c"), f.area());
+            link_row(f, f.area(), "https://x/y");
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        assert_eq!(buf[(0, 0)].symbol(), "\x1b]8;;https://x/y\x1b\\a\x1b]8;;\x1b\\");
+        assert!(buf[(2, 0)].symbol().contains(' '), "the space inside the link is linked too");
+        assert_eq!(buf[(4, 0)].symbol(), " ", "nothing after the text is linked");
+        assert_eq!(buf[(0, 0)].diff_option, CellDiffOption::ForcedWidth(std::num::NonZeroU16::MIN));
+    }
+
     use super::*;
 
     #[test]
