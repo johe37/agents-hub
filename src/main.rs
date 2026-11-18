@@ -36,7 +36,7 @@ fn open_hub(cfg: &config::Config, target: Option<String>) -> ExitCode {
     let exe = exe();
     let conf = tmux::write_config(&exe, &cfg.hub_key);
     if tmux::server_running() {
-        tmux::source_config(&conf);
+        tmux::source_config(&conf, &cfg.hub_key);
     }
     tmux::ensure_hub(&exe, &conf);
     let mut session = tmux::HUB_SESSION.to_string();
