@@ -443,7 +443,9 @@ fn on_socket(socket: &str, args: &[&str]) -> Result<(), String> {
 
 /// Type text into a pane and press Enter, as if the user wrote it.
 pub fn send_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
-    on_socket(socket, &["send-keys", "-t", pane, "-l", "--", text, ";", "send-keys", "-t", pane, "Enter"])
+    // Two calls: tmux reads a trailing ';' in any argument as a command separator and drops it.
+    on_socket(socket, &["send-keys", "-t", pane, "-l", "--", text])?;
+    on_socket(socket, &["send-keys", "-t", pane, "Enter"])
 }
 
 /// Press a named key (Enter, Escape, ...) in a pane.
