@@ -370,6 +370,36 @@ pub fn new_window(session: &str, cwd: &str, name: &str, command: Option<&str>, s
     run_and_switch(session, vec![c])
 }
 
+/// Stop the Claude process and continue its session in a hub workspace for path.
+pub fn adopt(pid: u32, session_id: &str, path: &str) -> Res {
+    if !crate::hooks::valid_id(session_id) {
+        return Err(Fail::Error(format!("Odd session id {session_id:?}, not adopting it")));
+    }
+    let proc_dir = PathBuf::from(format!("/proc/{pid}"));
+    let killed = Command::new("kill").args(["-TERM", &pid.to_string()]).status().is_ok_and(|s| s.success());
+    if !killed && proc_dir.exists() {
+        return Err(Fail::Error("Could not stop the agent, so it was not adopted".into()));
+    }
+    let start = std::time::Instant::now();
+    // Two processes writing one transcript would garble it, so resume only once the old one is gone.
+    while proc_dir.exists() {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            return Err(Fail::Error("The agent did not stop within 5 s, so it was not adopted".into()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    resume(session_id, path)
+}
+
+/// Continue a Claude session in a new window of the hub workspace for path.
+pub fn resume(session_id: &str, path: &str) -> Res {
+    if !crate::hooks::valid_id(session_id) {
+        return Err(Fail::Error(format!("Odd session id {session_id:?}, not resuming it")));
+    }
+    let session = ensure_workspace(path).map_err(Fail::Error)?;
+    new_window(&session, path, "claude", Some(&format!("claude --resume {session_id}")), None)
+}
+
 /// Stream the pane's output to a file, for the preview in the hub.
 pub fn pipe_pane(pane_id: &str, path: &str) {
     run(&["pipe-pane", "-O", "-t", pane_id, &format!("cat >> {}", quote(path))]);

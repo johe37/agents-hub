@@ -1,5 +1,6 @@
 //! Hub state and input handling. Drawing lives in ui.rs.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -7,7 +8,7 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
-use crate::config::Config;
+use crate::config::{Config, shorten};
 use crate::input::Input;
 use crate::picker::{self, Picker};
 use crate::snapshot::{Agent, Cmd, Snapshot, Workspace, basename};
@@ -17,7 +18,8 @@ use crate::tmux::{self, Fail, Res};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Row {
     Gap,
-    Header,
+    /// Section title and how many agents it holds.
+    Header(&'static str, usize),
     Workspace(usize),
     Agent(usize),
     /// (workspace, window) indexes.
@@ -38,6 +40,9 @@ pub enum Action {
     Help,
     Leave,
     JumpWindow(String, String),
+    Tab(usize),
+    Adopt,
+    MarkDone,
     Confirm(bool),
 }
 
@@ -86,14 +91,23 @@ pub struct App {
     pub modal: Option<Modal>,
     pub toast: Option<Toast>,
     pub detail_scroll: u16,
+    /// Detail panel tab: chat or agents, changes, windows.
+    pub tab: usize,
     pub started: Instant,
     pub hits: Hits,
+    /// When each agent reported events, for its sparkline.
+    pub activity: HashMap<String, Vec<Instant>>,
+    /// When each agent last changed status, for the row flash.
+    pub changed: HashMap<String, Instant>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
     rescanning: bool,
     quit: bool,
     pub attach_to: Option<String>,
 }
+
+pub const ACTIVITY_WINDOW: Duration = Duration::from_secs(240);
+pub const FLASH: Duration = Duration::from_millis(1500);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
@@ -114,8 +128,11 @@ impl App {
             modal: None,
             toast: None,
             detail_scroll: 0,
+            tab: 0,
             started: Instant::now(),
             hits: Hits::default(),
+            activity: HashMap::new(),
+            changed: HashMap::new(),
             last_click: None,
             prewarm_pending: None,
             rescanning: false,
@@ -129,8 +146,7 @@ impl App {
         while !self.quit {
             term.draw(|f| crate::ui::draw(f, self))?;
             // Fast ticks only while something animates.
-            let animating = self.snap.agents.iter().any(|a| matches!(a.status, Status::Working | Status::Waiting)) || !self.loaded;
-            let timeout = if animating { Duration::from_millis(80) } else { Duration::from_millis(250) };
+            let timeout = if self.animating() { Duration::from_millis(80) } else { Duration::from_millis(250) };
             if event::poll(timeout)? {
                 // Drain queued input before the next frame, so held keys never lag behind.
                 loop {
@@ -166,6 +182,22 @@ impl App {
 
     fn apply(&mut self, snap: Snapshot) {
         let dirs_changed = !std::sync::Arc::ptr_eq(&snap.dirs, &self.snap.dirs);
+        let now = Instant::now();
+        for a in &snap.agents {
+            let old = self.snap.agents.iter().find(|o| o.key == a.key);
+            // shortcut: the hook keeps only the latest event, so bursts between refreshes count once; count events in the hook if sparklines look too flat.
+            if old.is_some_and(|o| o.timestamp() != a.timestamp()) {
+                self.activity.entry(a.key.clone()).or_default().push(now);
+            }
+            if self.loaded && old.is_some_and(|o| o.status != a.status) {
+                self.changed.insert(a.key.clone(), now);
+            }
+        }
+        self.activity.retain(|_, v| {
+            v.retain(|t| t.elapsed() < ACTIVITY_WINDOW);
+            !v.is_empty()
+        });
+        self.changed.retain(|_, t| t.elapsed() < FLASH);
         self.snap = snap;
         self.loaded = true;
         self.build_rows();
@@ -180,6 +212,13 @@ impl App {
                 self.notify(format!("Found {n} repos"), false);
             }
         }
+    }
+
+    fn animating(&self) -> bool {
+        !self.loaded
+            || self.toast.is_some()
+            || self.changed.values().any(|t| t.elapsed() < FLASH)
+            || self.snap.agents.iter().any(|a| matches!(a.status, Status::Working | Status::Waiting))
     }
 
     pub fn notify(&mut self, text: impl Into<String>, error: bool) {
@@ -255,15 +294,32 @@ impl App {
                 rows.push((format!("term:{}", self.snap.workspaces[wi].windows[ti].window_id), Row::Terminal(wi, ti)));
             }
         }
-        let outside: Vec<usize> = (0..self.snap.agents.len())
-            .filter(|&i| self.snap.agents[i].workspace.is_none() && self.agent_matches(&self.snap.agents[i]))
-            .collect();
+        let section = |alive: bool| -> Vec<usize> {
+            let mut v: Vec<usize> = (0..self.snap.agents.len())
+                .filter(|&i| {
+                    let a = &self.snap.agents[i];
+                    a.workspace.is_none() && a.status.alive() == alive && self.agent_matches(a)
+                })
+                .collect();
+            if !alive {
+                v.sort_by_key(|&i| std::cmp::Reverse(self.snap.agents[i].timestamp()));
+            }
+            v
+        };
+        let (outside, closed) = (section(true), section(false));
         if !outside.is_empty() {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((String::new(), Row::Header));
+            rows.push((String::new(), Row::Header("OUTSIDE CLAUDE HUB", outside.len())));
             rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+        }
+        if !closed.is_empty() {
+            if !rows.is_empty() {
+                rows.push((String::new(), Row::Gap));
+            }
+            rows.push((String::new(), Row::Header("RECENTLY CLOSED", closed.len())));
+            rows.extend(closed.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
         }
         self.rows = rows;
         let first = self.rows.iter().position(|(_, r)| selectable(r)).unwrap_or(0);
@@ -316,14 +372,21 @@ impl App {
 
     /// Which actions make sense for the selected row, in footer order.
     pub fn actions(&self) -> Vec<(&'static str, &'static str, Action)> {
-        let mut v = vec![("↵", "open", Action::Open)];
         let agent = self.current_agent();
+        let closed = agent.is_some_and(|a| !a.status.alive());
+        let mut v = vec![("↵", if closed { "resume" } else { "open" }, Action::Open)];
+        if agent.is_some_and(|a| a.status == Status::Waiting) {
+            v.push(("m", "done", Action::MarkDone));
+        }
         if agent.is_some_and(|a| a.needs_permission()) {
             v.push(("y", "approve", Action::Approve));
             v.push(("d", "deny", Action::Deny));
         }
         if agent.is_some_and(|a| a.target.is_some()) {
             v.push(("r", "reply", Action::Reply));
+        }
+        if agent.is_some_and(|a| a.workspace.is_none() && a.status.alive()) {
+            v.push(("a", "adopt", Action::Adopt));
         }
         v.push(("n", "new", Action::NewWorkspace));
         if self.current_workspace().is_some() {
@@ -367,6 +430,12 @@ impl App {
                     self.quit = true;
                 }
             }
+            Action::Adopt => self.adopt(),
+            Action::MarkDone => self.mark_done(),
+            Action::Tab(i) => {
+                self.tab = i;
+                self.detail_scroll = 0;
+            }
             Action::JumpWindow(session, window) => self.finish(tmux::jump_to_window(&session, &window)),
             Action::Confirm(yes) => {
                 if let Some(Modal::Confirm { then, .. }) = self.modal.take() {
@@ -397,6 +466,10 @@ impl App {
                 let a = &self.snap.agents[i];
                 match (&a.workspace, &a.window_id) {
                     (Some(ws), Some(w)) => tmux::jump_to_window(ws, w),
+                    _ if !a.status.alive() => match a.session_id() {
+                        Some(id) => tmux::resume(id, &a.path),
+                        None => return,
+                    },
                     _ => {
                         let s = a.session.as_ref().and_then(|s| s.tmux_session.as_ref());
                         let where_ = s.map_or("its own terminal".into(), |s| format!("tmux session '{s}'"));
@@ -426,12 +499,46 @@ impl App {
         self.finish(r);
     }
 
+    /// Clear "waiting for you" on the selected agent, or on every agent of the selected workspace.
+    fn mark_done(&mut self) {
+        let agents = match self.current() {
+            Some(Row::Agent(i)) => vec![i],
+            Some(Row::Workspace(wi)) => self.agents_of(&self.snap.workspaces[wi]),
+            _ => vec![],
+        };
+        let sessions: Vec<_> = agents.iter().filter_map(|&i| self.snap.agents[i].session.as_ref()).filter(|s| s.status == Status::Waiting).collect();
+        if sessions.is_empty() {
+            self.notify("Nothing here is waiting for you", false);
+            return;
+        }
+        let failed = sessions.iter().filter(|s| s.mark_done().is_err()).count();
+        if failed > 0 {
+            self.notify(format!("Could not update {failed} agent(s)"), true);
+        }
+        self.refresh();
+    }
+
+    fn adopt(&mut self) {
+        let Some(a) = self.current_agent().filter(|a| a.workspace.is_none() && a.status.alive()) else {
+            self.notify("Only agents outside Claude Hub can be adopted", true);
+            return;
+        };
+        let (Some(pid), Some(id)) = (a.pid, a.session_id().map(String::from)) else {
+            self.notify("Can't find this agent's process. Adopting needs a recent Claude Code.", true);
+            return;
+        };
+        let path = a.path.clone();
+        let cut = if matches!(a.status, Status::Working | Status::Waiting) { " It is in the middle of a turn, which gets cut off." } else { "" };
+        let question = format!("Adopt '{}'? It stops where it runs now and continues in a Claude Hub workspace for {}.{cut}", a.title(), shorten(&path));
+        self.modal = Some(Modal::Confirm { question, then: Box::new(move || tmux::adopt(pid, &id, &path)), yes: false });
+    }
+
     fn close(&mut self) {
         let (question, then): (String, Box<dyn Fn() -> Res>) = match self.current() {
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
                 let (Some(ws), Some(w)) = (a.workspace.clone(), a.window_id.clone()) else {
-                    self.notify("This agent runs outside Claude Hub. Close it in its own terminal.", true);
+                    self.notify("This agent runs outside Claude Hub. Close it in its own terminal, or press a to adopt it.", true);
                     return;
                 };
                 (format!("Close agent '{}' in '{ws}'? This ends its Claude session.", a.title()), Box::new(move || tmux::kill_window(&w)))
@@ -586,12 +693,17 @@ impl App {
                 self.build_rows();
             }
             KeyCode::Enter => self.act(Action::Open),
+            KeyCode::Tab => self.act(Action::Tab((self.tab + 1) % 3)),
+            KeyCode::BackTab => self.act(Action::Tab((self.tab + 2) % 3)),
+            KeyCode::Char(c @ '1'..='3') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
             KeyCode::Char('e') => self.act(Action::NewWindow("nvim")),
             KeyCode::Char('x') => self.act(Action::Close),
             KeyCode::Char('R') => self.act(Action::Rename),
+            KeyCode::Char('a') => self.act(Action::Adopt),
+            KeyCode::Char('m') => self.act(Action::MarkDone),
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),
@@ -739,5 +851,5 @@ impl App {
 }
 
 pub fn selectable(r: &Row) -> bool {
-    !matches!(r, Row::Gap | Row::Header)
+    !matches!(r, Row::Gap | Row::Header(..))
 }
