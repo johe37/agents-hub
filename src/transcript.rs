@@ -19,6 +19,8 @@ pub struct Transcript {
     pub model: Option<String>,
     pub turns: u32,
     pub cost_usd: Option<f64>,
+    /// Tokens in the context window as of the last reply.
+    pub context_tokens: Option<u64>,
     /// Set when the conversation moved to a new session (resume, continue); its transcript has the rest.
     continued_in: Option<String>,
     offset: u64,
@@ -78,6 +80,12 @@ fn apply(t: &mut Transcript, r: &Value) {
             let m = &r["message"];
             if let Some(model) = m["model"].as_str() {
                 t.model = Some(model.into());
+            }
+            let u = &m["usage"];
+            let used: u64 = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"].iter().filter_map(|k| u[k].as_u64()).sum();
+            // Subagent replies and synthetic messages say nothing about this session's context.
+            if used > 0 && r["isSidechain"] != true {
+                t.context_tokens = Some(used);
             }
             for block in m["content"].as_array().into_iter().flatten() {
                 match block["type"].as_str() {

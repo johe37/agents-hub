@@ -96,8 +96,6 @@ pub struct App {
     pub tab: usize,
     pub started: Instant,
     pub hits: Hits,
-    /// When each agent reported events, for its sparkline.
-    pub activity: HashMap<String, Vec<Instant>>,
     /// When each agent last changed status, for the row flash.
     pub changed: HashMap<String, Instant>,
     last_click: Option<(Instant, usize)>,
@@ -107,7 +105,6 @@ pub struct App {
     pub attach_to: Option<String>,
 }
 
-pub const ACTIVITY_WINDOW: Duration = Duration::from_secs(240);
 pub const FLASH: Duration = Duration::from_millis(1500);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
@@ -132,7 +129,6 @@ impl App {
             tab: 0,
             started: Instant::now(),
             hits: Hits::default(),
-            activity: HashMap::new(),
             changed: HashMap::new(),
             last_click: None,
             prewarm_pending: None,
@@ -186,18 +182,10 @@ impl App {
         let now = Instant::now();
         for a in &snap.agents {
             let old = self.snap.agents.iter().find(|o| o.key == a.key);
-            // shortcut: the hook keeps only the latest event, so bursts between refreshes count once; count events in the hook if sparklines look too flat.
-            if old.is_some_and(|o| o.timestamp() != a.timestamp()) {
-                self.activity.entry(a.key.clone()).or_default().push(now);
-            }
             if self.loaded && old.is_some_and(|o| o.status != a.status) {
                 self.changed.insert(a.key.clone(), now);
             }
         }
-        self.activity.retain(|_, v| {
-            v.retain(|t| t.elapsed() < ACTIVITY_WINDOW);
-            !v.is_empty()
-        });
         self.changed.retain(|_, t| t.elapsed() < FLASH);
         self.snap = snap;
         self.loaded = true;
