@@ -162,3 +162,8 @@ cost come from the same file.
   Turn it off with `prewarm = false`.
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
 - To stop everything: `tmux -L claude-hub kill-server`.
+
+## Release
+
+`scripts/release.sh 0.6.0` sets the version in `Cargo.toml`, commits and tags.
+Then push with `git push origin master 0.6.0`.
