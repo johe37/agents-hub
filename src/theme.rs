@@ -43,3 +43,31 @@ pub const C_SELECTION: Color = hex("#04395E");
 pub const C_INPUT: Color = hex("#313131");
 pub const C_PANEL: Color = hex("#222222");
 pub const C_CODE: Color = hex("#CE9178");
+
+pub fn lerp(a: Color, b: Color, t: f32) -> Color {
+    let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) = (a, b) else { return b };
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color::Rgb(m(r1, r2), m(g1, g2), m(b1, b2))
+}
+
+/// Color at t (wraps at 1.0) along a closed loop of stops.
+pub fn gradient(stops: &[Color], t: f32) -> Color {
+    let t = t.rem_euclid(1.0) * stops.len() as f32;
+    let i = t as usize % stops.len();
+    lerp(stops[i], stops[(i + 1) % stops.len()], t.fract())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lerp_ends_and_middle() {
+        let (a, b) = (Color::Rgb(0, 0, 0), Color::Rgb(200, 100, 50));
+        assert_eq!(lerp(a, b, 0.0), a);
+        assert_eq!(lerp(a, b, 1.0), b);
+        assert_eq!(lerp(a, b, 0.5), Color::Rgb(100, 50, 25));
+        assert_eq!(gradient(&[a, b], 1.0), a);
+    }
+}
