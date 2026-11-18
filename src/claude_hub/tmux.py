@@ -28,6 +28,9 @@ FIELDS = [
     "pane_active",
     "pane_current_path",
     "pane_current_command",
+    "pane_pipe",
+    "pane_width",
+    "pane_height",
 ]
 
 # string.Template, because tmux formats are full of braces.
@@ -48,7 +51,7 @@ set -g status-position top
 set -g status-justify left
 set -g status-style "bg=$bar,fg=$fg"
 set -g status-left-length 120
-set -g status-left "#[range=user|hub,bg=$accent,fg=$bright,bold]  ◀  Claude Hub  #[norange,bg=$bar]  #[fg=$accent]◆ #[fg=$bright,bold]#S#[nobold,fg=$dim]#{?@workspace_label,  #{@workspace_label},}   "
+set -g status-left "#[range=user|hub,bg=$accent,fg=$bright,bold]  ◀  Claude Hub  #[nobold]$hub_key_label #[norange,bg=$bar]  #[fg=$accent]◆ #[fg=$bright,bold]#S#[nobold,fg=$dim]#{?@workspace_label,  #{@workspace_label},}   "
 set -g status-right-length 80
 set -g status-right "#{?client_prefix,#[bg=$info fg=$bright bold] PREFIX #[bg=$bar nobold] ,}#(cat $summary 2>/dev/null)#[fg=$dim] %H:%M "
 set -g window-status-separator ""
@@ -60,6 +63,7 @@ set -g pane-border-style "fg=$border"
 set -g pane-active-border-style "fg=$accent"
 set -g mode-style "bg=#264F78,fg=$bright"
 bind -n MouseDown1Status if -F "#{==:#{mouse_status_range},hub}" "new-session -A -s $hub $hub_cmd" "select-window -t ="
+$hub_bind
 # The session and window lists hide the pool of spare shells.
 bind s choose-tree -Zs -f "#{!=:#{session_name},$pool}"
 bind w choose-tree -Zw -f "#{!=:#{session_name},$pool}"
@@ -81,6 +85,9 @@ class Pane:
     active: bool
     path: str
     command: str
+    piped: bool = False
+    width: int = 80
+    height: int = 24
 
 
 class NeedsAttach(Exception):
@@ -109,12 +116,21 @@ def _error(out: subprocess.CompletedProcess) -> str | None:
     return (out.stderr.strip() or "tmux failed") if out.returncode != 0 else None
 
 
-def write_config(exe: str) -> str:
+def key_label(key: str) -> str:
+    """Human name for a tmux key: M-h -> Alt+h, C-space -> Ctrl+Space."""
+    label = key.replace("M-", "Alt+").replace("C-", "Ctrl+").replace("S-", "Shift+")
+    return label.replace("space", "Space")
+
+
+def write_config(exe: str, hub_key: str = "C-q") -> str:
+    hub_cmd = shlex.quote(f"{exe} ui")
     text = CONFIG_TEMPLATE.substitute(
         summary=shlex.quote(str(SUMMARY_FILE)),
         hub=HUB_SESSION,
         pool=POOL_SESSION,
-        hub_cmd=shlex.quote(f"{exe} ui"),
+        hub_cmd=hub_cmd,
+        hub_bind=f"bind -n {shlex.quote(hub_key)} new-session -A -s {HUB_SESSION} {hub_cmd}",
+        hub_key_label=key_label(hub_key),
         bar=theme.BAR,
         bg=theme.BG,
         fg=theme.FG,
@@ -168,7 +184,7 @@ def list_all_panes() -> list[Pane]:
     for line in out.stdout.splitlines():
         p = line.split("\t")
         if len(p) == len(FIELDS):
-            panes.append(Pane(p[0], p[1], p[2], int(p[3]), p[4], p[5], p[6], p[7] == "1", p[8], p[9]))
+            panes.append(Pane(p[0], p[1], p[2], int(p[3]), p[4], p[5], p[6], p[7] == "1", p[8], p[9], p[10] == "1", int(p[11] or 80), int(p[12] or 24)))
     return panes
 
 
@@ -308,6 +324,11 @@ def new_window(session: str, cwd: str, name: str, command: str | None, spare: st
         if not err:
             return None
     return run_and_switch(session, ["new-window", "-t", f"={session}:", "-c", cwd, "-n", name, *([command] if command else [])])
+
+
+def pipe_pane(pane_id: str, path: str) -> str | None:
+    """Stream the pane's output to a file, for the preview in the hub."""
+    return _error(_tmux("pipe-pane", "-O", "-t", pane_id, f"cat >> {shlex.quote(path)}"))
 
 
 def kill_session(session: str) -> str | None:

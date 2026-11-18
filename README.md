@@ -2,14 +2,21 @@
 
 One place for your Claude Code sessions and the terminals around them.
 
-The hub is a list of **agents**: every running Claude session, grouped by what it needs
-from you (*Needs you*, *Working*, *Idle*). Each row shows the task (the session's title),
-the workspace, the branch and the lines changed. The panel next to it shows what the agent
-waits for, its last message, the changed files and the terminals in the workspace.
+The hub lists your **workspaces**, the ones that need you first. A workspace is a directory
+with its Claude sessions, shells and editors. Under each workspace you see its **agents**
+(every running Claude session, titled by its task, with status and what it does right now)
+and its terminals. The panel next to the list shows what the selected agent waits for, its
+last message, the changed files and the terminals in the workspace.
 
-Agents live in **workspaces**. A workspace is a directory with its Claude sessions,
-shells and editors. The directory does not have to be a git repo; when it is, the hub
-shows branch, changes and ahead/behind. Workspaces without an agent are listed last.
+The directory does not have to be a git repo; when it is, the hub shows branch, changes and
+ahead/behind.
+
+The panel follows the selected row. A workspace shows what is open in it. An agent shows what
+it waits for, your last request and its last reply. A terminal shows its screen. Terminal
+previews need the `pyte` package (installed with the hub); the hub streams each terminal's
+output to `~/.local/state/claude-hub/screens/` and replays it, because `tmux capture-pane`
+crashes some tmux builds. A terminal opened before the hub started piping it shows its
+screen from the next output on.
 
 Work keeps running when you leave. Close the terminal, come back later, run
 `claude-hub` again and everything is where you left it. Under the hood claude-hub
@@ -35,6 +42,7 @@ mouse = true
 refresh_seconds = 2
 stale_minutes = 60
 prewarm = true               # keep a started shell ready per workspace
+hub_key = "C-q"              # tmux key that brings you back to the hub from any terminal
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
@@ -82,8 +90,8 @@ picker after you clone a new repo.
 
 | Where | Key | Action |
 |---|---|---|
-| Workspace | Click **◀ Claude Hub** | Back to the hub (or tmux prefix + `s`, pick `_hub`) |
-| Hub | `Enter` | Open the conversation, or the workspace |
+| Anywhere | `Ctrl+Q` or click **◀ Claude Hub** | Back to the hub |
+| Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
 | Hub | `x` | Close the agent or the workspace |
@@ -93,27 +101,20 @@ picker after you clone a new repo.
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `q` | Leave. Everything keeps running |
-| Conversation | `r`, `y` / `d` | Reply, approve, deny |
-| Conversation | `t` | The agent's terminal, for when you need it |
-| Conversation | `End` | Jump to the newest step |
-| Conversation | `Esc` / `q` | Back to the list |
 
 Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
-to go back), the workspace name and path, its windows (click to switch) and how many
-Claude sessions wait for you.
+or press `Ctrl+Q` to go back), the workspace name and path, its windows (click to switch) and
+how many Claude sessions wait for you.
 
 Opening a directory that already has a workspace jumps to it instead of creating a
 second one.
 
-`Enter` on an agent opens its **conversation**: your prompts, Claude's replies rendered as
-Markdown, and every tool call as a line you can click to see its result. The view follows the
-agent live. It is read from the transcript, so it works for every session, also those started
-outside the hub.
+`Enter` on an agent takes you to it: plain Claude Code in its terminal. `Ctrl+Q` brings you
+back. Ctrl+Q is free in Claude Code, zsh and nvim, and it is typeable on every keyboard layout. `Esc` cannot do that job: Claude, nvim and the shell all use it themselves.
 
-You answer agents without a terminal. Press `r`, type a message and press `Enter`: the hub
-types it into the agent's terminal for you. When an agent asks for permission, `y` approves and
-`d` denies, and the view shows the tool call it wants to run. This works both in the list and in
-the conversation. The terminal itself is one key away (`t`) for the times you need it.
+Quick answers do not need the trip. Press `r`, type a message and press `Enter`: the hub types
+it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
+denies, and the panel shows the tool call it wants to run.
 
 Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them.

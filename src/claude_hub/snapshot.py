@@ -8,7 +8,8 @@ from . import theme
 from .config import Config
 from .git import GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs
 from .state import STATUS_ORDER, Session, load_sessions, worst_status
-from .tmux import POOL_SESSION, SUMMARY_FILE, Pane, kill_window, list_all_panes, live_panes, socket_path, spares, spawn_spare
+from .screens import SCREENS_DIR, ScreenCache, log_path
+from .tmux import POOL_SESSION, SUMMARY_FILE, Pane, kill_window, list_all_panes, live_panes, pipe_pane, socket_path, spares, spawn_spare
 from .transcript import Transcript, TranscriptCache
 
 @dataclass
@@ -20,6 +21,10 @@ class Window:
     pane_id: str
     command: str
     claude: Session | None = None
+    width: int = 80
+    height: int = 24
+    piped: bool = False
+    screen: list[str] | None = None
 
 
 @dataclass
@@ -107,7 +112,10 @@ def _windows(panes: list[Pane], claude_by_pane: dict[str, Session]) -> dict[str,
     for window_panes in by_window.values():
         active = next((p for p in window_panes if p.active), window_panes[0])
         claude = next((claude_by_pane[p.pane_id] for p in window_panes if p.pane_id in claude_by_pane), None)
-        w = Window(active.session, active.window_index, active.window_name, active.window_id, active.pane_id, active.command, claude)
+        w = Window(
+            active.session, active.window_index, active.window_name, active.window_id, active.pane_id, active.command, claude,
+            active.width, active.height, active.piped,
+        )
         result.setdefault(active.session, []).append(w)
     for windows in result.values():
         windows.sort(key=lambda w: w.index)
@@ -119,6 +127,7 @@ class Collector:
         self.cfg = cfg
         self.git = GitCache()
         self.transcripts = TranscriptCache()
+        self.screens = ScreenCache()
         self.pool = ThreadPoolExecutor(max_workers=8)
         self.hub_socket = socket_path()
         # Path the picker currently points at; the pool keeps a shell ready there too.
@@ -156,6 +165,7 @@ class Collector:
         for name, wins in windows.items():
             first = next(p for p in panes if p.session == name)
             workspaces.append(Workspace(name, first.workspace_path or first.session_path, wins))
+        self._previews([w for ws in workspaces for w in ws.windows if not w.claude and w.command != "claude"], all_panes)
 
         roots = list(self.pool.map(self.git.repo_root, [w.path for w in workspaces]))
         statuses = list(self.pool.map(lambda r: self.git.status(r) if r else None, roots))
@@ -191,6 +201,18 @@ class Collector:
             a.transcript = t
         agents.sort(key=lambda a: (STATUS_ORDER.get(a.status, 3), -a.timestamp, a.title.lower()))
         return agents
+
+    def _previews(self, terminals: list[Window], all_panes: list[Pane]) -> None:
+        """Keep every terminal pane piped to a log and replay the logs into screen previews."""
+        if not self.screens.available:
+            return
+        SCREENS_DIR.mkdir(parents=True, exist_ok=True)
+        for w in terminals:
+            if not w.piped:
+                pipe_pane(w.pane_id, str(log_path(w.pane_id)))
+                w.piped = True
+            w.screen = self.screens.lines(w.pane_id, w.width, w.height)
+        self.screens.forget({p.pane_id for p in all_panes})
 
     def _fill_pool(self, paths: set[str]) -> None:
         """Keep one started shell ready per workspace, so a new terminal shows its prompt at once."""

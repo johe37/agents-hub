@@ -14,6 +14,7 @@ class Config:
     refresh_seconds: float = 2.0
     stale_minutes: float = 60.0
     prewarm: bool = True
+    hub_key: str = "C-q"
 
 
 def load_config() -> Config:
@@ -28,4 +29,5 @@ def load_config() -> Config:
     cfg.refresh_seconds = float(data.get("refresh_seconds", cfg.refresh_seconds))
     cfg.stale_minutes = float(data.get("stale_minutes", cfg.stale_minutes))
     cfg.prewarm = bool(data.get("prewarm", cfg.prewarm))
+    cfg.hub_key = str(data.get("hub_key", cfg.hub_key))
     return cfg
