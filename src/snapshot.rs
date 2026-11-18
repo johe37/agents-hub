@@ -269,15 +269,21 @@ impl Collector {
         for (_, wp) in by_window {
             let active = wp.iter().find(|p| p.active).unwrap_or(&wp[0]);
             let claude = wp.iter().find_map(|p| claude_by_pane.get(&p.pane_id)).cloned();
+            // In a split window, replies must reach Claude's pane even when a shell next to it has focus.
+            let main = wp
+                .iter()
+                .find(|p| claude_by_pane.contains_key(&p.pane_id))
+                .or_else(|| wp.iter().find(|p| p.command == "claude"))
+                .unwrap_or(active);
             let w = Window {
                 index: active.window_index,
                 name: active.window_name.clone(),
                 window_id: active.window_id.clone(),
-                pane_id: active.pane_id.clone(),
-                command: active.command.clone(),
+                pane_id: main.pane_id.clone(),
+                command: main.command.clone(),
                 claude,
-                width: active.width,
-                height: active.height,
+                width: main.width,
+                height: main.height,
                 screen: None,
             };
             match result.iter_mut().find(|ws| ws.name == active.session) {

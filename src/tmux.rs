@@ -451,9 +451,16 @@ fn on_socket(socket: &str, args: &[&str]) -> Result<(), String> {
 
 /// Type text into a pane and press Enter, as if the user wrote it.
 pub fn send_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
-    // Two calls: tmux reads a trailing ';' in any argument as a command separator and drops it.
-    on_socket(socket, &["send-keys", "-t", pane, "-l", "--", text])?;
+    type_text(socket, pane, text)?;
+    // Claude Code reads a burst of text as a paste and turns an Enter inside it into a newline; let the paste end first.
+    std::thread::sleep(std::time::Duration::from_millis(150));
     on_socket(socket, &["send-keys", "-t", pane, "Enter"])
+}
+
+/// Type text into a pane without pressing Enter.
+pub fn type_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
+    // Its own call: tmux reads a trailing ';' in any argument as a command separator and drops it.
+    on_socket(socket, &["send-keys", "-t", pane, "-l", "--", text])
 }
 
 /// Press a named key (Enter, Escape, ...) in a pane.

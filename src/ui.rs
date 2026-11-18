@@ -5,7 +5,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{Action, App, FLASH, Focus, Modal, Row};
 use crate::config::shorten;
@@ -783,10 +783,13 @@ fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
         .style(Style::new().bg(colors().panel));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    // Long text scrolls sideways so the cursor stays inside the box.
+    let before = app.reply.before_cursor().width();
+    let skip = before.saturating_sub(inner.width.saturating_sub(1) as usize);
     let content = if app.reply.text.is_empty() { s(placeholder, fg(colors().dim)) } else { s(app.reply.text.clone(), fg(colors().bright)) };
-    f.render_widget(Paragraph::new(content), inner);
+    f.render_widget(Paragraph::new(content).scroll((0, skip as u16)), inner);
     if active {
-        set_cursor(f, &app.reply, inner.x, inner.y);
+        f.set_cursor_position(Position::new(inner.x + (before - skip) as u16, inner.y));
     } else {
         app.hits.buttons.push((area, Action::Reply));
     }
