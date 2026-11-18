@@ -150,7 +150,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.hits.buttons.clear();
     let [header, main, footer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
     draw_header(f, app, header);
-    if area.width >= 100 {
+    if side_visible(area) {
         let [list, side] = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)]).areas(main);
         draw_list(f, app, list);
         draw_side(f, app, side);
@@ -161,6 +161,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_footer(f, app, footer);
     draw_toast(f, app, main);
     draw_modal(f, app, area);
+}
+
+fn side_visible(area: Rect) -> bool {
+    area.width >= 100
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -828,7 +832,7 @@ fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize)
 fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
     let mut x = area.x + 1;
-    for (key, label, action) in app.actions() {
+    for (key, label, action) in app.actions(side_visible(f.area())) {
         let key_w = key.chars().count() as u16 + 2;
         let w = key_w + label.chars().count() as u16 + 3;
         if x + w > area.right() {

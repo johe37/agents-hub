@@ -356,36 +356,31 @@ impl App {
 
     // ---- actions ----
 
-    /// Which actions make sense for the selected row, in footer order.
-    pub fn actions(&self) -> Vec<(&'static str, &'static str, Action)> {
-        let agent = self.current_agent();
-        let closed = agent.is_some_and(|a| !a.status.alive());
-        let mut v = vec![("↵", if closed { "resume" } else { "open" }, Action::Open)];
+    /// Footer buttons. Row-specific actions live in the side panel, so they only
+    /// show here when the side panel is hidden. The rest are in help.
+    pub fn actions(&self, side_visible: bool) -> Vec<(&'static str, &'static str, Action)> {
+        let mut v = vec![];
+        if !side_visible && let Some(a) = self.current_agent() {
+            if a.status == Status::Waiting && a.target.is_some() {
+                if a.needs_permission() {
+                    v.push(("y", "approve", Action::Approve));
+                    v.push(("d", "deny", Action::Deny));
+                }
+                v.push(("r", "reply", Action::Reply));
+            }
+            if a.status == Status::Waiting {
+                v.push(("m", "done", Action::MarkDone));
+            }
+            if !a.status.alive() && a.session_id().is_some() {
+                v.push(("↵", "resume", Action::Open));
+            }
+            if a.workspace.is_none() && a.status.alive() && a.pid.is_some() {
+                v.push(("a", "adopt", Action::Adopt));
+            }
+        }
         if self.snap.agents.iter().any(|a| a.status == Status::Waiting) {
             v.push(("w", "next waiting", Action::NextWaiting));
         }
-        if agent.is_some_and(|a| a.status == Status::Waiting) {
-            v.push(("m", "done", Action::MarkDone));
-        }
-        if agent.is_some_and(|a| a.needs_permission()) {
-            v.push(("y", "approve", Action::Approve));
-            v.push(("d", "deny", Action::Deny));
-        }
-        if agent.is_some_and(|a| a.target.is_some()) {
-            v.push(("r", "reply", Action::Reply));
-        }
-        if agent.is_some_and(|a| a.workspace.is_none() && a.status.alive()) {
-            v.push(("a", "adopt", Action::Adopt));
-        }
-        v.push(("n", "new", Action::NewWorkspace));
-        if self.current_workspace().is_some() {
-            v.push(("c", "claude", Action::NewWindow("claude")));
-            v.push(("t", "terminal", Action::NewWindow("shell")));
-            v.push(("e", "nvim", Action::NewWindow("nvim")));
-            v.push(("x", "close", Action::Close));
-            v.push(("R", "rename", Action::Rename));
-        }
-        v.push(("/", "filter", Action::Filter));
         v.push(("?", "help", Action::Help));
         v.push(("q", "leave", Action::Leave));
         v
