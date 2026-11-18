@@ -3,7 +3,7 @@ name = "claude-hub"
 version = "0.1.0"
 description = "TUI hub for Claude Code sessions and git repos in tmux"
 requires-python = ">=3.11"
-dependencies = ["textual>=1.0"]
+dependencies = ["textual>=1.0", "pyte>=0.8"]
 
 [project.scripts]
 claude-hub = "claude_hub.cli:main"

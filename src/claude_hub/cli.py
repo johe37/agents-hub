@@ -65,7 +65,7 @@ def open_hub(cfg, target: str | None) -> int:
     from . import tmux
 
     exe = os.path.abspath(sys.argv[0])
-    config = tmux.write_config(exe)
+    config = tmux.write_config(exe, cfg.hub_key)
     if tmux.server_running():
         subprocess.run(["tmux", "-L", tmux.SOCKET_NAME, "source-file", config], capture_output=True)
     tmux.ensure_hub(exe, config)
@@ -91,7 +91,7 @@ def run_ui(cfg, mouse: bool) -> int:
         from . import tmux
 
         exe = os.path.abspath(sys.argv[0])
-        config = tmux.write_config(exe)
+        config = tmux.write_config(exe, cfg.hub_key)
         env = {k: v for k, v in os.environ.items() if k != "TMUX"}
         os.execvpe("tmux", ["tmux", "-L", tmux.SOCKET_NAME, "-f", config, "attach-session", "-t", f"={attach_to}"], env)
     return 0
