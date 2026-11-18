@@ -451,6 +451,16 @@ impl App {
                 let a = &self.snap.agents[i];
                 match (&a.workspace, &a.window_id) {
                     (Some(ws), Some(w)) => tmux::jump_to_window(ws, w),
+                    (Some(ws), None) if a.background && a.status.alive() => {
+                        let Some(id) = a.session_id().filter(|id| crate::hooks::valid_id(id)) else { return };
+                        let name = format!("{}{}", crate::snapshot::ATTACH_PREFIX, &id[..8.min(id.len())]);
+                        let open = self.snap.workspaces.iter().find(|w| &w.name == ws).and_then(|w| w.windows.iter().find(|win| win.name == name));
+                        match open {
+                            Some(win) => tmux::jump_to_window(ws, &win.window_id),
+                            // Background agents go by the first 8 characters of their session id.
+                            None => tmux::new_window(ws, &a.path, &name, Some(&format!("claude attach {}", &id[..8.min(id.len())])), None),
+                        }
+                    }
                     _ if !a.status.alive() => match a.session_id() {
                         Some(id) => tmux::resume(id, &a.path),
                         None => return,
@@ -533,6 +543,16 @@ impl App {
         let (question, then): (String, Box<dyn Fn() -> Res>) = match self.current() {
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
+                if a.background && a.status.alive() {
+                    let Some(id) = a.session_id().filter(|id| crate::hooks::valid_id(id)).map(|id| id[..8.min(id.len())].to_string()) else { return };
+                    let stop = move || match std::process::Command::new("claude").args(["stop", &id]).output() {
+                        Ok(o) if o.status.success() => Ok(()),
+                        Ok(o) => Err(Fail::Error(format!("claude stop: {}", String::from_utf8_lossy(&o.stderr).trim()))),
+                        Err(e) => Err(Fail::Error(format!("claude stop: {e}"))),
+                    };
+                    self.modal = Some(Modal::Confirm { question: format!("Stop background agent '{}'? This ends its Claude session.", a.title()), then: Box::new(stop), yes: false });
+                    return;
+                }
                 let (Some(ws), Some(w)) = (a.workspace.clone(), a.window_id.clone()) else {
                     self.notify("This agent runs outside Claude Hub. Close it in its own terminal, or press a to adopt it.", true);
                     return;

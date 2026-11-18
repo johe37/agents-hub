@@ -152,6 +152,8 @@ pub struct Live {
     pub status: Status,
     /// (tmux socket, pane id), from the process environment.
     pub tmux: Option<(String, String)>,
+    /// Runs in Claude Code's background daemon (`claude --bg`, a backgrounded or forked session), not in a terminal.
+    pub background: bool,
 }
 
 // shortcut: ~/.claude/sessions is Claude Code's internal registry, not a public API; if its format changes, outside agents without hooks vanish and adopting needs a fallback (e.g. scanning /proc for claude).
@@ -161,7 +163,8 @@ pub fn live_claudes() -> Vec<Live> {
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| {
             let v: Value = serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?;
-            if v["kind"] != "interactive" {
+            let background = v["kind"] == "bg";
+            if v["kind"] != "interactive" && !background {
                 return None;
             }
             let pid = u32::try_from(v["pid"].as_u64()?).ok()?;
@@ -181,7 +184,7 @@ pub fn live_claudes() -> Vec<Live> {
                 Some("idle") => Status::Idle,
                 _ => Status::Unknown,
             };
-            Some(Live { pid, session_id, cwd: opt(&v["cwd"]).unwrap_or_default(), status, tmux })
+            Some(Live { pid, session_id, cwd: opt(&v["cwd"]).unwrap_or_default(), status, tmux, background })
         })
         .collect()
 }

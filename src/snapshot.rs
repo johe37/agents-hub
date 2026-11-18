@@ -16,6 +16,9 @@ use crate::theme::{colors, css};
 use crate::tmux::{self, Pane, POOL_SESSION};
 use crate::transcript::{Transcript, TranscriptCache};
 
+/// Window name prefix for `claude attach` windows.
+pub const ATTACH_PREFIX: &str = "attach:";
+
 #[derive(Clone)]
 pub struct Window {
     pub index: u32,
@@ -31,7 +34,8 @@ pub struct Window {
 
 impl Window {
     pub fn is_claude(&self) -> bool {
-        self.claude.is_some() || self.command == "claude"
+        // An attach window shows a background agent that already has its own row.
+        (self.claude.is_some() || self.command == "claude") && !self.name.starts_with(ATTACH_PREFIX)
     }
 }
 
@@ -62,6 +66,8 @@ pub struct Agent {
     pub pid: Option<u32>,
     /// For agents without hook data, found through the registry.
     transcript_path: Option<String>,
+    /// Lives in Claude Code's background daemon; reached with `claude attach`.
+    pub background: bool,
 }
 
 impl Agent {
@@ -332,6 +338,7 @@ impl Collector {
                     window_name: Some(w.name.clone()),
                     path: ws.path.clone(),
                     transcript: None,
+                    background: false,
                     git: ws.git.clone(),
                     target: Some((hub.clone(), w.pane_id.clone())),
                 });
@@ -343,6 +350,7 @@ impl Collector {
             // Same session, or the same pane when the registry lags behind a /clear.
             let l = live.iter().position(|l| l.session_id == s.session_id || s.tmux_socket.as_deref().zip(s.tmux_pane.as_deref()).is_some_and(|(sock, p)| in_pane(l, sock, p))).map(|i| live.swap_remove(i));
             agents.push(Agent {
+                background: l.as_ref().is_some_and(|l| l.background),
                 pid: l.map(|l| l.pid),
                 transcript_path: None,
                 key: format!("agent:{}", s.session_id),
@@ -370,9 +378,14 @@ impl Collector {
                 transcript_path: transcript_for(&l.cwd, &l.session_id),
                 target: l.tmux,
                 pid: Some(l.pid),
+                background: l.background,
                 path: l.cwd,
                 transcript: None,
             });
+        }
+        // A background session has no pane to place it by, so it goes to the workspace holding its directory.
+        for a in agents.iter_mut().filter(|a| a.background && a.workspace.is_none()) {
+            a.workspace = workspaces.iter().filter(|w| a.path == w.path || a.path.starts_with(&format!("{}/", w.path))).max_by_key(|w| w.path.len()).map(|w| w.name.clone());
         }
         // Recently closed sessions, so they can be resumed; skip ones already running again.
         let closed: Vec<Session> = closed
@@ -397,6 +410,7 @@ impl Collector {
                 window_id: None,
                 window_name: None,
                 transcript: None,
+                background: false,
                 git: st,
             });
         }

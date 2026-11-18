@@ -338,6 +338,8 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             }
             if a.workspace.is_none() {
                 detail.push(s(format!("  {}", a.name()), fg(colors().dim).italic()));
+            } else if a.background {
+                detail.push(s("  background", fg(colors().dim).italic()));
             }
             let mut right = vec![];
             if a.status == Status::Waiting && a.session.is_some() {
