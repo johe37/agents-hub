@@ -73,6 +73,15 @@ pub struct Toast {
     pub text: String,
     pub error: bool,
     pub at: Instant,
+    /// Shown below the text as a link to Ctrl+click.
+    pub link: Option<String>,
+}
+
+impl Toast {
+    /// How long it stays; a link stays long enough to reach for the mouse.
+    pub fn life(&self) -> Duration {
+        Duration::from_secs(if self.link.is_some() { 12 } else { 4 })
+    }
 }
 
 /// Screen areas from the last frame, for mouse hits.
@@ -181,7 +190,7 @@ impl App {
                     self.prewarm_pending = None;
                 }
             }
-            if self.toast.as_ref().is_some_and(|t| t.at.elapsed() > Duration::from_secs(4)) {
+            if self.toast.as_ref().is_some_and(|t| t.at.elapsed() > t.life()) {
                 self.toast = None;
             }
         }
@@ -225,7 +234,7 @@ impl App {
     }
 
     pub fn notify(&mut self, text: impl Into<String>, error: bool) {
-        self.toast = Some(Toast { text: text.into(), error, at: Instant::now() });
+        self.toast = Some(Toast { text: text.into(), error, at: Instant::now(), link: None });
     }
 
     fn refresh(&self) {
@@ -580,7 +589,10 @@ impl App {
     fn open_url(&mut self, url: &str) {
         let display = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
         if !(display && std::process::Command::new("xdg-open").arg(url).spawn().is_ok()) {
-            self.notify("No browser on this machine: Ctrl+click the link in the panel instead", false);
+            self.notify("No browser on this machine. Ctrl+click to open it on yours:", false);
+            if let Some(t) = &mut self.toast {
+                t.link = Some(url.to_string());
+            }
         }
     }
 
