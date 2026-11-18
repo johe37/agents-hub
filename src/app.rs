@@ -43,6 +43,7 @@ pub enum Action {
     Tab(usize),
     Adopt,
     MarkDone,
+    NextWaiting,
     Confirm(bool),
 }
 
@@ -277,9 +278,6 @@ impl App {
                 }
             }
         }
-        sections.sort_by_cached_key(|(wi, agents, _)| {
-            (self.worst(agents).unwrap_or(Status::Stale), self.snap.workspaces[*wi].name.to_lowercase())
-        });
 
         let mut rows = vec![];
         for (wi, agents, terminals) in sections {
@@ -375,6 +373,9 @@ impl App {
         let agent = self.current_agent();
         let closed = agent.is_some_and(|a| !a.status.alive());
         let mut v = vec![("↵", if closed { "resume" } else { "open" }, Action::Open)];
+        if self.snap.agents.iter().any(|a| a.status == Status::Waiting) {
+            v.push(("w", "next waiting", Action::NextWaiting));
+        }
         if agent.is_some_and(|a| a.status == Status::Waiting) {
             v.push(("m", "done", Action::MarkDone));
         }
@@ -432,6 +433,7 @@ impl App {
             }
             Action::Adopt => self.adopt(),
             Action::MarkDone => self.mark_done(),
+            Action::NextWaiting => self.next_waiting(),
             Action::Tab(i) => {
                 self.tab = i;
                 self.detail_scroll = 0;
@@ -516,6 +518,17 @@ impl App {
             self.notify(format!("Could not update {failed} agent(s)"), true);
         }
         self.refresh();
+    }
+
+    /// Select the next agent waiting for you, after the selected row, wrapping around.
+    fn next_waiting(&mut self) {
+        let n = self.rows.len();
+        let waiting = |i: usize| matches!(self.rows[i].1, Row::Agent(a) if self.snap.agents[a].status == Status::Waiting);
+        match (1..=n).map(|d| (self.selected + d) % n).find(|&i| waiting(i)) {
+            Some(i) if i != self.selected => self.select(i),
+            Some(_) => {}
+            None => self.notify("Nothing is waiting for you", false),
+        }
     }
 
     fn adopt(&mut self) {
@@ -704,6 +717,7 @@ impl App {
             KeyCode::Char('R') => self.act(Action::Rename),
             KeyCode::Char('a') => self.act(Action::Adopt),
             KeyCode::Char('m') => self.act(Action::MarkDone),
+            KeyCode::Char('w') => self.act(Action::NextWaiting),
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),

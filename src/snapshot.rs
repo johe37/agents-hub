@@ -12,7 +12,7 @@ use crate::git::{GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs}
 use crate::hooks::events_dir;
 use crate::screens::{ScreenCache, log_path, screens_dir};
 use crate::state::{Live, Session, Status, live_claudes, load_sessions, transcript_for};
-use crate::theme::{BAR, BG, FG, WARNING};
+use crate::theme::{colors, css};
 use crate::tmux::{self, Pane, POOL_SESSION};
 use crate::transcript::{Transcript, TranscriptCache};
 
@@ -99,7 +99,7 @@ pub fn basename(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.into())
 }
 
-const MAX_CLOSED: usize = 8;
+const MAX_CLOSED: usize = 15;
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
@@ -367,7 +367,13 @@ impl Collector {
             });
         }
         // Recently closed sessions, so they can be resumed; skip ones already running again.
-        let closed: Vec<Session> = closed.into_iter().filter(|s| !agents.iter().any(|a| a.session_id() == Some(&s.session_id))).take(MAX_CLOSED).collect();
+        let closed: Vec<Session> = closed
+            .into_iter()
+            // No transcript means it never got a prompt: nothing to resume.
+            .filter(|s| s.transcript_path.as_deref().is_some_and(|p| std::path::Path::new(p).exists()))
+            .filter(|s| !agents.iter().any(|a| a.session_id() == Some(&s.session_id)))
+            .take(MAX_CLOSED)
+            .collect();
         let statuses = par_map(&closed, |s| git.repo_root(&s.cwd).map(|r| git.status(&r)));
         for (s, st) in closed.into_iter().zip(statuses) {
             agents.push(Agent {
@@ -392,7 +398,8 @@ impl Collector {
         for (a, t) in agents.iter_mut().zip(transcripts) {
             a.transcript = t;
         }
-        agents.sort_by_cached_key(|a| (a.status, std::cmp::Reverse(a.timestamp()), a.title().to_lowercase()));
+        // Fixed order so rows never jump: workspace agents keep their window order, the rest go by path.
+        agents.sort_by_cached_key(|a| a.workspace.is_none().then(|| (a.path.clone(), a.key.clone())));
         agents
     }
 
@@ -432,7 +439,9 @@ impl Collector {
 fn write_summary(sessions: &[Session]) {
     let waiting = sessions.iter().filter(|s| s.status == Status::Waiting).count();
     let text = if waiting > 0 {
-        format!("#[bg={WARNING},fg={BG},bold] ⏳ {waiting} waiting #[bg={BAR},fg={FG},nobold]")
+        let c = colors();
+        let (warning, bg, bar, fg) = (css(c.warning), css(c.bg), css(c.bar), css(c.fg));
+        format!("#[bg={warning},fg={bg},bold] ⏳ {waiting} waiting #[bg={bar},fg={fg},nobold]")
     } else {
         String::new()
     };

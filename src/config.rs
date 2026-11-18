@@ -47,6 +47,7 @@ pub struct Config {
     pub stale_minutes: f64,
     pub prewarm: bool,
     pub hub_key: String,
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -58,6 +59,7 @@ impl Default for Config {
             stale_minutes: 60.0,
             prewarm: true,
             hub_key: "C-q".into(),
+            theme: "dark-modern".into(),
         }
     }
 }
@@ -72,5 +74,8 @@ pub fn load() -> Config {
     };
     cfg.roots = cfg.roots.iter().map(|r| expand(r)).collect();
     cfg.refresh_seconds = cfg.refresh_seconds.max(0.2);
+    if let Err(e) = crate::theme::select(&cfg.theme) {
+        eprintln!("claude-hub: {e}");
+    }
     cfg
 }

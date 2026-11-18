@@ -111,6 +111,18 @@ pub fn write_config(exe: &str, hub_key: &str) -> String {
     let summary = quote(&summary_file().display().to_string());
     let label = key_label(hub_key);
     let key = quote(hub_key);
+    let c = colors();
+    let bar = css(c.bar);
+    let fg = css(c.fg);
+    let accent = css(c.accent);
+    let on_accent = css(c.on_accent);
+    let bright = css(c.bright);
+    let dim = css(c.dim);
+    let info = css(c.info);
+    let muted = css(c.muted);
+    let bg = css(c.bg);
+    let border = css(c.border);
+    let selection = css(c.selection);
     let text = format!(
         r##"# Your own tmux config first (prefix, keys, theme); the hub settings below win where they overlap.
 source-file -q ~/.tmux.conf
@@ -126,19 +138,19 @@ set -g focus-events on
 set -g status-interval 2
 set -g status-position top
 set -g status-justify left
-set -g status-style "bg={BAR},fg={FG}"
+set -g status-style "bg={bar},fg={fg}"
 set -g status-left-length 120
-set -g status-left "#[range=user|hub,bg={ACCENT},fg={BRIGHT},bold]  ◀  Claude Hub  #[nobold]{label} #[norange,bg={BAR}]  #[fg={ACCENT}]◆ #[fg={BRIGHT},bold]#S#[nobold,fg={DIM}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
+set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Claude Hub  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
 set -g status-right-length 80
-set -g status-right "#{{?client_prefix,#[bg={INFO} fg={BRIGHT} bold] PREFIX #[bg={BAR} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={DIM}] %H:%M "
+set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""
-set -g window-status-format "#[fg={MUTED}]  #I #{{?#{{==:#W,claude}},✻ ,}}#W  "
-set -g window-status-current-format "#[bg={BG},fg={ACCENT}]▎#[fg={BRIGHT},bold]#I #{{?#{{==:#W,claude}},✻ ,}}#W  "
-set -g message-style "bg={ACCENT},fg={BRIGHT},bold"
+set -g window-status-format "#[fg={muted}]  #I #{{?#{{==:#W,claude}},✻ ,}}#W  "
+set -g window-status-current-format "#[bg={bg},fg={accent}]▎#[fg={bright},bold]#I #{{?#{{==:#W,claude}},✻ ,}}#W  "
+set -g message-style "bg={accent},fg={on_accent},bold"
 set -g pane-border-status off
-set -g pane-border-style "fg={BORDER}"
-set -g pane-active-border-style "fg={ACCENT}"
-set -g mode-style "bg=#264F78,fg={BRIGHT}"
+set -g pane-border-style "fg={border}"
+set -g pane-active-border-style "fg={accent}"
+set -g mode-style "bg={selection},fg={bright}"
 bind -n MouseDown1Status if -F "#{{==:#{{mouse_status_range}},hub}}" "new-session -A -s {HUB_SESSION} {hub_cmd}" "select-window -t ="
 bind -n {key} new-session -A -s {HUB_SESSION} {hub_cmd}
 # The session and window lists hide the pool of spare shells.

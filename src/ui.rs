@@ -19,9 +19,6 @@ use crate::tmux::key_label;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const MAX_MESSAGE_LINES: usize = 40;
-const C_HOVER: Color = hex("#2A2D2E");
-const C_CLAUDE: Color = hex("#D97757");
-const TITLE_STOPS: [Color; 3] = [C_CLAUDE, C_PURPLE, C_INFO];
 const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const SPARK_BUCKETS: usize = 12;
 
@@ -41,21 +38,21 @@ fn tick(app: &App) -> u128 {
 fn status_symbol(status: Status, t: u128) -> Span<'static> {
     match status {
         // Pulses, so an agent that needs you catches the eye.
-        Status::Waiting => s("◉", fg(if (t / 600) % 2 == 0 { C_WARNING } else { hex("#7A6400") }).bold()),
-        Status::Working => s(SPINNER[(t / 80) as usize % SPINNER.len()], fg(C_INFO)),
-        Status::Idle => s("○", fg(C_SUCCESS)),
-        Status::Unknown => s("·", fg(C_DIM)),
-        Status::Ended => s("✗", fg(C_DIM)),
-        Status::Stale => s("?", fg(C_DIM)),
+        Status::Waiting => s("◉", fg(if (t / 600) % 2 == 0 { colors().warning } else { lerp(colors().warning, colors().bg, 0.5) }).bold()),
+        Status::Working => s(SPINNER[(t / 80) as usize % SPINNER.len()], fg(colors().info)),
+        Status::Idle => s("○", fg(colors().success)),
+        Status::Unknown => s("·", fg(colors().dim)),
+        Status::Ended => s("✗", fg(colors().dim)),
+        Status::Stale => s("?", fg(colors().dim)),
     }
 }
 
 fn status_color(status: Status) -> Color {
     match status {
-        Status::Waiting => C_WARNING,
-        Status::Working => C_INFO,
-        Status::Idle => C_SUCCESS,
-        _ => C_DIM,
+        Status::Waiting => colors().warning,
+        Status::Working => colors().info,
+        Status::Idle => colors().success,
+        _ => colors().dim,
     }
 }
 
@@ -77,8 +74,8 @@ fn sparkline(app: &App, key: &str, color: Color) -> Vec<Span<'static>> {
     let max = (*b.iter().max().unwrap_or(&0)).max(3);
     b.iter()
         .map(|&n| match n {
-            0 => s("·", fg(C_BORDER)),
-            n => s(SPARK[((n * 7) / max) as usize], fg(lerp(C_DIM, color, n as f32 / max as f32))),
+            0 => s("·", fg(colors().border)),
+            n => s(SPARK[((n * 7) / max) as usize], fg(lerp(colors().dim, color, n as f32 / max as f32))),
         })
         .collect()
 }
@@ -99,13 +96,13 @@ fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
 
 fn git_spans(g: Option<&GitStatus>) -> Vec<Span<'static>> {
     let Some(g) = g else { return vec![] };
-    let mut v = vec![s(format!("⎇ {}", g.branch.as_deref().unwrap_or("-")), fg(C_PURPLE))];
+    let mut v = vec![s(format!("⎇ {}", g.branch.as_deref().unwrap_or("-")), fg(colors().purple))];
     for (n, prefix, color) in [
-        (g.dirty as u32, " ●", C_MODIFIED),
-        (g.added, " +", C_SUCCESS),
-        (g.removed, " −", C_ERROR),
-        (g.ahead, " ↑", C_INFO),
-        (g.behind, " ↓", C_INFO),
+        (g.dirty as u32, " ●", colors().modified),
+        (g.added, " +", colors().success),
+        (g.removed, " −", colors().error),
+        (g.ahead, " ↑", colors().info),
+        (g.behind, " ↓", colors().info),
     ] {
         if n > 0 {
             v.push(s(format!("{prefix}{n}"), fg(color)));
@@ -154,7 +151,7 @@ fn width_of(spans: &[Span]) -> usize {
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    f.render_widget(Block::new().style(Style::new().bg(C_BG).fg(C_FG)), area);
+    f.render_widget(Block::new().style(Style::new().bg(colors().bg).fg(colors().fg)), area);
     app.hits.buttons.clear();
     let [header, main, footer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
     draw_header(f, app, header);
@@ -172,35 +169,35 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    f.render_widget(Block::new().style(Style::new().bg(C_BAR)), area);
+    f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
     let t = tick(app);
     let title = "Claude Hub";
     let n = title.chars().count() as f32;
-    let mut left = vec![s(" ✻ ", fg(gradient(&TITLE_STOPS, t as f32 / 4000.0)).bold())];
+    let mut left = vec![s(" ✻ ", fg(gradient(&[colors().claude, colors().purple, colors().info], t as f32 / 4000.0)).bold())];
     // A slow shimmer across the title.
-    left.extend(title.chars().enumerate().map(|(i, c)| s(c.to_string(), fg(gradient(&TITLE_STOPS, i as f32 / n / 2.0 - t as f32 / 4000.0)).bold())));
-    left.push(s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(C_DIM)));
+    left.extend(title.chars().enumerate().map(|(i, c)| s(c.to_string(), fg(gradient(&[colors().claude, colors().purple, colors().info], i as f32 / n / 2.0 - t as f32 / 4000.0)).bold())));
+    left.push(s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(colors().dim)));
     let left = Line::from(left);
     let count = |st: Status| app.snap.agents.iter().filter(|a| a.status == st).count();
     let mut right = vec![];
     let waiting = count(Status::Waiting);
     if waiting > 0 {
         let pulse = ((t as f32 / 600.0 * std::f32::consts::PI).sin() + 1.0) / 2.0;
-        right.extend(pill(format!("◉ {waiting} need you"), C_BG, lerp(hex("#8A7200"), C_WARNING, pulse), C_BAR));
+        right.extend(pill(format!("◉ {waiting} need you"), colors().bg, lerp(lerp(colors().warning, colors().bg, 0.4), colors().warning, pulse), colors().bar));
         right.push(Span::raw(" "));
     }
     let working = count(Status::Working);
     if working > 0 {
-        right.extend(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), C_BRIGHT, hex("#0E4A80"), C_BAR));
+        right.extend(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), colors().on_accent, colors().accent, colors().bar));
         right.push(Span::raw(" "));
     }
     let idle = count(Status::Idle);
     if idle > 0 {
-        right.extend(pill(format!("○ {idle} idle"), C_BRIGHT, hex("#1B5E2A"), C_BAR));
+        right.extend(pill(format!("○ {idle} idle"), colors().on_accent, colors().success, colors().bar));
         right.push(Span::raw(" "));
     }
     let n = app.snap.workspaces.len();
-    right.push(s(format!("{n} workspace{} ", if n == 1 { "" } else { "s" }), fg(C_MUTED)));
+    right.push(s(format!("{n} workspace{} ", if n == 1 { "" } else { "s" }), fg(colors().muted)));
     let rw = width_of(&right) as u16;
     f.render_widget(Paragraph::new(left), Rect { width: area.width.saturating_sub(rw), ..area });
     f.render_widget(Paragraph::new(Line::from(right)).alignment(Alignment::Right), area);
@@ -209,14 +206,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 fn panel(title: Line<'static>, focused: bool) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(fg(if focused { C_ACCENT } else { C_BORDER }))
+        .border_style(fg(if focused { colors().accent } else { colors().border }))
         .title(title)
-        .style(Style::new().bg(C_BG))
+        .style(Style::new().bg(colors().bg))
 }
 
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.modal.is_none() && app.focus != Focus::Reply;
-    let title = Line::from(vec![s(" Workspaces ", fg(if focused { C_BRIGHT } else { C_MUTED }).bold())]);
+    let title = Line::from(vec![s(" Workspaces ", fg(if focused { colors().bright } else { colors().muted }).bold())]);
     let block = panel(title, focused);
     let mut inner = block.inner(area);
     f.render_widget(block, area);
@@ -225,8 +222,8 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         let [list, bar] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
         inner = list;
         let active = app.focus == Focus::Filter;
-        let line = Line::from(vec![s(" / ", fg(C_BG).bg(if active { C_ACCENT } else { C_DIM }).bold()), s(" ", Style::new()), s(app.filter.text.clone(), fg(C_BRIGHT))]);
-        f.render_widget(Paragraph::new(line).style(Style::new().bg(C_PANEL)), bar);
+        let line = Line::from(vec![s(" / ", fg(colors().bg).bg(if active { colors().accent } else { colors().dim }).bold()), s(" ", Style::new()), s(app.filter.text.clone(), fg(colors().bright))]);
+        f.render_widget(Paragraph::new(line).style(Style::new().bg(colors().panel)), bar);
         if active {
             set_cursor(f, &app.filter, bar.x + 4, bar.y);
         }
@@ -235,13 +232,13 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     if !app.loaded {
         let t = tick(app);
-        let line = Line::from(vec![s(SPINNER[(t / 80) as usize % 10], fg(C_ACCENT)), s(" Loading…", fg(C_MUTED))]);
+        let line = Line::from(vec![s(SPINNER[(t / 80) as usize % 10], fg(colors().accent)), s(" Loading…", fg(colors().muted))]);
         f.render_widget(Paragraph::new(line), inner);
         return;
     }
     if app.rows.is_empty() {
         let msg = if app.filter.text.is_empty() { "Nothing here yet. Press n to open a workspace." } else { "Nothing matches the filter." };
-        f.render_widget(Paragraph::new(s(format!(" {msg}"), fg(C_MUTED))), inner);
+        f.render_widget(Paragraph::new(s(format!(" {msg}"), fg(colors().muted))), inner);
         return;
     }
 
@@ -265,7 +262,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         for x in inner.x..inner.right() {
             let frac = (x - inner.x) as f32 / inner.width.max(1) as f32;
             if let Some(cell) = f.buffer_mut().cell_mut(Position::new(x, y)) {
-                cell.set_bg(lerp(hex("#0B5394"), hex("#122233"), frac));
+                cell.set_bg(lerp(colors().selection, lerp(colors().selection, colors().bg, 0.6), frac));
             }
         }
     }
@@ -276,7 +273,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         for y in 0..thumb_h {
             let pos = Position::new(area.right() - 1, inner.y + (thumb_y + y) as u16);
             if let Some(cell) = f.buffer_mut().cell_mut(pos) {
-                cell.set_symbol("┃").set_fg(C_DIM);
+                cell.set_symbol("┃").set_fg(colors().dim);
             }
         }
     }
@@ -289,7 +286,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
     let is_child = |j: usize| matches!(app.rows.get(j).map(|r| r.1), Some(Row::Agent(_) | Row::Terminal(..)));
     let branch = if is_child(i + 1) { "├─ " } else { "╰─ " };
     let marker = match row {
-        _ if selected => s("▌", fg(C_BRIGHT)),
+        _ if selected => s("▌", fg(colors().bright)),
         Row::Workspace(wi) => match app.worst(&app.agents_of(&app.snap.workspaces[wi])) {
             Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
             _ => Span::raw(" "),
@@ -300,16 +297,16 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
 
     let (left, right): (Vec<Span>, Vec<Span>) = match row {
         Row::Gap => (vec![], vec![]),
-        Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(C_MUTED).bold())], vec![]),
+        Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![]),
         Row::Workspace(wi) => {
             let ws = &app.snap.workspaces[wi];
             let agents = app.agents_of(ws);
             let mut l = vec![match app.worst(&agents) {
                 Some(st) => status_symbol(st, t),
-                None => s("▪", fg(C_DIM)),
+                None => s("▪", fg(colors().dim)),
             }];
-            l.push(s(format!(" {}", ws.name), fg(C_BRIGHT).bold()));
-            l.push(s(format!("  {}", shorten(&ws.path)), fg(C_DIM)));
+            l.push(s(format!(" {}", ws.name), fg(colors().bright).bold()));
+            l.push(s(format!("  {}", shorten(&ws.path)), fg(colors().dim)));
             if ws.git.is_some() {
                 l.push(Span::raw("  "));
                 l.extend(git_spans(ws.git.as_ref()));
@@ -317,35 +314,35 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             let terms = ws.windows.iter().filter(|w| !w.is_claude()).count();
             let mut r = vec![];
             if !agents.is_empty() {
-                r.push(s(format!("✻{}", agents.len()), fg(C_DIM)));
+                r.push(s(format!("✻{}", agents.len()), fg(colors().dim)));
             }
             if terms > 0 {
-                r.push(s(format!(" ❯{terms}"), fg(C_DIM)));
+                r.push(s(format!(" ❯{terms}"), fg(colors().dim)));
             }
             (l, r)
         }
         Row::Agent(ai) => {
             let a = &app.snap.agents[ai];
-            let mut l = vec![s(branch, fg(C_BORDER).add_modifier(Modifier::BOLD)), status_symbol(a.status, t), Span::raw(" ")];
-            let title_style = if a.status == Status::Waiting { fg(C_BRIGHT).bold() } else { fg(C_FG) };
+            let mut l = vec![s(branch, fg(colors().border).add_modifier(Modifier::BOLD)), status_symbol(a.status, t), Span::raw(" ")];
+            let title_style = if a.status == Status::Waiting { fg(colors().bright).bold() } else { fg(colors().fg) };
             l.push(s(a.title(), title_style));
             let mut detail = vec![];
             if let Some(sess) = &a.session {
                 if a.status == Status::Waiting {
                     let reason = waiting_reason(sess.notification_type.as_deref()).map(String::from);
-                    detail.push(s(reason.or(sess.message.clone()).unwrap_or("Waiting for you".into()), fg(C_MODIFIED)));
+                    detail.push(s(reason.or(sess.message.clone()).unwrap_or("Waiting for you".into()), fg(colors().modified)));
                 } else if a.status == Status::Working {
                     if let Some(tool) = &sess.tool {
-                        detail.push(s(tool.clone(), fg(C_DIM)));
+                        detail.push(s(tool.clone(), fg(colors().dim)));
                     }
                 }
             }
             if a.workspace.is_none() {
-                detail.push(s(format!("  {}", a.name()), fg(C_DIM).italic()));
+                detail.push(s(format!("  {}", a.name()), fg(colors().dim).italic()));
             }
             let mut right = sparkline(app, &a.key, status_color(a.status));
             if a.session.is_some() {
-                right.push(s(format!(" {:>3}", age(a.timestamp())), fg(C_DIM)));
+                right.push(s(format!(" {:>3}", age(a.timestamp())), fg(colors().dim)));
             }
             if !detail.is_empty() {
                 // The title keeps at least half the room; the detail gets the rest.
@@ -363,9 +360,9 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         }
         Row::Terminal(wi, ti) => {
             let win = &app.snap.workspaces[wi].windows[ti];
-            let mut l = vec![s(branch, fg(C_BORDER).bold()), s("❯ ", fg(C_MUTED)), s(format!("{} ", win.index), fg(C_DIM)), s(win.name.clone(), fg(C_FG))];
+            let mut l = vec![s(branch, fg(colors().border).bold()), s("❯ ", fg(colors().muted)), s(format!("{} ", win.index), fg(colors().dim)), s(win.name.clone(), fg(colors().fg))];
             if win.command != win.name {
-                l.push(s(format!("  {}", win.command), fg(C_MUTED)));
+                l.push(s(format!("  {}", win.command), fg(colors().muted)));
             }
             (l, vec![])
         }
@@ -383,11 +380,11 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         _ => None,
     };
     if selected {
-        line = line.style(Style::new().bg(C_SELECTION));
+        line = line.style(Style::new().bg(colors().selection));
     } else if let Some((color, el)) = flash.filter(|(_, el)| *el < FLASH) {
-        line = line.style(Style::new().bg(lerp(lerp(C_BG, color, 0.45), C_BG, el.as_secs_f32() / FLASH.as_secs_f32())));
+        line = line.style(Style::new().bg(lerp(lerp(colors().bg, color, 0.45), colors().bg, el.as_secs_f32() / FLASH.as_secs_f32())));
     } else if app.hover == Some(i) && !matches!(row, Row::Gap | Row::Header(..)) {
-        line = line.style(Style::new().bg(C_HOVER));
+        line = line.style(Style::new().bg(colors().hover));
     }
     line
 }
@@ -410,12 +407,12 @@ fn markdown(text: &str) -> Vec<Line<'static>> {
             continue;
         }
         if in_code {
-            out.push(Line::from(s(format!("  {raw}"), fg(C_CODE))));
+            out.push(Line::from(s(format!("  {raw}"), fg(colors().code))));
             continue;
         }
         let trimmed = raw.trim_start();
         if trimmed.starts_with('#') {
-            out.push(Line::from(s(trimmed.trim_start_matches('#').trim().to_string(), fg(C_BRIGHT).bold())));
+            out.push(Line::from(s(trimmed.trim_start_matches('#').trim().to_string(), fg(colors().bright).bold())));
             continue;
         }
         let indent = &raw[..raw.len() - trimmed.len()];
@@ -423,14 +420,14 @@ fn markdown(text: &str) -> Vec<Line<'static>> {
             Some(rest) => (format!("{indent}• "), rest),
             None => (indent.to_string(), trimmed),
         };
-        let mut spans = vec![s(bullet, fg(C_ACCENT))];
+        let mut spans = vec![s(bullet, fg(colors().accent))];
         for (i, part) in body.split('`').enumerate() {
             if i % 2 == 1 {
-                spans.push(s(part.to_string(), fg(C_CODE)));
+                spans.push(s(part.to_string(), fg(colors().code)));
                 continue;
             }
             for (j, piece) in part.split("**").enumerate() {
-                let style = if j % 2 == 1 { fg(C_BRIGHT).bold() } else { fg(C_FG) };
+                let style = if j % 2 == 1 { fg(colors().bright).bold() } else { fg(colors().fg) };
                 spans.push(s(piece.to_string(), style));
             }
         }
@@ -461,33 +458,33 @@ fn headline(a: &Agent) -> (String, Option<String>) {
 fn meta_line(name: Option<&str>, path: &str, git: Option<&GitStatus>) -> Line<'static> {
     let mut v = vec![Span::raw(" ")];
     if let Some(n) = name {
-        v.push(s(format!("{n}  "), fg(C_MUTED)));
+        v.push(s(format!("{n}  "), fg(colors().muted)));
     }
-    v.push(s(format!("{}  ", shorten(path)), fg(C_DIM)));
+    v.push(s(format!("{}  ", shorten(path)), fg(colors().dim)));
     v.extend(git_spans(git));
     v.push(Span::raw(" "));
     Line::from(v)
 }
 
 fn chat_lines(a: &Agent) -> Vec<Line<'static>> {
-    let Some(t) = &a.transcript else { return vec![Line::from(s("No conversation yet.", fg(C_MUTED)))] };
+    let Some(t) = &a.transcript else { return vec![Line::from(s("No conversation yet.", fg(colors().muted)))] };
     let mut out = vec![];
     if let Some(p) = &t.last_prompt {
-        out.push(Line::from(s("You", fg(C_ACCENT).bold())));
+        out.push(Line::from(s("You", fg(colors().accent).bold())));
         let lines: Vec<&str> = p.lines().collect();
         for l in lines.iter().take(MAX_PROMPT_LINES) {
-            out.push(Line::from(vec![s("│ ", fg(C_ACCENT)), s(l.chars().take(300).collect::<String>(), fg(C_FG))]));
+            out.push(Line::from(vec![s("│ ", fg(colors().accent)), s(l.chars().take(300).collect::<String>(), fg(colors().fg))]));
         }
         if lines.len() > MAX_PROMPT_LINES {
-            out.push(Line::from(vec![s("│ ", fg(C_ACCENT)), s("…", fg(C_DIM))]));
+            out.push(Line::from(vec![s("│ ", fg(colors().accent)), s("…", fg(colors().dim))]));
         }
         out.push(Line::default());
     }
     if let Some(text) = &t.last_text {
-        out.push(Line::from(s("✻ Claude", fg(C_CLAUDE).bold())));
+        out.push(Line::from(s("✻ Claude", fg(colors().claude).bold())));
         let all: Vec<&str> = text.lines().collect();
         if all.len() > MAX_MESSAGE_LINES {
-            out.push(Line::from(s("… earlier lines hidden, Enter opens the full conversation", fg(C_DIM).italic())));
+            out.push(Line::from(s("… earlier lines hidden, Enter opens the full conversation", fg(colors().dim).italic())));
         }
         out.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
     }
@@ -504,37 +501,37 @@ fn chat_lines(a: &Agent) -> Vec<Line<'static>> {
     }
     if !parts.is_empty() {
         out.push(Line::default());
-        out.push(Line::from(s(parts.join(" · "), fg(C_DIM))));
+        out.push(Line::from(s(parts.join(" · "), fg(colors().dim))));
     }
     out
 }
 
 fn change_lines(g: Option<&GitStatus>) -> Vec<Line<'static>> {
-    let Some(g) = g else { return vec![Line::from(s("Not a git repository.", fg(C_MUTED)))] };
+    let Some(g) = g else { return vec![Line::from(s("Not a git repository.", fg(colors().muted)))] };
     if g.files.is_empty() {
-        return vec![Line::from(vec![s("✓ ", fg(C_SUCCESS).bold()), s("Working tree clean", fg(C_FG))])];
+        return vec![Line::from(vec![s("✓ ", fg(colors().success).bold()), s("Working tree clean", fg(colors().fg))])];
     }
     let n = g.files.len();
     let mut out = vec![
         Line::from(vec![
-            s(format!("{n} file{} changed", plural(n)), fg(C_FG).bold()),
-            s(format!("   +{}", g.added), fg(C_SUCCESS)),
-            s(format!(" −{}", g.removed), fg(C_ERROR)),
+            s(format!("{n} file{} changed", plural(n)), fg(colors().fg).bold()),
+            s(format!("   +{}", g.added), fg(colors().success)),
+            s(format!(" −{}", g.removed), fg(colors().error)),
         ]),
         Line::default(),
     ];
     for (status, path) in &g.files {
         let letter = status.chars().find(|&c| c != '.').unwrap_or('M');
         let color = match letter {
-            '?' | 'A' => C_SUCCESS,
-            'D' | 'U' => C_ERROR,
-            'R' => C_INFO,
-            _ => C_MODIFIED,
+            '?' | 'A' => colors().success,
+            'D' | 'U' => colors().error,
+            'R' => colors().info,
+            _ => colors().modified,
         };
         let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-        let mut l = vec![s(format!("{letter}  "), fg(color).bold()), s(name.to_string(), fg(C_BRIGHT))];
+        let mut l = vec![s(format!("{letter}  "), fg(color).bold()), s(name.to_string(), fg(colors().bright))];
         if !dir.is_empty() {
-            l.push(s(format!("  {dir}"), fg(C_DIM)));
+            l.push(s(format!("  {dir}"), fg(colors().dim)));
         }
         out.push(Line::from(l));
     }
@@ -556,37 +553,37 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     let color = status_color(a.status);
     let (head, detail) = headline(a);
     let when = a.session.as_ref().map_or(String::new(), |s| format!("  · {}", age(s.timestamp)));
-    let mut banner = vec![Line::from(vec![status_symbol(a.status, t), s(format!(" {head}"), fg(color).bold()), s(when, fg(C_DIM))])];
+    let mut banner = vec![Line::from(vec![status_symbol(a.status, t), s(format!(" {head}"), fg(color).bold()), s(when, fg(colors().dim))])];
     if let Some(d) = detail {
-        let style = if a.needs_permission() { fg(C_BRIGHT).bg(C_PANEL) } else { fg(C_FG) };
+        let style = if a.needs_permission() { fg(colors().bright).bg(colors().panel) } else { fg(colors().fg) };
         banner.push(Line::from(s(d.lines().next().unwrap_or_default().to_string(), style)));
     }
     if a.workspace.is_none() && a.status.alive() {
         let where_ = a.session.as_ref().and_then(|s| s.tmux_session.clone()).map_or("its own terminal".into(), |s| format!("tmux session {s}"));
-        banner.push(Line::from(s(format!("Runs outside Claude Hub, in {where_}."), fg(C_MUTED).italic())));
+        banner.push(Line::from(s(format!("Runs outside Claude Hub, in {where_}."), fg(colors().muted).italic())));
     }
     let mut buttons = vec![];
     if a.status == Status::Waiting && a.target.is_some() {
         if a.needs_permission() {
-            buttons.push(("y", "approve", C_SUCCESS, Action::Approve));
-            buttons.push(("d", "deny", C_ERROR, Action::Deny));
+            buttons.push(("y", "approve", colors().success, Action::Approve));
+            buttons.push(("d", "deny", colors().error, Action::Deny));
         }
-        buttons.push(("r", "reply", C_INPUT, Action::Reply));
+        buttons.push(("r", "reply", colors().input, Action::Reply));
     }
     if a.status == Status::Waiting {
-        buttons.push(("m", "done", C_INPUT, Action::MarkDone));
+        buttons.push(("m", "done", colors().input, Action::MarkDone));
     }
     if !a.status.alive() && a.session_id().is_some() {
-        buttons.push(("↵", "resume", C_ACCENT, Action::Open));
+        buttons.push(("↵", "resume", colors().accent, Action::Open));
     }
     if a.workspace.is_none() && a.status.alive() && a.pid.is_some() {
-        buttons.push(("a", "adopt into the hub", C_ACCENT, Action::Adopt));
+        buttons.push(("a", "adopt into the hub", colors().accent, Action::Adopt));
     }
     let git = a.git.as_ref();
     let body = match app.tab {
         0 => chat_lines(a),
         1 => change_lines(git),
-        _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(C_MUTED)))],
+        _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(colors().muted)))],
         _ => vec![],
     };
     Side {
@@ -606,29 +603,29 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     let (color, symbol, head, detail) = match app.worst(&agents) {
         Some(st @ Status::Waiting) => {
             let n = count(st);
-            (C_WARNING, status_symbol(st, t), format!("{n} agent{} need{} you", plural(n), if n == 1 { "s" } else { "" }), None)
+            (colors().warning, status_symbol(st, t), format!("{n} agent{} need{} you", plural(n), if n == 1 { "s" } else { "" }), None)
         }
         Some(st @ Status::Working) => {
             let n = count(st);
-            (C_INFO, status_symbol(st, t), format!("{n} agent{} working", plural(n)), None)
+            (colors().info, status_symbol(st, t), format!("{n} agent{} working", plural(n)), None)
         }
-        Some(_) => (C_SUCCESS, s("○", fg(C_SUCCESS)), "Nothing needs you".into(), None),
-        None => (C_DIM, s("▪", fg(C_DIM)), "Nothing running".into(), Some("c starts Claude, t opens a terminal.")),
+        Some(_) => (colors().success, s("○", fg(colors().success)), "Nothing needs you".into(), None),
+        None => (colors().dim, s("▪", fg(colors().dim)), "Nothing running".into(), Some("c starts Claude, t opens a terminal.")),
     };
     let mut banner = vec![Line::from(vec![symbol, s(format!(" {head}"), fg(color).bold())])];
-    banner.extend(detail.map(|d| Line::from(s(d, fg(C_MUTED)))));
+    banner.extend(detail.map(|d| Line::from(s(d, fg(colors().muted)))));
     let body = match app.tab {
-        0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(C_MUTED)))],
+        0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(colors().muted)))],
         0 => agents
             .iter()
             .flat_map(|&i| {
                 let a = &app.snap.agents[i];
                 let (head, detail) = headline(a);
-                let style = if a.status == Status::Waiting { fg(C_BRIGHT).bold() } else { fg(C_FG) };
+                let style = if a.status == Status::Waiting { fg(colors().bright).bold() } else { fg(colors().fg) };
                 let detail = detail.map_or(String::new(), |d| format!(" · {}", d.lines().next().unwrap_or_default()));
                 [
                     Line::from(vec![status_symbol(a.status, t), s(format!(" {}", a.title()), style)]),
-                    Line::from(vec![s("  ", Style::new()), s(head, fg(status_color(a.status))), s(detail, fg(C_DIM))]),
+                    Line::from(vec![s("  ", Style::new()), s(head, fg(status_color(a.status))), s(detail, fg(colors().dim))]),
                     Line::default(),
                 ]
             })
@@ -658,16 +655,16 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
         _ => {
-            let block = panel(Line::from(s(" Claude Hub ", fg(C_BRIGHT).bold())), false);
+            let block = panel(Line::from(s(" Claude Hub ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
             f.render_widget(block, area);
-            let text = vec![Line::from(s("No workspaces yet.", fg(C_BRIGHT).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(C_MUTED)))];
+            let text = vec![Line::from(s("No workspaces yet.", fg(colors().bright).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(colors().muted)))];
             f.render_widget(Paragraph::new(text), inner);
             app.hits.detail = Rect::default();
             return;
         }
     };
-    let block = panel(Line::from(s(format!(" {} ", side.title), fg(C_BRIGHT).bold())), false).title_bottom(side.meta);
+    let block = panel(Line::from(s(format!(" {} ", side.title), fg(colors().bright).bold())), false).title_bottom(side.meta);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
 
@@ -682,7 +679,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::LEFT)
         .border_type(BorderType::Thick)
         .border_style(fg(side.color))
-        .style(Style::new().bg(lerp(C_BG, side.color, 0.12)))
+        .style(Style::new().bg(lerp(colors().bg, side.color, 0.12)))
         .padding(Padding::new(1, 1, 1, 1));
     let banner_inner = banner_block.inner(banner_area);
     f.render_widget(banner_block, banner_area);
@@ -691,8 +688,8 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         let mut x = banner_inner.x;
         let y = banner_inner.bottom() - 1;
         for (key, label, color, action) in side.buttons {
-            let key_fg = if color == C_INPUT { C_FG } else { C_BG };
-            let line = Line::from(vec![s(format!(" {key} "), fg(key_fg).bg(color).bold()), s(format!(" {label}  "), fg(C_MUTED))]);
+            let key_fg = if color == colors().input { colors().fg } else { colors().bg };
+            let line = Line::from(vec![s(format!(" {key} "), fg(key_fg).bg(color).bold()), s(format!(" {label}  "), fg(colors().muted))]);
             let w = line.width() as u16;
             let rect = Rect::new(x, y, w.min(banner_inner.right().saturating_sub(x)), 1);
             f.render_widget(Paragraph::new(line), rect);
@@ -706,20 +703,20 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let mut under = vec![];
     for (i, (label, n)) in side.tabs.iter().enumerate() {
         let active = app.tab == i;
-        let mut spans = vec![s(format!(" {label}"), if active { fg(C_BRIGHT).bold() } else { fg(C_MUTED) })];
+        let mut spans = vec![s(format!(" {label}"), if active { fg(colors().bright).bold() } else { fg(colors().muted) })];
         if *n > 0 {
-            spans.push(s(format!(" {n}"), fg(if active { C_ACCENT } else { C_DIM })));
+            spans.push(s(format!(" {n}"), fg(if active { colors().accent } else { colors().dim })));
         }
         spans.push(Span::raw(" "));
         let w = width_of(&spans) as u16;
         let rect = Rect::new(x, tabs_area.y, w.min(tabs_area.right().saturating_sub(x)), 1);
         f.render_widget(Paragraph::new(Line::from(spans)), rect);
         app.hits.buttons.push((rect, Action::Tab(i)));
-        under.push(s(if active { "━" } else { "─" }.repeat(w as usize), fg(if active { C_ACCENT } else { C_BORDER })));
+        under.push(s(if active { "━" } else { "─" }.repeat(w as usize), fg(if active { colors().accent } else { colors().border })));
         x += w + 1;
-        under.push(s("─", fg(C_BORDER)));
+        under.push(s("─", fg(colors().border)));
     }
-    under.push(s("─".repeat(tabs_area.right().saturating_sub(x) as usize), fg(C_BORDER)));
+    under.push(s("─".repeat(tabs_area.right().saturating_sub(x) as usize), fg(colors().border)));
     f.render_widget(Paragraph::new(Line::from(under)), Rect { y: tabs_area.y + 1, height: 1, ..tabs_area });
 
     let body_area = body_area.inner(Margin::new(0, 1));
@@ -744,20 +741,20 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option<&str>) {
     let ws = app.snap.workspaces[wi].clone();
     if ws.windows.is_empty() {
-        f.render_widget(Paragraph::new(s("No windows. c starts Claude, t a terminal.", fg(C_MUTED))), area);
+        f.render_widget(Paragraph::new(s("No windows. c starts Claude, t a terminal.", fg(colors().muted))), area);
     }
     for (n, w) in ws.windows.iter().enumerate() {
         let y = area.y + n as u16;
         if y >= area.bottom() {
             break;
         }
-        let kind = if w.is_claude() { s("✻ ", fg(C_CLAUDE)) } else { s("❯ ", fg(C_MUTED)) };
-        let mut spans = vec![s(format!("{} ", w.index), fg(C_DIM)), kind, s(w.name.clone(), fg(C_INFO).underlined())];
+        let kind = if w.is_claude() { s("✻ ", fg(colors().claude)) } else { s("❯ ", fg(colors().muted)) };
+        let mut spans = vec![s(format!("{} ", w.index), fg(colors().dim)), kind, s(w.name.clone(), fg(colors().info).underlined())];
         if w.command != w.name && w.command != "claude" {
-            spans.push(s(format!("  {}", w.command), fg(C_DIM)));
+            spans.push(s(format!("  {}", w.command), fg(colors().dim)));
         }
         if own == Some(w.window_id.as_str()) {
-            spans.push(s("  ◂ this agent", fg(C_DIM)));
+            spans.push(s("  ◂ this agent", fg(colors().dim)));
         }
         let rect = Rect { y, height: 1, ..area };
         f.render_widget(Paragraph::new(Line::from(spans)), rect);
@@ -775,12 +772,12 @@ fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(fg(if active { C_ACCENT } else { C_BORDER }))
-        .title(s(" Reply ", fg(if active { C_BRIGHT } else { C_MUTED })))
-        .style(Style::new().bg(C_PANEL));
+        .border_style(fg(if active { colors().accent } else { colors().border }))
+        .title(s(" Reply ", fg(if active { colors().bright } else { colors().muted })))
+        .style(Style::new().bg(colors().panel));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let content = if app.reply.text.is_empty() { s(placeholder, fg(C_DIM)) } else { s(app.reply.text.clone(), fg(C_BRIGHT)) };
+    let content = if app.reply.text.is_empty() { s(placeholder, fg(colors().dim)) } else { s(app.reply.text.clone(), fg(colors().bright)) };
     f.render_widget(Paragraph::new(content), inner);
     if active {
         set_cursor(f, &app.reply, inner.x, inner.y);
@@ -792,34 +789,34 @@ fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize) {
     let ws = &app.snap.workspaces[wi];
     let w = &ws.windows[ti];
-    let block = panel(Line::from(vec![s(" ❯ ", fg(C_MUTED)), s(format!("{} {} ", w.index, w.name), fg(C_BRIGHT).bold())]), false);
+    let block = panel(Line::from(vec![s(" ❯ ", fg(colors().muted)), s(format!("{} {} ", w.index, w.name), fg(colors().bright).bold())]), false);
     let inner = block.inner(area).inner(ratatui::layout::Margin::new(1, 0));
     f.render_widget(block, area);
     let [info, screen_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(inner);
     app.hits.detail = Rect::default();
     let info_lines = vec![
-        Line::from(vec![s(format!("{}  ", ws.name), fg(C_FG).bold()), s(shorten(&ws.path), fg(C_DIM))]),
-        Line::from(vec![s(format!("Running {}", w.command), fg(C_FG)), s(format!("  ·  {}×{}", w.width, w.height), fg(C_DIM))]),
+        Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s(shorten(&ws.path), fg(colors().dim))]),
+        Line::from(vec![s(format!("Running {}", w.command), fg(colors().fg)), s(format!("  ·  {}×{}", w.width, w.height), fg(colors().dim))]),
     ];
     f.render_widget(Paragraph::new(info_lines), info);
 
     let screen_block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(fg(C_BORDER))
-        .title(s(" screen · ↵ to open ", fg(C_DIM)))
-        .style(Style::new().bg(C_BAR));
+        .border_style(fg(colors().border))
+        .title(s(" screen · ↵ to open ", fg(colors().dim)))
+        .style(Style::new().bg(colors().bar));
     let screen_inner = screen_block.inner(screen_area);
     f.render_widget(screen_block, screen_area);
     app.hits.buttons.push((screen_area, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
     match &w.screen {
         None => f.render_widget(
-            Paragraph::new(s("Nothing captured yet. The preview starts with the next output in this terminal.", fg(C_MUTED))).wrap(Wrap { trim: true }),
+            Paragraph::new(s("Nothing captured yet. The preview starts with the next output in this terminal.", fg(colors().muted))).wrap(Wrap { trim: true }),
             screen_inner,
         ),
-        Some(lines) if lines.is_empty() => f.render_widget(Paragraph::new(s("(blank screen)", fg(C_DIM))), screen_inner),
+        Some(lines) if lines.is_empty() => f.render_widget(Paragraph::new(s("(blank screen)", fg(colors().dim))), screen_inner),
         Some(lines) => {
             let skip = lines.len().saturating_sub(screen_inner.height as usize);
-            f.render_widget(Paragraph::new(lines[skip..].to_vec()).style(fg(C_FG)), screen_inner);
+            f.render_widget(Paragraph::new(lines[skip..].to_vec()).style(fg(colors().fg)), screen_inner);
         }
     }
 }
@@ -827,7 +824,7 @@ fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize)
 // ---- footer, toast, modals ----
 
 fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    f.render_widget(Block::new().style(Style::new().bg(C_BAR)), area);
+    f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
     let mut x = area.x + 1;
     for (key, label, action) in app.actions() {
         let key_w = key.chars().count() as u16 + 2;
@@ -836,7 +833,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             break;
         }
         let rect = Rect::new(x, area.y, w, 1);
-        let line = Line::from(vec![s(format!(" {key} "), fg(C_BRIGHT).bg(C_INPUT).bold()), s(format!(" {label}  "), fg(C_MUTED))]);
+        let line = Line::from(vec![s(format!(" {key} "), fg(colors().bright).bg(colors().input).bold()), s(format!(" {label}  "), fg(colors().muted))]);
         f.render_widget(Paragraph::new(line), rect);
         app.hits.buttons.push((rect, action));
         x += w;
@@ -855,15 +852,15 @@ fn draw_toast(f: &mut Frame, app: &App, area: Rect) {
     if rect.width < 3 {
         return;
     }
-    let (color, icon) = if t.error { (C_ERROR, "✗") } else { (C_SUCCESS, "✓") };
+    let (color, icon) = if t.error { (colors().error, "✗") } else { (colors().success, "✓") };
     let fade = ((ms - 3200.0) / 800.0).clamp(0.0, 1.0);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(fg(lerp(color, C_BORDER, fade)))
+        .border_style(fg(lerp(color, colors().border, fade)))
         .title(s(format!(" {icon} "), fg(color).bold()))
-        .style(Style::new().bg(C_PANEL));
-    f.render_widget(Paragraph::new(s(t.text.clone(), fg(lerp(C_BRIGHT, C_MUTED, fade)))).wrap(Wrap { trim: true }).block(block), rect);
+        .style(Style::new().bg(colors().panel));
+    f.render_widget(Paragraph::new(s(t.text.clone(), fg(lerp(colors().bright, colors().muted, fade)))).wrap(Wrap { trim: true }).block(block), rect);
 }
 
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
@@ -875,9 +872,9 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 fn modal_block(title: &str) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(fg(C_ACCENT))
-        .title(s(format!(" {title} "), fg(C_BRIGHT).bold()))
-        .style(Style::new().bg(C_PANEL).fg(C_FG))
+        .border_style(fg(colors().accent))
+        .title(s(format!(" {title} "), fg(colors().bright).bold()))
+        .style(Style::new().bg(colors().panel).fg(colors().fg))
         .padding(ratatui::widgets::Padding::horizontal(1))
 }
 
@@ -895,6 +892,7 @@ const HELP: &[(&str, &str)] = &[
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),
     ("m", "mark done: clear waiting on the agent or workspace"),
+    ("w", "jump to the next agent waiting for you"),
     ("↵ on closed", "resume a recently closed agent in a workspace"),
     ("r", "reply: type a message, Enter sends it to the agent"),
     ("y / d", "approve / deny a permission prompt"),
@@ -920,10 +918,10 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let lines: Vec<Line> = HELP
                 .iter()
                 .map(|(k, v)| match *k {
-                    "" => Line::from(s(*v, fg(C_BRIGHT).bold())),
+                    "" => Line::from(s(*v, fg(colors().bright).bold())),
                     k => {
                         let k = if k == "HUBKEY" { hub_key.as_str() } else { k };
-                        Line::from(vec![s(format!("  {k:<14}"), fg(C_ACCENT).bold()), s(*v, fg(C_FG))])
+                        Line::from(vec![s(format!("  {k:<14}"), fg(colors().accent).bold()), s(*v, fg(colors().fg))])
                     }
                 })
                 .collect();
@@ -934,17 +932,17 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
         Modal::Confirm { question, yes, .. } => {
             let rect = centered(area, 64, 9);
             f.render_widget(Clear, rect);
-            let block = modal_block("Confirm").border_style(fg(C_WARNING));
+            let block = modal_block("Confirm").border_style(fg(colors().warning));
             let inner = block.inner(rect);
             f.render_widget(block, rect);
-            let text = vec![Line::from(s("⚠  Are you sure?", fg(C_WARNING).bold())), Line::default(), Line::from(s(question.clone(), fg(C_FG)))];
+            let text = vec![Line::from(s("⚠  Are you sure?", fg(colors().warning).bold())), Line::default(), Line::from(s(question.clone(), fg(colors().fg)))];
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
             let by = inner.bottom() - 1;
             let no_rect = Rect::new(inner.right().saturating_sub(9), by, 8, 1);
             let yes_rect = Rect::new(inner.right().saturating_sub(19), by, 9, 1);
-            let style = |focused: bool, color: Color| if focused { fg(C_BRIGHT).bg(color).bold() } else { fg(C_FG).bg(C_INPUT) };
-            f.render_widget(Paragraph::new(s(" Yes  y ", style(*yes, C_ERROR))), yes_rect);
-            f.render_widget(Paragraph::new(s(" No  n ", style(!*yes, C_ACCENT))), no_rect);
+            let style = |focused: bool, color: Color| if focused { fg(colors().on_accent).bg(color).bold() } else { fg(colors().fg).bg(colors().input) };
+            f.render_widget(Paragraph::new(s(" Yes  y ", style(*yes, colors().error))), yes_rect);
+            f.render_widget(Paragraph::new(s(" No  n ", style(!*yes, colors().accent))), no_rect);
             app.hits.buttons.push((yes_rect, Action::Confirm(true)));
             app.hits.buttons.push((no_rect, Action::Confirm(false)));
         }
@@ -955,7 +953,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let inner = block.inner(rect);
             f.render_widget(block, rect);
             let field = Rect { y: inner.y + 1, height: 1, ..inner };
-            f.render_widget(Paragraph::new(s(input.text.clone(), fg(C_BRIGHT))).style(Style::new().bg(C_INPUT)), field);
+            f.render_widget(Paragraph::new(s(input.text.clone(), fg(colors().bright))).style(Style::new().bg(colors().input)), field);
             set_cursor(f, input, field.x, field.y);
         }
         Modal::Picker(p) => draw_picker(f, p, area, &mut app.hits.picker_list),
@@ -971,15 +969,15 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
     let [input_area, _, list, hint] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(inner);
 
-    let mut spans = vec![s("❯ ", fg(C_ACCENT).bold())];
+    let mut spans = vec![s("❯ ", fg(colors().accent).bold())];
     if p.input.text.is_empty() {
-        spans.push(s("Search repos and directories, or type a path like ~/repos/…", fg(C_DIM)));
+        spans.push(s("Search repos and directories, or type a path like ~/repos/…", fg(colors().dim)));
     } else {
-        spans.push(s(p.input.text.clone(), fg(C_BRIGHT)));
-        spans.extend(p.suggestion().map(|sug| s(sug, fg(C_DIM))));
+        spans.push(s(p.input.text.clone(), fg(colors().bright)));
+        spans.extend(p.suggestion().map(|sug| s(sug, fg(colors().dim))));
     }
-    let count = s(format!("{} ", p.options.len()), fg(C_DIM));
-    f.render_widget(Paragraph::new(Line::from(spans)).style(Style::new().bg(C_INPUT)), input_area);
+    let count = s(format!("{} ", p.options.len()), fg(colors().dim));
+    f.render_widget(Paragraph::new(Line::from(spans)).style(Style::new().bg(colors().input)), input_area);
     f.render_widget(Paragraph::new(count).alignment(Alignment::Right), input_area);
     set_cursor(f, &p.input, input_area.x + 2, input_area.y);
 
@@ -999,8 +997,8 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
         .map(|(i, o)| {
             if i == p.selected {
                 let mut l = picker::highlight(&o.line);
-                l.spans.insert(0, s("▌", fg(C_ACCENT)));
-                l.style(Style::new().bg(C_SELECTION))
+                l.spans.insert(0, s("▌", fg(colors().accent)));
+                l.style(Style::new().bg(colors().selection))
             } else {
                 let mut l = o.line.clone();
                 l.spans.insert(0, Span::raw(" "));
@@ -1009,7 +1007,7 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
         })
         .collect();
     if lines.is_empty() {
-        f.render_widget(Paragraph::new(s(" No matches", fg(C_MUTED))), list);
+        f.render_widget(Paragraph::new(s(" No matches", fg(colors().muted))), list);
     } else {
         f.render_widget(Paragraph::new(lines), list);
     }

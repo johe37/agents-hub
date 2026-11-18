@@ -45,6 +45,7 @@ refresh_seconds = 2
 stale_minutes = 60
 prewarm = true               # keep a started shell ready per workspace
 hub_key = "C-q"              # tmux key that brings you back to the hub from any terminal
+theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
@@ -100,6 +101,7 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
+| Hub | `w` | Jump to the next agent waiting for you |
 | Hub | `PgUp` / `PgDn` | Scroll the detail panel |
 | Hub | `/` | Filter, `Esc` clears |
 | Hub | `q` | Leave. Everything keeps running |
