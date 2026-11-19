@@ -188,8 +188,10 @@ cost come from the same file.
 - New terminals open instantly because the hub keeps one started shell per workspace in
   a hidden `_pool` session, and starts one for the directory you highlight in the picker.
   Turn it off with `prewarm = false`.
-- `c` opens Claude instantly the same way: when a workspace stays selected for a second,
-  the hub starts one Claude for it in `_pool`. It keeps only that one, restarts it every
+- `c` opens Claude instantly the same way: the hub starts one Claude in `_pool` for the
+  selected workspace, or for the directory highlighted in the picker, so `Ctrl+O` is
+  instant too. Claude itself needs a few seconds to start, so press `c` a moment after you
+  select the workspace. The hub keeps only that one Claude, restarts it every
   10 minutes or when the branch changes, so the git state and CLAUDE.md it read are fresh,
   and stops it when nobody has looked at the hub for 15 minutes.
   Turn it off with `prewarm_claude = false`.

@@ -270,15 +270,20 @@ impl App {
         self.live = Some(Live { pane: pane.0, lines: lines.unwrap_or_default(), cursor });
     }
 
-    /// Moving through the list only starts a Claude where the selection stays for a second.
+    /// Start a Claude for the selected workspace, or the directory highlighted in the picker,
+    /// so c or Ctrl+O shows it at once. Held keys pass by without starting one for every row.
     fn prewarm_claude(&mut self) {
-        if let Some(path) = self.current_workspace().map(|w| w.path.clone()) {
+        let path = match &self.modal {
+            Some(Modal::Picker(p)) => p.selected_path(),
+            _ => self.current_workspace().map(|w| w.path.clone()),
+        };
+        if let Some(path) = path {
             if self.claude_target.as_ref().is_none_or(|(_, p)| *p != path) {
                 self.claude_target = Some((Instant::now(), path));
             }
         }
         let Some((at, path)) = &self.claude_target else { return };
-        if at.elapsed() > Duration::from_secs(1) && self.claude_sent.as_ref() != Some(path) {
+        if at.elapsed() > Duration::from_millis(150) && self.claude_sent.as_ref() != Some(path) {
             let _ = self.cmd.send(Cmd::PrewarmClaude(path.clone()));
             self.claude_sent = Some(path.clone());
         }
@@ -995,12 +1000,14 @@ impl App {
             return self.finish(r);
         }
         let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
-        // Look up the pool fresh: the picker may have started a shell for this path a moment ago.
-        let spare = if command.is_none() {
-            tmux::spares(&tmux::list_all_panes()).into_iter().find(|(p, _)| *p == path).map(|(_, w)| w)
-        } else {
-            None
+        // Look up the pool fresh: the picker may have started a spare for this path a moment ago.
+        let pool = tmux::list_all_panes();
+        let spares = match command {
+            None => tmux::spares(&pool),
+            Some("claude") => tmux::claude_spares(&pool),
+            Some(_) => vec![],
         };
+        let spare = spares.into_iter().find(|(p, _)| *p == path).map(|(_, w)| w);
         let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         let name = tmux::unique_session_name(&basename(&path), &taken);
         let r = tmux::create_workspace(&name, &path, kind, command, spare.as_deref());

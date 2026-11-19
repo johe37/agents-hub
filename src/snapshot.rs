@@ -343,7 +343,7 @@ impl Collector {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
-        self.fill_claude(&workspaces, &all_panes);
+        self.fill_claude(&all_panes);
         let pool = tmux::list_all_panes();
         Snapshot {
             workspaces,
@@ -541,19 +541,19 @@ impl Collector {
         }
     }
 
-    /// Keep one Claude started for the workspace selected in the hub, so c shows it at once.
+    /// Keep one Claude started for the workspace selected in the hub, or the directory
+    /// highlighted in the picker, so c or Ctrl+O shows it at once.
     /// Only one, as each takes a few hundred MB; replaced when old or on another branch,
     /// as Claude reads the git state and CLAUDE.md files when it starts.
-    fn fill_claude(&mut self, workspaces: &[Workspace], all_panes: &[Pane]) {
+    fn fill_claude(&mut self, all_panes: &[Pane]) {
         if tmux::hub_visible() {
             self.hub_seen = Instant::now();
         }
-        let ws = self
+        let target = self
             .claude_target
-            .as_ref()
-            .filter(|_| self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN)
-            .and_then(|p| workspaces.iter().find(|w| w.path == *p));
-        let branch = ws.and_then(|w| w.git.as_ref()).and_then(|g| g.branch.clone());
+            .clone()
+            .filter(|p| self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN && std::path::Path::new(p).is_dir());
+        let branch = target.as_deref().and_then(|p| self.git.repo_root(p)).and_then(|r| self.git.status(&r).branch);
         let spares = tmux::claude_spares(all_panes);
         // Taken into a workspace, or Claude exited: wait a while before the next one, so it does not compete with this one.
         if let Some(s) = self.claude_spare.take_if(|s| !spares.iter().any(|(_, id)| *id == s.window_id)) {
@@ -562,25 +562,25 @@ impl Collector {
         let mut kept = false;
         for (path, id) in spares {
             let fresh = self.claude_spare.as_ref().is_some_and(|s| s.window_id == id && s.started.elapsed() < CLAUDE_MAX_AGE && s.branch == branch);
-            if !kept && fresh && ws.is_some_and(|w| w.path == path) {
+            if !kept && fresh && target.as_ref() == Some(&path) {
                 kept = true;
             } else {
                 let _ = tmux::kill_window(&id);
                 self.claude_spare.take_if(|s| s.window_id == id);
             }
         }
-        let Some(ws) = ws.filter(|w| !kept && std::path::Path::new(&w.path).is_dir()) else { return };
-        if self.claude_pause.as_ref().is_some_and(|(p, at)| *p == ws.path && at.elapsed() < CLAUDE_PAUSE) {
+        let Some(path) = target.filter(|_| !kept) else { return };
+        if self.claude_pause.as_ref().is_some_and(|(p, at)| *p == path && at.elapsed() < CLAUDE_PAUSE) {
             return;
         }
-        self.claude_spare = tmux::spawn_claude_spare(&ws.path).map(|window_id| ClaudeSpare {
+        self.claude_spare = tmux::spawn_claude_spare(&path).map(|window_id| ClaudeSpare {
             window_id,
-            path: ws.path.clone(),
+            path: path.clone(),
             started: Instant::now(),
             branch,
         });
         if self.claude_spare.is_none() {
-            self.claude_pause = Some((ws.path.clone(), Instant::now()));
+            self.claude_pause = Some((path, Instant::now()));
         }
     }
 
