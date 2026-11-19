@@ -112,6 +112,10 @@ pub struct App {
     pub modal: Option<Modal>,
     pub toast: Option<Toast>,
     pub detail_scroll: u16,
+    /// Text dragged over in the detail panel; copied when the mouse is released.
+    pub sel: Option<Selection>,
+    /// Prompts sent from the hub that the transcript does not show yet, by agent key.
+    pub sent: HashMap<String, (String, Instant)>,
     /// Detail panel tab: chat or agents, changes, windows.
     pub tab: usize,
     pub started: Instant,
@@ -127,6 +131,14 @@ pub struct App {
     rescanning: bool,
     quit: bool,
     pub attach_to: Option<String>,
+}
+
+/// Positions are (row, column) in the panel's content, so they stay put when it scrolls.
+#[derive(Clone, Copy)]
+pub struct Selection {
+    pub from: (u16, u16),
+    pub to: (u16, u16),
+    pub copy: bool,
 }
 
 pub const FLASH: Duration = Duration::from_millis(1500);
@@ -151,6 +163,8 @@ impl App {
             modal: None,
             toast: None,
             detail_scroll: 0,
+            sel: None,
+            sent: HashMap::new(),
             tab: 0,
             started: Instant::now(),
             hits: Hits::default(),
@@ -214,6 +228,11 @@ impl App {
             }
         }
         self.changed.retain(|_, t| t.elapsed() < FLASH);
+        // Drop a sent prompt once the transcript has it, or when it never arrives.
+        self.sent.retain(|key, (text, at)| {
+            let shown = snap.agents.iter().find(|a| a.key == *key).and_then(|a| a.transcript.as_ref()?.last_prompt.as_deref()) == Some(&crate::transcript::flatten(text));
+            !shown && at.elapsed() < Duration::from_secs(30)
+        });
         for (text, error) in &snap.notices {
             self.notify(text.clone(), *error);
         }
@@ -390,6 +409,7 @@ impl App {
         self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(first);
         if self.selected != prev {
             self.detail_scroll = 0;
+            self.sel = None;
         }
     }
 
@@ -440,6 +460,7 @@ impl App {
         if index < self.rows.len() && selectable(&self.rows[index].1) && index != self.selected {
             self.selected = index;
             self.detail_scroll = 0;
+            self.sel = None;
         }
     }
 
@@ -541,6 +562,7 @@ impl App {
             Action::Tab(i) => {
                 self.tab = i;
                 self.detail_scroll = 0;
+                self.sel = None;
             }
             Action::JumpWindow(session, window) => self.finish(tmux::jump_to_window(&session, &window)),
             Action::Confirm(yes) => {
@@ -801,6 +823,7 @@ impl App {
         } else if a.needs_permission() && matches!(lower.as_str(), "n" | "no" | "d") {
             self.answer(false);
         } else {
+            self.sent.insert(a.key.clone(), (text.clone(), Instant::now()));
             self.send(a, "Sent", |sock, pane| tmux::send_text(sock, pane, &text));
         }
     }
@@ -1095,7 +1118,26 @@ impl App {
                     self.offset = if down { (self.offset + 3).min(max) } else { self.offset.saturating_sub(3) };
                 }
             }
-            MouseEventKind::Down(MouseButton::Left) => self.on_click(pos),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let d = self.hits.detail;
+                self.sel = (self.modal.is_none() && d.contains(pos)).then(|| {
+                    let at = (pos.y - d.y + self.detail_scroll, pos.x - d.x);
+                    Selection { from: at, to: at, copy: false }
+                });
+                self.on_click(pos);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let d = self.hits.detail;
+                if let Some(sel) = &mut self.sel {
+                    let y = pos.y.clamp(d.y, d.bottom().saturating_sub(1)) - d.y;
+                    let x = pos.x.clamp(d.x, d.right().saturating_sub(1)) - d.x;
+                    sel.to = (y + self.detail_scroll, x);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => match &mut self.sel {
+                Some(sel) if sel.from != sel.to => sel.copy = true,
+                _ => self.sel = None,
+            },
             _ => {}
         }
     }

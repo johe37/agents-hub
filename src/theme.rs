@@ -233,3 +233,10 @@ mod tests {
         assert_eq!(css(hex("#0a1B2c")), "#0A1B2C");
     }
 }
+
+/// `c` mixed into `base` by `amount` (0–1), for soft tinted backgrounds.
+pub fn tint(c: Color, base: Color, amount: f32) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) = (c, base) else { return base };
+    let mix = |x: u8, y: u8| (y as f32 + (x as f32 - y as f32) * amount).round() as u8;
+    Color::Rgb(mix(r, br), mix(g, bg), mix(b, bb))
+}
