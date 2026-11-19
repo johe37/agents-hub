@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fake Claude Code screen for the claude-hub screenshot demo.
+o=$'\e[38;5;209m'; d=$'\e[2m'; b=$'\e[1m'; g=$'\e[32m'; r=$'\e[0m'
+clear
+printf '%s╭───────────────────────────────────────────────╮%s\n' "$o" "$r"
+printf '%s│%s %s✻ Welcome to Claude Code!%s                     %s│%s\n' "$o" "$r" "$b" "$r" "$o" "$r"
+printf '%s│%s   %scwd: %s%s\n' "$o" "$r" "$d" "$PWD" "$r"
+printf '%s╰───────────────────────────────────────────────╯%s\n\n' "$o" "$r"
+case "$1" in
+payments)
+  printf '%s>%s Send refund webhooks with retries and exponential backoff\n\n' "$d" "$r"
+  printf '%s●%s Update(src/webhooks/retry.rs)\n  ⎿  Updated with 34 additions and 6 removals\n\n' "$g" "$r"
+  printf '%s●%s Bash(cargo test --features webhooks)\n\n' "$o" "$r"
+  printf '%s Do you want to proceed?%s\n %s❯ 1. Yes%s\n   2. Yes, and don'"'"'t ask again for cargo test\n   3. No, and tell Claude what to do differently\n' "$b" "$r" "$o" "$r"
+  ;;
+dashboard)
+  printf '%s>%s Fix the tooltip that jumps on stacked charts\n\n' "$d" "$r"
+  printf '%s●%s Read(src/components/Chart.tsx)\n\n' "$g" "$r"
+  printf '%s✶ Editing src/components/Chart.tsx… %s(esc to interrupt)%s\n' "$o" "$d" "$r"
+  ;;
+*)
+  printf '%s>%s Plan the move of the staging cluster to eu-north-1\n\n' "$d" "$r"
+  printf '%s●%s The plan is in docs/migration.md. Ready when you are.\n' "$g" "$r"
+  ;;
+esac
+printf '\n%s╭───────────────────────────────────────────────╮%s\n%s│%s >                                             %s│%s\n%s╰───────────────────────────────────────────────╯%s\n' "$d" "$r" "$d" "$r" "$d" "$r" "$d" "$r"
+while :; do sleep 3600; done
