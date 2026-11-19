@@ -196,6 +196,12 @@ cost come from the same file.
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
 - To stop everything: `tmux -L claude-hub kill-server`.
 
+## Screenshot demo
+
+`scripts/demo.sh` starts a hub with made-up workspaces, agents and merge requests, for
+screenshots. It runs on its own tmux server with its own HOME, so your real hub is not
+touched. Run it outside tmux and it attaches at once. `scripts/demo.sh stop` removes it.
+
 ## Release
 
 `scripts/release.sh 0.6.0` sets the version in `Cargo.toml`, commits and tags.
