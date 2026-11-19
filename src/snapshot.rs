@@ -175,7 +175,7 @@ struct Collector {
     speculative: Option<String>,
     claude_target: Option<String>,
     claude_spare: Option<ClaudeSpare>,
-    /// Path and time of the last spare taken or lost.
+    /// Path and time of the last spare that exited or failed to start.
     claude_pause: Option<(String, Instant)>,
     /// Last time a client showed the hub.
     hub_seen: Instant,
@@ -555,9 +555,11 @@ impl Collector {
             .filter(|p| self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN && std::path::Path::new(p).is_dir());
         let branch = target.as_deref().and_then(|p| self.git.repo_root(p)).and_then(|r| self.git.status(&r).branch);
         let spares = tmux::claude_spares(all_panes);
-        // Taken into a workspace, or Claude exited: wait a while before the next one, so it does not compete with this one.
+        // A taken spare is replaced at once. One that exited by itself waits a while, so a broken claude does not restart in a loop.
         if let Some(s) = self.claude_spare.take_if(|s| !spares.iter().any(|(_, id)| *id == s.window_id)) {
-            self.claude_pause = Some((s.path, Instant::now()));
+            if !all_panes.iter().any(|p| p.window_id == s.window_id) {
+                self.claude_pause = Some((s.path, Instant::now()));
+            }
         }
         let mut kept = false;
         for (path, id) in spares {
