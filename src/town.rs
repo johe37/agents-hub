@@ -425,6 +425,21 @@ fn act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
             Err(e) => err("500 Internal Server Error", &e.to_string()),
         };
     }
+    // ↵ resume on a closed session: continue it in a new window of its workspace, as Enter does in the hub.
+    if req["op"] == "resume" {
+        if a.status.alive() {
+            return err("409 Conflict", "This agent is still running.");
+        }
+        let Some(id) = a.session_id() else { return err("409 Conflict", "This session cannot be resumed.") };
+        crate::tmux::ensure_server(&shared.hub_key);
+        let result = crate::tmux::resume(id, &a.path);
+        let _ = cmd.lock().unwrap().send(Cmd::Refresh);
+        return match result {
+            // Attach only means no hub client to switch: the window is there.
+            Ok(()) | Err(crate::tmux::Fail::Attach(_)) => ("200 OK", json!({"ok": format!("Resumed {}", a.title())})),
+            Err(crate::tmux::Fail::Error(e)) => err("500 Internal Server Error", &e),
+        };
+    }
     if !a.status.alive() || a.target.is_none() {
         return err("409 Conflict", a.read_only.as_deref().unwrap_or("This agent does not take input."));
     }

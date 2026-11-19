@@ -837,7 +837,7 @@ function renderPanel(force) {
       key.style.background = b.bg;
       key.style.color = b.fg;
       btn.append(key, b.label);
-      const can = !model.demo && ['approve', 'deny', 'reply', 'done'].includes(b.action);
+      const can = !model.demo && ['approve', 'deny', 'reply', 'done', 'resume'].includes(b.action);
       btn.disabled = !can;
       btn.title = can ? '' : model.demo ? 'Off in the demo town' : 'Do this in the hub';
       btn.addEventListener('click', () => perform(b.action));
@@ -882,7 +882,7 @@ function perform(action) {
   const a = selected && selected.kind === 'agent' ? agents.get(selected.id) : null;
   if (!a || model.demo || !a.panel.buttons.some((b) => b.action === action)) return;
   if (action === 'reply') input.focus();
-  else if (['approve', 'deny', 'done'].includes(action)) act(action, a);
+  else if (['approve', 'deny', 'done', 'resume'].includes(action)) act(action, a);
 }
 
 input.addEventListener('keydown', (e) => {
@@ -916,7 +916,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (!selected) return;
-  const keys = { y: 'approve', d: 'deny', r: 'reply', m: 'done' };
+  const keys = { y: 'approve', d: 'deny', r: 'reply', m: 'done', Enter: 'resume' };
   if (keys[e.key]) { e.preventDefault(); perform(keys[e.key]); }
   else if (/^[1-4]$/.test(e.key)) { tab = +e.key - 1; renderPanel(true); }
   else if (e.key === 'l' || e.key === 'ArrowRight' || e.key === 'Tab') { e.preventDefault(); tab = (tab + 1) % 4; renderPanel(true); }
@@ -925,7 +925,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 async function act(op, a, textValue) {
-  setNote({ reply: 'Sending…', approve: 'Approving…', deny: 'Denying…', done: 'Marking done…' }[op]);
+  setNote({ reply: 'Sending…', approve: 'Approving…', deny: 'Denying…', done: 'Marking done…', resume: 'Resuming…' }[op]);
   try {
     const res = await fetch('/api/act', {
       method: 'POST',

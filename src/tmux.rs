@@ -485,6 +485,15 @@ pub fn open_review(dir: &str, name: &str, prompt: &str) -> Result<String, String
     Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
 }
 
+/// Start the hub's tmux server (with the hub in it) if it is not running, for windows made from outside it.
+pub fn ensure_server(hub_key: &str) {
+    if !server_running() {
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into());
+        let conf = write_config(&exe, hub_key);
+        ensure_hub(&exe, &conf);
+    }
+}
+
 /// Why Claude was not started.
 #[derive(Debug, PartialEq)]
 pub enum StartError {
@@ -517,11 +526,7 @@ pub fn start_claude(path: &str, task: Option<String>, hub_key: &str, trust: bool
     if !trusted && !trust {
         return Err(StartError::NeedsTrust);
     }
-    if !server_running() {
-        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into());
-        let conf = write_config(&exe, hub_key);
-        ensure_hub(&exe, &conf);
-    }
+    ensure_server(hub_key);
     let session = ensure_workspace(path).map_err(fail)?;
     let target = format!("={session}:");
     let out = run(&["new-window", "-t", &target, "-c", path, "-n", "claude", "-P", "-F", "#{pane_id}", "claude"]).ok_or_else(|| fail("tmux not found".into()))?;

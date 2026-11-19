@@ -209,8 +209,8 @@ branch.
 
 Click a shop or a person to open the panel. It is the hub's own detail panel, built by the
 same code and in the same colours, so it shows what the hub shows: what the agent waits for,
-your last request, its last reply, changed files, windows, model and cost. `y`, `d`, `r` and
-`m` work there as in the hub, and `1`–`4` or `h`/`l` switch tabs.
+your last request, its last reply, changed files, windows, model and cost. `y`, `d`, `r`, `m`
+and `Enter` (resume a closed session) work there as in the hub, and `1`–`4` or `h`/`l` switch tabs.
 
 To start a new Claude in a repo, select its shop and press `c` (or click **new Claude here**).
 To start one anywhere else, press `c` (or `n`) with no shop selected, or click **+ New Claude**:
