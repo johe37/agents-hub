@@ -18,6 +18,7 @@ use crate::snapshot::{Agent, Workspace};
 use crate::state::{Status, age};
 use crate::theme::*;
 use crate::tmux::key_label;
+use crate::usage;
 
 const COMMENT: &str = "\u{f0e5}";
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -1179,13 +1180,58 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ---- footer, toast, modals ----
 
+/// Time until a Unix timestamp, in its two largest units.
+fn until(ts: u64) -> String {
+    let secs = ts.saturating_sub(crate::state::now());
+    let (d, h, m) = (secs / 86400, secs % 86400 / 3600, secs % 3600 / 60);
+    if d > 0 {
+        format!("{d}d{h}h")
+    } else if h > 0 {
+        format!("{h}h{m}m")
+    } else {
+        format!("{m}m")
+    }
+}
+
+fn usage_spans(u: &usage::Usage, full: bool) -> Vec<Span<'static>> {
+    let c = colors();
+    let mut out = vec![];
+    for (label, w) in [("5h", u.five_hour), ("7d", u.seven_day)] {
+        let Some(w) = w else { continue };
+        let fill = (w.used / 100.0).clamp(0.0, 1.0) as f32;
+        let color = if fill < 0.5 { lerp(c.success, c.warning, fill * 2.0) } else { lerp(c.warning, c.error, (fill - 0.5) * 2.0) };
+        out.push(s(format!("{label} "), fg(c.dim)));
+        if full {
+            let n = (fill * 6.0).round() as usize;
+            out.extend([s("▰".repeat(n), fg(color)), s("▱".repeat(6 - n), fg(c.border)), Span::raw(" ")]);
+        }
+        out.push(s(format!("{:.0}%", w.used), fg(color).bold()));
+        if full {
+            out.push(s(format!(" ↻{}", until(w.resets_at)), fg(c.dim)));
+        }
+        out.push(Span::raw("  "));
+    }
+    out
+}
+
 fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
+    let mut usage = app.snap.usage.as_ref().map(|u| usage_spans(u, true)).unwrap_or_default();
+    if width_of(&usage) > area.width as usize / 2 {
+        usage = app.snap.usage.as_ref().map(|u| usage_spans(u, false)).unwrap_or_default();
+    }
+    let mut uw = width_of(&usage) as u16;
+    if uw < area.width {
+        f.render_widget(Paragraph::new(Line::from(usage)).alignment(Alignment::Right), area);
+    } else {
+        uw = 0;
+    }
+    let right = area.right().saturating_sub(uw);
     let mut x = area.x + 1;
     for (key, label, action) in app.actions(side_visible(f.area())) {
         let key_w = key.chars().count() as u16 + 2;
         let w = key_w + label.chars().count() as u16 + 3;
-        if x + w > area.right() {
+        if x + w > right {
             break;
         }
         let rect = Rect::new(x, area.y, w, 1);

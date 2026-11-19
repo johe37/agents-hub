@@ -13,20 +13,22 @@ mod theme;
 mod tmux;
 mod transcript;
 mod ui;
+mod usage;
 
 use std::process::ExitCode;
 
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | report | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
   report          hook handler: read hook JSON from stdin
-  install-hooks   add claude-hub hooks to ~/.claude/settings.json";
+  statusline      status line command: store plan usage for the hub
+  install-hooks   add claude-hub hooks and status line to ~/.claude/settings.json";
 
 fn exe() -> String {
     std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into())
@@ -96,6 +98,10 @@ fn main() -> ExitCode {
     match first {
         Some("report") => {
             hooks::report();
+            ExitCode::SUCCESS
+        }
+        Some("statusline") => {
+            usage::statusline();
             ExitCode::SUCCESS
         }
         Some("install-hooks") => ExitCode::from(hooks::install(args.iter().any(|a| a == "-y" || a == "--yes")) as u8),

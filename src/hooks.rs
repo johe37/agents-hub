@@ -98,12 +98,27 @@ pub fn install(yes: bool) -> i32 {
         groups.push(group);
         changed.push(event);
     }
-    if changed.is_empty() {
+    // The status line is the only place Claude Code passes on plan usage. Keep one the user set up.
+    let status_command = format!("{exe} statusline");
+    let current = settings["statusLine"]["command"].as_str().unwrap_or("").to_string();
+    let set_status = current != status_command && (current.is_empty() || current.ends_with("claude-hub statusline"));
+    if set_status {
+        settings["statusLine"] = json!({"type": "command", "command": status_command});
+    } else if current != status_command {
+        println!("You have your own status line, so the hub shows no plan usage.");
+        println!("To fix that, pipe its JSON input to '{status_command}' too.");
+    }
+    if changed.is_empty() && !set_status {
         println!("Hooks already installed.");
         return 0;
     }
-    println!("Will set '{command}' as the claude-hub hook for these events in {}:", path.display());
-    println!("  {}", changed.join(", "));
+    if !changed.is_empty() {
+        println!("Will set '{command}' as the claude-hub hook for these events in {}:", path.display());
+        println!("  {}", changed.join(", "));
+    }
+    if set_status {
+        println!("Will set '{status_command}' as the status line in {}, to show plan usage.", path.display());
+    }
     if !yes {
         print!("Continue? [y/N] ");
         let _ = std::io::stdout().flush();

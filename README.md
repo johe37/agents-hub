@@ -54,6 +54,12 @@ event per session (about 3 ms) and the hub picks it up at once.
 
 Only Claude sessions started after this report status.
 
+The command also sets `claude-hub statusline` as the Claude Code status line, if you have
+none. Claude Code passes your plan usage only to the status line. The hub then shows the
+5-hour and weekly limits at the bottom right, with the time until each resets. This needs
+a claude.ai subscription, and the numbers come after the first reply in any session. If you
+already have a status line, it stays; send its JSON input to `claude-hub statusline` too.
+
 ## Configure (optional)
 
 `~/.config/claude-hub/config.toml`:
@@ -108,6 +114,7 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace. Agents that wait for you still show |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
