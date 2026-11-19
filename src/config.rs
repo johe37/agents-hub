@@ -46,6 +46,7 @@ pub struct Config {
     pub refresh_seconds: f64,
     pub stale_minutes: f64,
     pub prewarm: bool,
+    pub prewarm_claude: bool,
     pub hub_key: String,
     pub theme: String,
 }
@@ -58,6 +59,7 @@ impl Default for Config {
             refresh_seconds: 2.0,
             stale_minutes: 60.0,
             prewarm: true,
+            prewarm_claude: true,
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
         }

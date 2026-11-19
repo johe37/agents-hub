@@ -233,17 +233,51 @@ pub fn list_all_panes() -> Vec<Pane> {
         .collect()
 }
 
+/// Window name prefix of the pre-started Claude in the pool; the rest of the name is its path.
+const CLAUDE_SPARE: &str = "claude:";
+
 /// Pre-started shells waiting in the pool, as (path, window_id). A spare's window name is its path.
 pub fn spares(panes: &[Pane]) -> Vec<(String, String)> {
-    panes.iter().filter(|p| p.session == POOL_SESSION).map(|p| (p.window_name.clone(), p.window_id.clone())).collect()
+    panes
+        .iter()
+        .filter(|p| p.session == POOL_SESSION && !p.window_name.starts_with(CLAUDE_SPARE))
+        .map(|p| (p.window_name.clone(), p.window_id.clone()))
+        .collect()
 }
 
-pub fn spawn_spare(path: &str, pool_exists: bool) {
-    if pool_exists {
-        run(&["new-window", "-d", "-t", &format!("={POOL_SESSION}:"), "-c", path, "-n", path]);
-    } else {
-        run(&["new-session", "-d", "-s", POOL_SESSION, "-c", path, "-n", path]);
-    }
+/// Pre-started Claudes waiting in the pool, as (path, window_id).
+pub fn claude_spares(panes: &[Pane]) -> Vec<(String, String)> {
+    panes
+        .iter()
+        .filter(|p| p.session == POOL_SESSION)
+        .filter_map(|p| Some((p.window_name.strip_prefix(CLAUDE_SPARE)?.to_string(), p.window_id.clone())))
+        .collect()
+}
+
+pub fn spawn_spare(path: &str) {
+    spawn_in_pool(path, path, None);
+}
+
+/// Start Claude in the pool, and return its window id.
+pub fn spawn_claude_spare(path: &str) -> Option<String> {
+    spawn_in_pool(&format!("{CLAUDE_SPARE}{path}"), path, Some("claude"))
+}
+
+fn spawn_in_pool(name: &str, path: &str, command: Option<&str>) -> Option<String> {
+    let target = format!("={POOL_SESSION}:");
+    let tail: Vec<&str> = ["-P", "-F", "#{window_id}", "-c", path, "-n", name].into_iter().chain(command).collect();
+    // The pool session goes away with its last window, so create it when it is missing.
+    let out = [vec!["new-window", "-d", "-t", &target], vec!["new-session", "-d", "-s", POOL_SESSION]]
+        .into_iter()
+        .find_map(|head| run(&[head, tail.clone()].concat()).filter(|o| o.status.success()))?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Whether a client shows the hub. Without a hub session, the hub runs in some terminal and counts as shown.
+pub fn hub_visible() -> bool {
+    run(&["display-message", "-p", "-t", &format!("={HUB_SESSION}:"), "#{session_attached}"])
+        .filter(|o| o.status.success())
+        .is_none_or(|o| String::from_utf8_lossy(&o.stdout).trim() != "0")
 }
 
 /// Pane ids on any tmux server, given its socket path, as (pane_id, session_name).
@@ -415,8 +449,9 @@ pub fn canonical(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string())
 }
 
+/// Open a window, taken from the pool when spare is a pre-started window that runs command.
 pub fn new_window(session: &str, cwd: &str, name: &str, command: Option<&str>, spare: Option<&str>) -> Res {
-    if let (Some(spare), None) = (spare, command) {
+    if let Some(spare) = spare {
         let r = run_and_switch(
             session,
             vec![

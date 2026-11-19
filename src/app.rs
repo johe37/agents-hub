@@ -128,6 +128,9 @@ pub struct App {
     pub open_sections: HashSet<&'static str>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
+    /// The workspace selected last, and since when; its Claude is started once the selection rests.
+    claude_target: Option<(Instant, String)>,
+    claude_sent: Option<String>,
     rescanning: bool,
     quit: bool,
     pub attach_to: Option<String>,
@@ -173,6 +176,8 @@ impl App {
             open_sections: HashSet::from([WORKSPACES]),
             last_click: None,
             prewarm_pending: None,
+            claude_target: None,
+            claude_sent: None,
             rescanning: false,
             quit: false,
             attach_to: None,
@@ -211,11 +216,26 @@ impl App {
                     self.prewarm_pending = None;
                 }
             }
+            self.prewarm_claude();
             if self.toast.as_ref().is_some_and(|t| t.at.elapsed() > t.life()) {
                 self.toast = None;
             }
         }
         Ok(())
+    }
+
+    /// Moving through the list only starts a Claude where the selection stays for a second.
+    fn prewarm_claude(&mut self) {
+        if let Some(path) = self.current_workspace().map(|w| w.path.clone()) {
+            if self.claude_target.as_ref().is_none_or(|(_, p)| *p != path) {
+                self.claude_target = Some((Instant::now(), path));
+            }
+        }
+        let Some((at, path)) = &self.claude_target else { return };
+        if at.elapsed() > Duration::from_secs(1) && self.claude_sent.as_ref() != Some(path) {
+            let _ = self.cmd.send(Cmd::PrewarmClaude(path.clone()));
+            self.claude_sent = Some(path.clone());
+        }
     }
 
     fn apply(&mut self, snap: Snapshot) {
@@ -656,7 +676,12 @@ impl App {
             return;
         };
         let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
-        let spare = if command.is_none() { self.snap.spares.get(&ws.path).cloned() } else { None };
+        let spare = match command {
+            None => self.snap.spares.get(&ws.path),
+            Some("claude") => self.snap.claude_spares.get(&ws.path),
+            Some(_) => None,
+        };
+        let spare = spare.cloned();
         let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
         self.finish(r);
     }
