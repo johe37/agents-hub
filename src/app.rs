@@ -1,6 +1,6 @@
 //! Hub state and input handling. Drawing lives in ui.rs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -52,6 +52,8 @@ pub enum Action {
     Resolve,
     Publish,
     Confirm(bool),
+    Fold,
+    FoldAll,
 }
 
 pub enum Modal {
@@ -116,6 +118,10 @@ pub struct App {
     pub hits: Hits,
     /// When each agent last changed status, for the row flash.
     pub changed: HashMap<String, Instant>,
+    /// Names of workspaces folded to one row.
+    pub folded: HashSet<String>,
+    /// Foldable sections the user unfolded; they start folded.
+    pub open_sections: HashSet<&'static str>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
     rescanning: bool,
@@ -149,6 +155,8 @@ impl App {
             started: Instant::now(),
             hits: Hits::default(),
             changed: HashMap::new(),
+            folded: HashSet::new(),
+            open_sections: HashSet::from([WORKSPACES]),
             last_click: None,
             prewarm_pending: None,
             rescanning: false,
@@ -270,6 +278,14 @@ impl App {
 
     pub fn build_rows(&mut self) {
         let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
+        // A row that a fold hides hands the selection to its workspace or section.
+        let owner = match self.current() {
+            Some(Row::Review(_)) => Some(section_key(REVIEWS)),
+            Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
+            Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_some() && !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
+            Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() && !self.snap.agents[i].status.alive() => Some(section_key(CLOSED)),
+            _ => self.current_workspace().map(|w| format!("ws:{}", w.name)),
+        };
         let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
             let agents = self.agents_of(ws);
@@ -299,9 +315,18 @@ impl App {
         }
 
         let mut rows = vec![];
-        for (wi, agents, terminals, threads) in sections {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
+        if !sections.is_empty() {
+            rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, sections.len())));
+        }
+        if !self.section_open(WORKSPACES) {
+            sections.clear();
+        }
+        for (wi, mut agents, mut terminals, mut threads) in sections {
+            // A filter shows every match. Agents that wait for you show even when folded.
+            if self.filter.text.is_empty() && self.folded.contains(&self.snap.workspaces[wi].name) {
+                agents.retain(|&i| self.snap.agents[i].status == Status::Waiting);
+                terminals.clear();
+                threads.clear();
             }
             rows.push((format!("ws:{}", self.snap.workspaces[wi].name), Row::Workspace(wi)));
             for ai in agents {
@@ -336,8 +361,10 @@ impl App {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((String::new(), Row::Header("TO REVIEW", reviews.len())));
-            rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
+            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, reviews.len())));
+            if self.section_open(REVIEWS) {
+                rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
+            }
         }
         let (outside, closed) = (section(true), section(false));
         if !outside.is_empty() {
@@ -351,13 +378,16 @@ impl App {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((String::new(), Row::Header("RECENTLY CLOSED", closed.len())));
-            rows.extend(closed.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+            rows.push((section_key(CLOSED), Row::Header(CLOSED, closed.len())));
+            if self.section_open(CLOSED) {
+                rows.extend(closed.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+            }
         }
         self.rows = rows;
+        let fallback = owner.and_then(|k| self.rows.iter().position(|(key, _)| *key == k));
         let first = self.rows.iter().position(|(_, r)| selectable(r)).unwrap_or(0);
         let prev = self.selected;
-        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).unwrap_or(first);
+        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(first);
         if self.selected != prev {
             self.detail_scroll = 0;
         }
@@ -479,6 +509,8 @@ impl App {
                 }
             }
             Action::Forward => self.forward(),
+            Action::Fold => self.toggle_fold(),
+            Action::FoldAll => self.toggle_fold_all(),
             Action::Resolve => {
                 let Some((ws, _, _)) = self.current_thread() else { return };
                 let text = crate::gitlab::head(&ws.path).map_or(String::new(), |sha| format!("Fixed in {sha}."));
@@ -539,6 +571,7 @@ impl App {
 
     fn open(&mut self) {
         let r = match self.current() {
+            Some(Row::Header(..)) => return self.toggle_fold(),
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
                 match (&a.workspace, &a.window_id) {
@@ -604,6 +637,40 @@ impl App {
         let spare = if command.is_none() { self.snap.spares.get(&ws.path).cloned() } else { None };
         let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
         self.finish(r);
+    }
+
+    /// A filter shows every match, folded or not.
+    pub fn section_open(&self, title: &str) -> bool {
+        !foldable(title) || !self.filter.text.is_empty() || self.open_sections.contains(title)
+    }
+
+    fn toggle_fold(&mut self) {
+        if let Some(Row::Header(title, _)) = self.current() {
+            if !self.open_sections.remove(title) {
+                self.open_sections.insert(title);
+            }
+            return self.build_rows();
+        }
+        let Some(name) = self.current_workspace().map(|w| w.name.clone()) else { return };
+        if !self.folded.remove(&name) {
+            self.folded.insert(name);
+        }
+        self.build_rows();
+    }
+
+    /// Fold every workspace and section, or unfold them all when all are folded.
+    fn toggle_fold_all(&mut self) {
+        let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
+        // The workspaces section stays open so that the folded workspaces still show.
+        let sections = [REVIEWS, CLOSED];
+        if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
+            self.folded.clear();
+            self.open_sections.extend(sections);
+        } else {
+            self.folded.extend(names);
+            self.open_sections.retain(|t| !sections.contains(t));
+        }
+        self.build_rows();
     }
 
     /// Clear "waiting for you" on the selected agent, or on every agent of the selected workspace.
@@ -926,6 +993,8 @@ impl App {
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),
+            KeyCode::Char(' ') => self.act(Action::Fold),
+            KeyCode::Char('z') => self.act(Action::FoldAll),
             KeyCode::Char('/') => self.act(Action::Filter),
             KeyCode::Char('?') => self.act(Action::Help),
             KeyCode::Char('q') => self.act(Action::Leave),
@@ -953,7 +1022,11 @@ impl App {
                     let (from, new) = (from.clone(), input.text.trim().to_string());
                     self.modal = None;
                     if !new.is_empty() && new != from {
-                        let r = tmux::rename_session(&from, &tmux::unique_session_name(&new, &tmux::list_sessions()));
+                        let new = tmux::unique_session_name(&new, &tmux::list_sessions());
+                        if self.folded.remove(&from) {
+                            self.folded.insert(new.clone());
+                        }
+                        let r = tmux::rename_session(&from, &new);
                         self.finish(r);
                     }
                 }
@@ -1056,6 +1129,10 @@ impl App {
                     self.focus = Focus::List;
                     let i = self.offset + (pos.y - l.y) as usize;
                     if i < self.rows.len() && selectable(&self.rows[i].1) {
+                        if matches!(self.rows[i].1, Row::Workspace(_) | Row::Header(..)) && (l.x + 1..=l.x + 2).contains(&pos.x) {
+                            self.select(i);
+                            return self.act(Action::Fold);
+                        }
                         if i == self.selected || double(self.last_click, i) {
                             self.last_click = None;
                             return self.act(Action::Open);
@@ -1069,6 +1146,23 @@ impl App {
     }
 }
 
+const WORKSPACES: &str = "WORKSPACES";
+const REVIEWS: &str = "TO REVIEW";
+const CLOSED: &str = "RECENTLY CLOSED";
+const FOLDABLE: [&str; 3] = [WORKSPACES, REVIEWS, CLOSED];
+
+fn section_key(title: &str) -> String {
+    format!("section:{title}")
+}
+
+pub fn foldable(title: &str) -> bool {
+    FOLDABLE.contains(&title)
+}
+
 pub fn selectable(r: &Row) -> bool {
-    !matches!(r, Row::Gap | Row::Header(..))
+    match r {
+        Row::Gap => false,
+        Row::Header(title, _) => foldable(title),
+        _ => true,
+    }
 }
