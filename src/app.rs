@@ -371,7 +371,7 @@ impl App {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((String::new(), Row::Header("OUTSIDE CLAUDE HUB", outside.len())));
+            rows.push((String::new(), Row::Header("CLAUDE SESSIONS OUTSIDE THE HUB", outside.len())));
             rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
         }
         if !closed.is_empty() {
@@ -1146,9 +1146,9 @@ impl App {
     }
 }
 
-const WORKSPACES: &str = "WORKSPACES";
-const REVIEWS: &str = "TO REVIEW";
-const CLOSED: &str = "RECENTLY CLOSED";
+const WORKSPACES: &str = "LOCAL WORKSPACES";
+const REVIEWS: &str = "MERGE REQUESTS TO REVIEW";
+const CLOSED: &str = "RECENTLY CLOSED CLAUDE SESSIONS";
 const FOLDABLE: [&str; 3] = [WORKSPACES, REVIEWS, CLOSED];
 
 fn section_key(title: &str) -> String {
