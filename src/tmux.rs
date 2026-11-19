@@ -237,17 +237,19 @@ pub fn list_all_panes() -> Vec<Pane> {
 
 /// Window name prefix of the pre-started Claude in the pool; the rest of the name is its path.
 const CLAUDE_SPARE: &str = "claude:";
+/// Window name prefix of a Claude that starts to replace an outdated spare. Nobody takes it before it replaces the spare.
+const CLAUDE_NEXT: &str = "claude-next:";
 
 /// Pre-started shells waiting in the pool, as (path, window_id). A spare's window name is its path.
 pub fn spares(panes: &[Pane]) -> Vec<(String, String)> {
     panes
         .iter()
-        .filter(|p| p.session == POOL_SESSION && !p.window_name.starts_with(CLAUDE_SPARE))
+        .filter(|p| p.session == POOL_SESSION && !p.window_name.starts_with(CLAUDE_SPARE) && !p.window_name.starts_with(CLAUDE_NEXT))
         .map(|p| (p.window_name.clone(), p.window_id.clone()))
         .collect()
 }
 
-/// Pre-started Claudes waiting in the pool, as (path, window_id).
+/// Pre-started Claudes ready to take, as (path, window_id).
 pub fn claude_spares(panes: &[Pane]) -> Vec<(String, String)> {
     panes
         .iter()
@@ -256,13 +258,42 @@ pub fn claude_spares(panes: &[Pane]) -> Vec<(String, String)> {
         .collect()
 }
 
+pub struct ClaudeWindow {
+    pub path: String,
+    pub window_id: String,
+    pub pane_id: String,
+    /// Still starting to replace the spare for path.
+    pub next: bool,
+}
+
+/// All Claudes in the pool, ready or starting.
+pub fn claude_pool(panes: &[Pane]) -> Vec<ClaudeWindow> {
+    panes
+        .iter()
+        .filter(|p| p.session == POOL_SESSION)
+        .filter_map(|p| {
+            let (path, next) = match p.window_name.strip_prefix(CLAUDE_SPARE) {
+                Some(path) => (path, false),
+                None => (p.window_name.strip_prefix(CLAUDE_NEXT)?, true),
+            };
+            Some(ClaudeWindow { path: path.to_string(), window_id: p.window_id.clone(), pane_id: p.pane_id.clone(), next })
+        })
+        .collect()
+}
+
 pub fn spawn_spare(path: &str) {
     spawn_in_pool(path, path, None);
 }
 
-/// Start Claude in the pool, and return its window id.
-pub fn spawn_claude_spare(path: &str) -> Option<String> {
-    spawn_in_pool(&format!("{CLAUDE_SPARE}{path}"), path, Some("claude"))
+/// Start Claude in the pool, and return its window id. A next one waits for promote_claude before anyone takes it.
+pub fn spawn_claude_spare(path: &str, next: bool) -> Option<String> {
+    let prefix = if next { CLAUDE_NEXT } else { CLAUDE_SPARE };
+    spawn_in_pool(&format!("{prefix}{path}"), path, Some("claude"))
+}
+
+/// Make a starting Claude the spare to take for path.
+pub fn promote_claude(window_id: &str, path: &str) {
+    run(&["rename-window", "-t", window_id, &format!("{CLAUDE_SPARE}{path}")]);
 }
 
 fn spawn_in_pool(name: &str, path: &str, command: Option<&str>) -> Option<String> {
