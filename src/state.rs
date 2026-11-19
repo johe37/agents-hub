@@ -137,7 +137,9 @@ pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_m
         }
     }
 
-    for s in sessions.iter().filter(|s| !s.status.alive() && now.saturating_sub(s.timestamp) > PRUNE_AFTER) {
+    // Without a transcript a session never got a prompt, so there is nothing to resume, e.g. a pre-started Claude.
+    let useless = |s: &Session| !s.transcript_path.as_deref().is_some_and(|p| std::path::Path::new(p).exists());
+    for s in sessions.iter().filter(|s| !s.status.alive() && (now.saturating_sub(s.timestamp) > PRUNE_AFTER || useless(s))) {
         let _ = std::fs::remove_file(&s.path);
     }
     sessions.sort_by_key(|s| (s.status, std::cmp::Reverse(s.timestamp)));
