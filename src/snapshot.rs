@@ -119,6 +119,7 @@ pub struct Snapshot {
     pub notices: Vec<(String, bool)>,
     /// Open MRs where you are a requested reviewer.
     pub reviews: Vec<crate::gitlab::Mr>,
+    pub usage: Option<crate::usage::Usage>,
 }
 
 pub enum Cmd {
@@ -307,6 +308,7 @@ impl Collector {
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
             reviews: self.reviews.get(),
+            usage: crate::usage::load(),
         }
     }
 
