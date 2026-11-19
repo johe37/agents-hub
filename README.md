@@ -70,7 +70,7 @@ mouse = true
 refresh_seconds = 2
 stale_minutes = 60
 prewarm = true               # keep a started shell ready per workspace
-prewarm_claude = true        # keep a started Claude ready for the selected workspace
+prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
 ```
@@ -188,12 +188,14 @@ cost come from the same file.
 - New terminals open instantly because the hub keeps one started shell per workspace in
   a hidden `_pool` session, and starts one for the directory you highlight in the picker.
   Turn it off with `prewarm = false`.
-- `c` opens Claude instantly the same way: the hub starts one Claude in `_pool` for the
+- `c` opens Claude instantly the same way: the hub starts a Claude in `_pool` for the
   selected workspace, or for the directory highlighted in the picker, so `Ctrl+O` is
   instant too. Claude itself needs a few seconds to start, so press `c` a moment after you
-  select the workspace. The hub keeps only that one Claude, restarts it every
-  10 minutes or when the branch changes, so the git state and CLAUDE.md it read are fresh,
-  and stops it when nobody has looked at the hub for 15 minutes.
+  select the workspace. The hub keeps Claudes for the last two workspaces you selected,
+  and starts a new one as soon as you take one. It replaces each every 10 minutes or when
+  the branch changes, so the git state and CLAUDE.md it read are fresh; the old one stays
+  ready until the new one has started. It stops them when nobody has looked at the hub
+  for 15 minutes.
   Turn it off with `prewarm_claude = false`.
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
 - To stop everything: `tmux -L claude-hub kill-server`.
