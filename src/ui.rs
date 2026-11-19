@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{Action, App, FLASH, Focus, Modal, Row};
+use crate::app::{Action, App, FLASH, Focus, Modal, Row, foldable, selectable};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::gitlab;
@@ -216,8 +216,7 @@ fn panel(title: Line<'static>, focused: bool) -> Block<'static> {
 
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.modal.is_none() && app.focus != Focus::Reply;
-    let title = Line::from(vec![s(" Workspaces ", fg(if focused { colors().bright } else { colors().muted }).bold())]);
-    let block = panel(title, focused);
+    let block = panel(Line::default(), focused);
     let mut inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -300,14 +299,20 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
 
     let (left, right): (Vec<Span>, Vec<Span>) = match row {
         Row::Gap => (vec![], vec![]),
+        Row::Header(title, n) if foldable(title) => {
+            let chevron = if app.section_open(title) { "▾ " } else { "▸ " };
+            (vec![s(chevron, fg(colors().muted)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
+        }
         Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![]),
         Row::Workspace(wi) => {
             let ws = &app.snap.workspaces[wi];
             let agents = app.agents_of(ws);
-            let mut l = vec![match app.worst(&agents) {
+            let chevron = if app.folded.contains(&ws.name) { "▸ " } else { "▾ " };
+            let mut l = vec![s(chevron, fg(colors().muted))];
+            l.push(match app.worst(&agents) {
                 Some(st) => status_symbol(st, t),
                 None => s("▪", fg(colors().dim)),
-            }];
+            });
             l.push(s(format!(" {}", ws.name), fg(colors().bright).bold()));
             l.push(s(format!("  {}", shorten(&ws.path)), fg(colors().dim)));
             if ws.git.is_some() {
@@ -439,7 +444,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         line = line.style(Style::new().bg(colors().selection));
     } else if let Some((color, el)) = flash.filter(|(_, el)| *el < FLASH) {
         line = line.style(Style::new().bg(lerp(lerp(colors().bg, color, 0.45), colors().bg, el.as_secs_f32() / FLASH.as_secs_f32())));
-    } else if app.hover == Some(i) && !matches!(row, Row::Gap | Row::Header(..)) {
+    } else if app.hover == Some(i) && selectable(&row) {
         line = line.style(Style::new().bg(colors().hover));
     }
     line
@@ -792,6 +797,15 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
         Some(Row::Review(i)) => (None, review_side(app, &app.snap.reviews[i], t)),
+        Some(Row::Header(title, n)) => {
+            let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
+            let inner = block.inner(area).inner(Margin::new(2, 1));
+            f.render_widget(block, area);
+            let verb = if app.section_open(title) { "hide" } else { "show" };
+            f.render_widget(Paragraph::new(s(format!("{n} in this section. Press space or Enter to {verb} them."), fg(colors().muted))), inner);
+            app.hits.detail = Rect::default();
+            return;
+        }
         _ => {
             let block = panel(Line::from(s(" Claude Hub ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
@@ -1303,6 +1317,8 @@ const HELP: &[(&str, &str)] = &[
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),
     ("m", "mark done: clear waiting on the agent or workspace"),
+    ("space", "fold or unfold the workspace or section"),
+    ("z", "fold or unfold all workspaces and sections"),
     ("w", "jump to the next agent waiting for you"),
     ("↵ on closed", "resume a recently closed agent in a workspace"),
     ("r", "reply: type a message, Enter sends it to the agent"),

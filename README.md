@@ -114,7 +114,8 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
-| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace. Agents that wait for you still show |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** starts open; **To review** and **Recently closed** start folded |
+| Hub | `z` | Fold every workspace, **To review** and **Recently closed**, or unfold them all when all are folded |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
