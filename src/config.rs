@@ -49,6 +49,38 @@ pub struct Config {
     pub prewarm_claude: bool,
     pub hub_key: String,
     pub theme: String,
+    /// The GitLab that XP and quests come from, e.g. "https://git.example.com". None: glab's default host.
+    pub gitlab_url: Option<String>,
+    /// Whose issues count. None: the user glab is logged in as.
+    pub gitlab_username: Option<String>,
+    pub xp_per_weight: u64,
+    /// The weight of an issue without one.
+    pub default_weight: u64,
+    pub sync_minutes: f64,
+    /// Which closed issues count: "all" (every one, also those closed before claude-hub), "install"
+    /// (closed since the progress file was made), or a date "2026-01-01".
+    pub xp_since: String,
+    /// Sounds in the town (level up, loot).
+    pub sound: bool,
+    pub drop_chances: DropChances,
+}
+
+/// Relative weights of the loot rarities; they need not add up to 100.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct DropChances {
+    pub poor: f64,
+    pub common: f64,
+    pub uncommon: f64,
+    pub rare: f64,
+    pub epic: f64,
+    pub legendary: f64,
+}
+
+impl Default for DropChances {
+    fn default() -> Self {
+        DropChances { poor: 20.0, common: 40.0, uncommon: 25.0, rare: 10.0, epic: 4.0, legendary: 1.0 }
+    }
 }
 
 impl Default for Config {
@@ -62,6 +94,14 @@ impl Default for Config {
             prewarm_claude: true,
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
+            gitlab_url: None,
+            gitlab_username: None,
+            xp_per_weight: 10,
+            default_weight: 1,
+            sync_minutes: 15.0,
+            xp_since: "all".into(),
+            sound: false,
+            drop_chances: DropChances::default(),
         }
     }
 }
@@ -76,6 +116,8 @@ pub fn load() -> Config {
     };
     cfg.roots = cfg.roots.iter().map(|r| expand(r)).collect();
     cfg.refresh_seconds = cfg.refresh_seconds.max(0.2);
+    cfg.sync_minutes = cfg.sync_minutes.max(1.0);
+    crate::gitlab::set_host(cfg.gitlab_url.as_deref());
     if let Err(e) = crate::theme::select(&cfg.theme) {
         eprintln!("claude-hub: {e}");
     }

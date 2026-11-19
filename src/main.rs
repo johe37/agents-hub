@@ -1,14 +1,18 @@
 mod app;
+mod class;
 mod config;
 mod debug;
 mod fuzzy;
+mod gear;
 mod git;
 mod gitlab;
 mod hooks;
 mod input;
+mod loot;
 mod messages;
 mod nvim;
 mod picker;
+mod progress;
 mod screens;
 mod snapshot;
 mod state;
@@ -18,13 +22,14 @@ mod town;
 mod transcript;
 mod ui;
 mod usage;
+mod xp;
 
 use std::process::ExitCode;
 
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | town [--port N] [--no-open] [--demo] | send <agent> <message> | debug-sessions | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | town [--port N] [--no-open] [--demo] | send <agent> <message> | xp [sync] | debug-sessions | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
@@ -32,6 +37,7 @@ or a search query to open the picker with it.
   ui              run the hub UI in the current terminal, without the tmux engine
   town            show your workspaces as a pixel art town in the browser
   send            send a message to an agent, the way the hub's reply does
+  xp              show your level and XP; xp sync fetches closed GitLab issues now
   debug-sessions  show every Claude session and how it matches a tmux pane
   report          hook handler: read hook JSON from stdin
   statusline      status line command: store plan usage for the hub
@@ -77,6 +83,7 @@ fn run_ui(cfg: config::Config) -> ExitCode {
     }
     let screens = std::sync::Arc::default();
     let (cmd, snaps) = snapshot::spawn(cfg.clone(), std::sync::Arc::clone(&screens), true);
+    xp::spawn_background(cfg.clone());
     let mouse = cfg.mouse;
     let mut app = app::App::new(cfg.clone(), cmd, screens);
     let mut term = ratatui::init();
@@ -105,6 +112,7 @@ fn main() -> ExitCode {
     let first = args.first().map(String::as_str);
     match first {
         Some("send") => messages::send(config::load(), &args[1..]),
+        Some("xp") => xp::run(config::load(), &args[1..]),
         Some("debug-sessions") => {
             debug::run(config::load());
             ExitCode::SUCCESS

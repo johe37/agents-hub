@@ -231,6 +231,8 @@ pub struct Snapshot {
     /// Open MRs where you are a requested reviewer.
     pub reviews: Vec<crate::gitlab::Mr>,
     pub usage: Option<crate::usage::Usage>,
+    /// Your XP, level, loot and quests, if you have any.
+    pub progress: Option<Arc<crate::progress::Progress>>,
 }
 
 const CLAUDE_MAX_AGE: Duration = Duration::from_secs(10 * 60);
@@ -291,6 +293,8 @@ struct Collector {
     watched: Vec<String>,
     /// Collect what only the TUI shows: terminal previews, merge requests and pooled shells.
     tui: bool,
+    progress_store: crate::progress::Store,
+    progress: (Option<SystemTime>, Option<Arc<crate::progress::Progress>>),
 }
 
 /// The panes of every tmux server asked so far in one collection round.
@@ -365,6 +369,8 @@ impl Collector {
             notices: Default::default(),
             transcripts: TranscriptCache::default(),
             screens,
+            progress_store: Default::default(),
+            progress: (None, None),
             cfg,
             tui,
         }
@@ -387,6 +393,10 @@ impl Collector {
             let m = mtime(&events);
             if m != events_mtime {
                 events_mtime = m;
+                due = true;
+            }
+            // A sync or the town changed your progress: show it now.
+            if self.progress_store.mtime() != self.progress.0 {
                 due = true;
             }
             if due {
@@ -504,6 +514,7 @@ impl Collector {
             self.fill_claude(&all_panes);
         }
         let pool = tmux::list_all_panes();
+        let progress = self.progress();
         Snapshot {
             workspaces,
             agents,
@@ -514,7 +525,17 @@ impl Collector {
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
             reviews: self.reviews.get(),
             usage: crate::usage::load(),
+            progress,
         }
+    }
+
+    /// The progress file, read again only when it changed.
+    fn progress(&mut self) -> Option<Arc<crate::progress::Progress>> {
+        let m = self.progress_store.mtime();
+        if m != self.progress.0 {
+            self.progress = (m, self.progress_store.load().map(Arc::new));
+        }
+        self.progress.1.clone()
     }
 
     fn workspaces(&self, panes: &[&Pane], claude_by_pane: &HashMap<String, Session>) -> Vec<Workspace> {

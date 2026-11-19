@@ -1393,6 +1393,14 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         app.hits.buttons.push((rect, action));
         x += w;
     }
+    // Your level at the right end, when it fits after the buttons.
+    if let Some(p) = &app.snap.progress {
+        let badge = format!(" ★ {} ", crate::xp::badge(p));
+        let w = badge.chars().count() as u16;
+        if x + w < area.right() {
+            f.render_widget(Paragraph::new(s(badge, fg(colors().warning).bold())), Rect::new(area.right() - w - 1, area.y, w, 1));
+        }
+    }
 }
 
 fn draw_toast(f: &mut Frame, app: &App, area: Rect) {

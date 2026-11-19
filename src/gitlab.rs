@@ -120,12 +120,29 @@ impl Thread {
     }
 }
 
+/// The GitLab for calls that are not about one repo (reviews, XP): `gitlab_url` from the config.
+/// Calls in a repo let glab pick the host from its remote.
+static HOST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+pub fn set_host(url: Option<&str>) {
+    let _ = HOST.set(url.map(crate::xp::host_of));
+}
+
 fn glab(cwd: &str, args: &[&str]) -> Result<String, String> {
-    run(cwd, 20, "glab", args)
+    let host = HOST.get().cloned().flatten();
+    match (args, host) {
+        // In the home directory glab would use its default host, which may not be yours.
+        (["api", rest @ ..], Some(h)) if cwd == crate::config::home().display().to_string() => {
+            let mut with = vec!["api", "--hostname", &h];
+            with.extend_from_slice(rest);
+            run(cwd, 20, "glab", &with)
+        }
+        _ => run(cwd, 20, "glab", args),
+    }
 }
 
 /// Run a program in cwd. On failure, the line of its error output that says what went wrong.
-fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, String> {
     // coreutils timeout, so a slow GitLab or remote cannot hang the caller.
     let out = Command::new("timeout")
         .arg(secs.to_string())

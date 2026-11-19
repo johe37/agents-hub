@@ -515,6 +515,7 @@ function drawShop(s, t) {
     px(x + 1, y + 1, w - 2, 7, mix(P.purple, P.white, 0.15));
     text(label, x + 4, y + 2, P.white);
   }
+  if (s.quests && s.quests.length) drawQuestMarker(s, t);
   if (selected && selected.id === s.id) marker(s.left - 4, s.top - 4, s.wallW + 8, s.wallH + 8);
   hit('shop', s.id, s.left - 2, s.top - 2, s.wallW + 4, s.wallH + 4);
 }
@@ -545,6 +546,8 @@ function draw() {
   drawEmptyLots();
   [...shops.values()].sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0).forEach((s) => drawShop(s, t));
   drawWalkers(t);
+  drawMe(t);
+  playerFrame(t);
   // The panel shows the message of a walking agent; refresh it when a walk starts or ends.
   const w = selected && selected.kind === 'agent' ? walking.get(selected.id) : null;
   if ((w ? w.m.id : null) !== panelWalk) renderPanel(true);
@@ -594,8 +597,10 @@ function connect() {
     conn.hidden = true;
     model = JSON.parse(e.data);
     document.getElementById('demo').hidden = !model.demo;
+    document.getElementById('newclaude').hidden = !!model.demo;
     applyTheme(model.theme);
     layout();
+    onPlayer(model.player);
     takeMessages();
     centerOnce();
     updateCounter();
@@ -620,7 +625,7 @@ function hitAt(e) {
   const w = worldAt(e);
   const inside = (h) => w.x >= h.x && w.x < h.x + h.w && w.y >= h.y && w.y < h.y + h.h;
   // Agents first, newest drawn first: walkers are drawn last and stand in front of shops.
-  return [...hits].reverse().find((h) => h.kind === 'agent' && inside(h)) || hits.find((h) => h.kind === 'shop' && inside(h)) || null;
+  return [...hits].reverse().find((h) => (h.kind === 'agent' || h.kind === 'player') && inside(h)) || hits.find((h) => h.kind === 'shop' && inside(h)) || null;
 }
 
 stage.addEventListener('pointerdown', (e) => {
@@ -655,7 +660,11 @@ stage.addEventListener('pointerup', (e) => {
   const moved = drag.moved;
   drag = null;
   stage.classList.remove('dragging');
-  if (!moved) select(hitAt(e));
+  if (!moved) {
+    const h = hitAt(e);
+    if (h && h.kind === 'player') openDock('character');
+    else select(h);
+  }
 });
 
 stage.addEventListener('wheel', (e) => {
@@ -681,7 +690,9 @@ function el(tag, cls, textContent) {
 function showTip(h, e) {
   if (!h || drag) { tip.hidden = true; return; }
   tip.replaceChildren();
-  if (h.kind === 'shop') {
+  if (h.kind === 'player') {
+    tip.append(...meTip());
+  } else if (h.kind === 'shop') {
     const s = shops.get(h.id);
     tip.append(el('b', '', s.name), el('div', 'dim', s.path));
     if (s.git) {
@@ -690,6 +701,7 @@ function showTip(h, e) {
       tip.append(el('div', '', g.dirty ? `${g.dirty} changed, +${g.added} −${g.removed}` : 'No uncommitted changes'));
       if (g.ahead || g.behind) tip.append(el('div', '', `${g.ahead} to push, ${g.behind} to pull`));
     } else tip.append(el('div', 'dim', 'Not a git repository'));
+    for (const q of questTip(s)) tip.append(el('div', 'quest-line', `📜 ${q.title} · +${q.xp} XP`));
   } else {
     const a = agents.get(h.id);
     tip.append(el('b', '', a.title));
@@ -734,9 +746,37 @@ function lines(list, parent) {
 function select(h) {
   const changed = (h && h.kind + h.id) !== (selected && selected.kind + selected.id);
   selected = h ? { kind: h.kind, id: h.id } : null;
-  if (changed) { input.value = ''; setNote(''); tab = 0; }
+  if (changed) { input.value = ''; setNote(''); tab = 0; starting = false; }
   renderPanel(true);
   draw();
+}
+
+// c on a shop: the reply box asks for the new Claude's first task.
+let starting = false;
+
+function beginStart() {
+  if (!selected || selected.kind !== 'shop' || model.demo) return;
+  starting = true;
+  renderPanel(true);
+  input.focus();
+}
+
+async function startClaude(task) {
+  setNote('Starting Claude…');
+  try {
+    const res = await fetch('/api/act', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN },
+      body: JSON.stringify({ op: 'claude', shop: selected.id, text: task }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setNote(data.error || 'Failed.', 'err'); return false; }
+    setNote(data.ok, 'ok');
+    return true;
+  } catch (e) {
+    setNote('The town server does not answer.', 'err');
+    return false;
+  }
 }
 
 function setNote(msg, kind) { note.textContent = msg; note.className = 'note' + (kind ? ' ' + kind : ''); }
@@ -749,14 +789,15 @@ function current() {
 // Rebuilt on every update; skipped when nothing it shows changed, so text selection survives.
 function renderPanel(force) {
   const item = current();
-  if (!item) { panel.hidden = true; shown = ''; panelWalk = null; return; }
+  if (!item) { panel.hidden = true; shown = ''; panelWalk = null; updateDockMode(); return; }
   const w = selected.kind === 'agent' ? walking.get(selected.id) : null;
   panelWalk = w ? w.m.id : null;
   const p = item.panel;
-  const sig = JSON.stringify([selected, tab, p, panelWalk, model.demo]);
+  const sig = JSON.stringify([selected, tab, p, panelWalk, model.demo, starting]);
   if (!force && sig === shown && !panel.hidden) return;
   shown = sig;
   panel.hidden = false;
+  updateDockMode();
 
   $('p-title').textContent = ' ' + p.title + ' ';
   $('p-meta').replaceChildren(...spans(p.meta, el('span')).childNodes);
@@ -787,6 +828,22 @@ function renderPanel(force) {
     banner.appendChild(row);
   }
 
+  // A shop can get a new Claude, as c does in the hub.
+  if (selected.kind === 'shop') {
+    const row = el('div', 'buttons');
+    const btn = el('button', 'btn');
+    btn.type = 'button';
+    const key = el('span', 'key', ' c ');
+    key.style.background = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#0078D4';
+    key.style.color = '#ffffff';
+    btn.append(key, 'new Claude here');
+    btn.disabled = model.demo;
+    btn.title = model.demo ? 'Off in the demo town' : 'Start Claude in this repo, with a first task if you like';
+    btn.addEventListener('click', beginStart);
+    row.appendChild(btn);
+    banner.appendChild(row);
+  }
+
   $('p-tabs').replaceChildren(...p.tabs.map(([label, n], i) => {
     const b = el('button', 'tab' + (i === tab ? ' on' : ''), label);
     b.type = 'button';
@@ -796,8 +853,10 @@ function renderPanel(force) {
   }));
   lines(p.bodies[tab] || [], $('p-body'));
 
-  replyForm.hidden = !p.reply;
-  input.placeholder = model.demo ? 'Replies are off in the demo town' : p.reply || '';
+  const startHere = selected.kind === 'shop' && starting;
+  replyForm.hidden = !(p.reply || startHere);
+  replyForm.querySelector('.rtitle').textContent = startHere ? ' New Claude ' : ' Reply ';
+  input.placeholder = model.demo ? 'Replies are off in the demo town' : startHere ? 'First task for Claude (optional) · Enter starts it, Esc cancels' : p.reply || '';
   input.disabled = model.demo;
 }
 
@@ -808,16 +867,37 @@ function perform(action) {
   else if (['approve', 'deny', 'done'].includes(action)) act(action, a);
 }
 
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); replyForm.requestSubmit ? replyForm.requestSubmit() : replyForm.dispatchEvent(new Event('submit', { cancelable: true })); }
+});
 input.addEventListener('focus', () => replyForm.classList.add('on'));
 input.addEventListener('blur', () => replyForm.classList.remove('on'));
 
 // The hub's keys work in the panel too: y approve, d deny, r reply, m done, 1-4 / h l tabs, Esc closes.
+// c is Claude, as in the hub: on a selected shop it starts Claude there, elsewhere it opens the New Claude
+// search (so does n). p, i and q open your character, bag and quests (player.js).
 document.addEventListener('keydown', (e) => {
-  if (!selected || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (document.activeElement === input) {
-    if (e.key === 'Escape') input.blur();
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+  if (!picker.hidden) return;
+  if (typing) {
+    // Esc leaves the field, and closes the character maker if the field is in it.
+    if (e.key === 'Escape') {
+      document.activeElement.blur();
+      if (starting) { starting = false; renderPanel(true); } else if (!selected) playerKey(e);
+    }
     return;
   }
+  if (playerKey(e)) return;
+  // Not while a loot card or the character maker is open.
+  const overlay = !$('loot').hidden || !$('creator').hidden;
+  if (!overlay && (e.key === 'c' || e.key === 'n') && !model.demo) {
+    e.preventDefault();
+    if (e.key === 'c' && selected && selected.kind === 'shop') beginStart();
+    else openPicker('');
+    return;
+  }
+  if (!selected) return;
   const keys = { y: 'approve', d: 'deny', r: 'reply', m: 'done' };
   if (keys[e.key]) { e.preventDefault(); perform(keys[e.key]); }
   else if (/^[1-4]$/.test(e.key)) { tab = +e.key - 1; renderPanel(true); }
@@ -846,11 +926,110 @@ async function act(op, a, textValue) {
 
 replyForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (selected && selected.kind === 'shop' && starting) {
+    // An empty task is fine: Claude just starts.
+    if (await startClaude(input.value.trim())) { input.value = ''; starting = false; input.blur(); renderPanel(true); }
+    return;
+  }
   const a = selected && agents.get(selected.id);
   const value = input.value.trim();
   if (!a || !value) return;
   if (await act('reply', a, value)) { input.value = ''; input.blur(); }
 });
+
+// ------------------------------------------------------------------ new Claude anywhere (n), like the hub's picker
+
+const picker = $('picker'), pkQ = $('pk-q'), pkList = $('pk-list'), pkTask = $('pk-task'), pkChosen = $('pk-chosen'), pkNote = $('pk-note'), pkHint = $('pk-hint');
+let pkOptions = [], pkSel = 0, pkPath = null, pkSeq = 0, pkTimer = null;
+
+function openPicker(query) {
+  if (!model || model.demo) return;
+  picker.hidden = false;
+  pkPath = null;
+  pkQ.hidden = false; pkList.hidden = false; pkTask.hidden = true; pkChosen.hidden = true;
+  pkHint.textContent = '↑ ↓ choose · Enter picks the place · Esc closes';
+  pkNote.textContent = ''; pkNote.className = 'note';
+  pkQ.value = query || '';
+  pkTask.value = '';
+  pkQ.focus();
+  searchPlaces();
+}
+
+function closePicker() {
+  picker.hidden = true;
+  pkQ.blur(); pkTask.blur();
+}
+
+async function searchPlaces() {
+  const seq = ++pkSeq;
+  try {
+    const res = await fetch('/api/places', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN }, body: JSON.stringify({ q: pkQ.value }) });
+    const data = await res.json();
+    if (seq !== pkSeq) return; // a newer search is on its way
+    if (!res.ok) { pkNote.textContent = data.error || 'Failed.'; pkNote.className = 'note err'; return; }
+    pkOptions = data.options || [];
+    pkSel = 0;
+    renderPlaces();
+  } catch (e) {
+    pkNote.textContent = 'The town server does not answer.'; pkNote.className = 'note err';
+  }
+}
+
+function renderPlaces() {
+  pkList.replaceChildren(...pkOptions.map((o, i) => {
+    const li = el('li', i === pkSel ? 'on' : '');
+    li.setAttribute('role', 'option');
+    li.append(el('span', '', o.label || o.path));
+    if (o.tag) li.append(el('span', 't', o.tag));
+    li.addEventListener('click', () => { pkSel = i; choosePlace(); });
+    return li;
+  }));
+  if (!pkOptions.length) pkList.append(el('li', 't', 'No matching folders'));
+  const on = pkList.children[pkSel];
+  if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+}
+
+function choosePlace() {
+  const o = pkOptions[pkSel];
+  if (!o) return;
+  pkPath = o.path;
+  pkQ.hidden = true; pkList.hidden = true;
+  pkChosen.hidden = false;
+  pkChosen.replaceChildren('Claude in ', el('b', '', o.label || o.path));
+  pkTask.hidden = false;
+  pkTask.focus();
+  pkHint.textContent = 'Enter starts Claude (the task is optional) · Esc goes back';
+}
+
+async function startPlace() {
+  pkNote.textContent = 'Starting Claude…'; pkNote.className = 'note';
+  try {
+    const res = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN }, body: JSON.stringify({ op: 'claude', path: pkPath, text: pkTask.value.trim() }) });
+    const data = await res.json();
+    if (!res.ok) { pkNote.textContent = data.error || 'Failed.'; pkNote.className = 'note err'; return; }
+    closePicker();
+    if (typeof toast === 'function') toast(data.ok);
+  } catch (e) {
+    pkNote.textContent = 'The town server does not answer.'; pkNote.className = 'note err';
+  }
+}
+
+$('newclaude').addEventListener('click', () => openPicker(''));
+pkQ.addEventListener('input', () => { clearTimeout(pkTimer); pkTimer = setTimeout(searchPlaces, 90); });
+pkQ.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || (e.key === 'n' && e.ctrlKey)) { e.preventDefault(); pkSel = Math.min(pkOptions.length - 1, pkSel + 1); renderPlaces(); }
+  else if (e.key === 'ArrowUp' || (e.key === 'p' && e.ctrlKey)) { e.preventDefault(); pkSel = Math.max(0, pkSel - 1); renderPlaces(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePicker(); }
+  else if (e.key === 'Enter') { e.preventDefault(); choosePlace(); }
+});
+pkTask.addEventListener('keydown', (e) => {
+  // Esc goes back to choosing the place.
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); openPicker(pkQ.value); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (pkPath) startPlace(); }
+});
+// Enter is handled on the fields above; this only stops a stray submit from reloading the page.
+$('pk-form').addEventListener('submit', (e) => e.preventDefault());
+picker.addEventListener('click', (e) => { if (e.target === picker) closePicker(); });
 
 // ------------------------------------------------------------------ start
 

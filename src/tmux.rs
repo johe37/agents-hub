@@ -485,6 +485,38 @@ pub fn open_review(dir: &str, name: &str, prompt: &str) -> Result<String, String
     Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
 }
 
+/// Start Claude in a new window of the workspace for path, making the workspace (and the hub's tmux
+/// server) first if needed. No client is switched to it: the town starts agents in the background.
+/// A first task, if given, is typed in and sent once Claude is ready. Returns the workspace name.
+pub fn start_claude(path: &str, task: Option<String>, hub_key: &str) -> Result<String, String> {
+    if !Path::new(path).is_dir() {
+        return Err(format!("{path} is not a directory"));
+    }
+    if !server_running() {
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into());
+        let conf = write_config(&exe, hub_key);
+        ensure_hub(&exe, &conf);
+    }
+    let session = ensure_workspace(path)?;
+    let target = format!("={session}:");
+    let out = run(&["new-window", "-t", &target, "-c", path, "-n", "claude", "-P", "-F", "#{pane_id}", "claude"]).ok_or("tmux not found")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() { "tmux could not open a window".into() } else { err });
+    }
+    let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if let Some(task) = task.filter(|t| !t.trim().is_empty()) {
+        // Claude drops typing until it is up, so wait for it in the background.
+        std::thread::spawn(move || {
+            if wait_for_claude(&pane) && type_text(&socket_path(), &pane, &task).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = send_key(&socket_path(), &pane, "Enter");
+            }
+        });
+    }
+    Ok(session)
+}
+
 /// Wait until Claude in pane reports its first hook event: before that it drops typed input.
 fn wait_for_claude(pane: &str) -> bool {
     let dir = crate::hooks::events_dir();

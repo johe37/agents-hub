@@ -75,7 +75,8 @@ hub_key = "M-q"              # tmux key that brings you back to the hub from any
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
 ```
 
-All keys are optional. The default for `roots` is `~/repos`.
+All keys are optional. The default for `roots` is `~/repos`. The XP keys are under
+[XP, levels and loot](#xp-levels-and-loot).
 
 ## Run
 
@@ -184,7 +185,7 @@ cost come from the same file.
 
 ```sh
 claude-hub town            # opens the town in your browser
-claude-hub town --demo     # a made-up town, to see what it looks like
+claude-hub town --demo     # a made-up town and player, to see what it looks like
 ```
 
 The same data as the hub, drawn as a small pixel art town. Every git repo is a shop, and so
@@ -209,13 +210,129 @@ branch.
 Click a shop or a person to open the panel. It is the hub's own detail panel, built by the
 same code and in the same colours, so it shows what the hub shows: what the agent waits for,
 your last request, its last reply, changed files, windows, model and cost. `y`, `d`, `r` and
-`m` work there as in the hub, and `1`–`4` or `h`/`l` switch tabs. The counter in the corner
+`m` work there as in the hub, and `1`–`4` or `h`/`l` switch tabs.
+
+To start a new Claude in a repo, select its shop and press `c` (or click **new Claude here**).
+To start one anywhere else, press `c` (or `n`) with no shop selected, or click **+ New Claude**:
+search your repos, recent places and folders like the hub's picker, or type a path (`~/`, `/`).
+Type a first task, or leave it empty, and press `Enter`: Claude starts in a new window of the repo's
+workspace (the workspace is made if there is none), and the task is sent as soon as Claude is ready.
+The new agent shows up behind the counter; `Alt+Q` in the hub or the workspace's bar takes you to it. The counter in the corner
 shows how many agents wait for you; click it to go to the next one. Drag to move, scroll to
 zoom. The town follows your clock, and dark mode makes it night.
 
 The server listens on 127.0.0.1 only. The page gets a random token in its URL, and the
 server refuses requests without it or from other origins, so other web pages cannot see
 your agents or answer them. Options: `--port N`, `--no-open`.
+
+### XP, levels and loot
+
+Closing GitLab issues levels you up. Every closed issue that is **assigned to you** gives XP,
+also the ones you closed before you installed claude-hub: its weight times `xp_per_weight`. An
+issue without a weight counts as weight 1 (`default_weight`). Who closed it
+does not matter, and an issue you closed but were not assigned to gives nothing. Your open
+assigned issues are your **quests**.
+
+XP fills the bar at the bottom of the town; hover it for the issues that gave the latest XP. Each
+level needs more XP than the last (`100 × level^1.5`). On a level-up your character jumps and a
+random piece of loot drops, with an item level equal to your new level.
+
+Each drop is rolled in three steps:
+
+1. **Slot**: head, chest, hands, feet, main hand, off-hand, back or trinket, each equally likely.
+2. **Rarity**: Poor, Common, Uncommon, Rare, Epic or Legendary, from `drop_chances`.
+3. **Item**: a kind that fits the slot (the off-hand can be a shield, mousepad, mug or keyboard;
+   the head a helmet or headphones) and its look; a legendary is one of the slot's legendaries
+   you do not have yet.
+
+- **Name**: the rarity's word and the item: *Broken* (Poor), *Working* (Common), *Good*
+  (Uncommon), *Excellent* (Rare) or *Masterwork* (Epic) Mousepad, Helm, Mug, Keyboard… Only legendaries have names of their own.
+- **Stats** (Focus, Speed, Insight, Stamina) add up to a total set by item level and rarity: item
+  level + 1 for Poor, times Common 1.2, Uncommon 1.9, Rare 2.5, Epic 3.2 or Legendary 4. A Poor
+  item at level 1 has 2 (say 1 Speed and 1 Stamina); at level 10 a Poor item has 11 and an Epic 35.
+  The total is spread at random over up to 2 stats (Poor, Common), 3 (Uncommon, Rare) or 4 (Epic,
+  Legendary). Stats are only for show.
+
+- **Legendaries**: three for every slot, each with its own name, a line of lore and a glow, such as
+  *Rimecrown*, *The Last Merge* or *The Heisenmug*. Each drops once. They grow with you: their item
+  level is always your level, and their stats follow the legendary total for it. Once you own all
+  three for a slot, a legendary roll for that slot gives an Epic instead.
+
+Each drop is rolled once and kept in your progress file.
+
+Your **class** comes from the label you have closed the most issues with. Only these labels
+count, matched exactly (ignoring case); every other label is ignored:
+
+| Label | Class |
+|---|---|
+| `Severity::Critical` (or `Critical`) | Beacon Warden, the first responder |
+| `Type::Tech Debt` (or `Tech Debt`) | Debtreaver, the debt collector |
+| `Low hanging fruit` | Orchard Forager, the fruit picker |
+| `Type::Bug` (or `Bug`) | Verminbane, the exterminator |
+| `Type::Enhancement` (or `Enhancement`) | Enchanter, the enhancer |
+| `Documentation` | Lorescribe, the scribe |
+
+A tie goes to the class you closed an issue for most recently. Before your first such issue you
+are a Wanderer. The character sheet shows your class and how many issues you closed for each.
+
+The left side of the town is yours. `p` opens your character: drag loot from the bag onto its slot,
+or double-click it, to wear it. Hover an item to compare it with what you wear. `i` opens the bag,
+`q` the quest log; a scroll over a shop means one of your quests is in that repo. Your character
+walks the streets and goes to the door of any shop where an agent waits for you. Click it to open
+the character sheet. On the first visit you choose how it looks; **Change look** changes it later.
+The hub's footer shows your level too.
+
+**Setup.** XP comes through `glab`, so claude-hub never handles your token:
+
+1. Make a personal access token in GitLab (*Preferences → Access tokens*) with the `read_api`
+   scope. That is all XP needs; other hub features, like replying to review threads, need `api`.
+2. Log glab in with it: `glab auth login --hostname git.example.com`. Add `--use-keyring` to keep
+   the token in the OS keyring instead of glab's config file. Or export `GITLAB_TOKEN` in your
+   shell profile; glab reads that first. Never put the token in claude-hub's config.
+3. Tell claude-hub which GitLab to ask, and sync once:
+
+```toml
+gitlab_url = "https://git.example.com"  # your GitLab; without it glab's default host is used
+# gitlab_username = "me"                # default: whoever glab is logged in as
+xp_per_weight = 10                      # XP per weight point
+default_weight = 1                      # an issue without a weight counts as this
+sync_minutes = 15                       # how often the hub and the town sync in the background
+xp_since = "all"                        # "all", "install", or a date like "2026-01-01"
+sound = false                           # level-up and loot sounds in the town
+
+[drop_chances]                          # relative weights of the rarities
+poor = 20
+common = 40
+uncommon = 25
+rare = 10
+epic = 4
+legendary = 1
+```
+
+```sh
+claude-hub xp sync     # fetch now and show what you got
+claude-hub xp          # your level, XP and when it last synced
+```
+
+With `gitlab_url` (or `gitlab_username`) set, the hub and the town sync in the background every
+`sync_minutes`. A failed sync (no network, GitLab down, rate limited) changes nothing: the town
+keeps your last known XP and tries again later; hover the XP bar to see the error.
+
+Progress is in `~/.local/state/claude-hub/progress.json`: every counted issue, your XP, level,
+loot, what you wear and your look. Everything works offline from it.
+
+How issues count:
+
+- Each issue counts once, by its global id. Reopened and closed again: no new XP.
+- The weight it had when it first counted stays, even if it changes later.
+- Unassigned after it closed and counted: you keep the XP. Unassigned before the hub saw it: none.
+- Issues moved to another project do not count (GitLab closes the original); the moved copy
+  counts when it closes.
+- `xp_since = "all"` (the default) counts every closed issue assigned to you, from your whole
+  history. `"install"` counts only issues closed after the progress file was made, a date counts
+  from that day. Changing it fetches again from the new start; issues already counted keep their XP.
+- Changing `xp_per_weight` or `default_weight` changes XP for issues closed from then on, and the
+  rewards shown on quests.
 
 ### Agents talking to each other
 

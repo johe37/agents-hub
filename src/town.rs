@@ -20,16 +20,18 @@ use crate::config::{Config, shorten, state_dir};
 use crate::git::{GitCache, GitStatus};
 use crate::messages::{Message, resolve_target};
 use crate::snapshot::{Agent, Cmd, Snapshot, Workspace, basename};
+use crate::progress::{Progress, level_for};
 use crate::state::{Status, now};
 use crate::theme::{colors, css, lerp};
 use crate::ui::{Side, agent_side, reply_placeholder, window_lines, workspace_side};
 
 const PAGE: &str = include_str!("town/town.html");
 const SCRIPT: &str = include_str!("town/town.js");
+const PLAYER_SCRIPT: &str = include_str!("town/player.js");
 const MAX_BODY: usize = 64 * 1024;
 const MAX_REPLY: usize = 4000;
-/// Text columns in the panel body (46em wide in town.html), for the chat cards.
-const PANEL_COLUMNS: u16 = 72;
+/// Columns of the town's panel body (46em of monospace), for the chat cards and pipeline layout.
+const PANEL_WIDTH: u16 = 80;
 /// Lots per row of the town grid.
 const COLUMNS: u64 = 4;
 /// Messages younger than this are sent to the page; it plays each one once.
@@ -55,10 +57,18 @@ struct Shared {
     token: String,
     port: u16,
     cmd: Option<Mutex<Sender<Cmd>>>,
+    /// The demo town's player, kept in memory so the demo never writes your progress file.
+    demo_player: Option<Mutex<Progress>>,
+    /// The shops (repo roots) in the newest model: the only directories the page may start Claude in.
+    shop_ids: Mutex<HashSet<String>>,
+    hub_key: String,
+    /// Where to look for repos, for the place picker.
+    roots: Vec<String>,
 }
 
 impl Shared {
     fn publish(&self, model: &Value, snap: Option<Snapshot>) {
+        *self.shop_ids.lock().unwrap() = model["shops"].as_array().into_iter().flatten().filter_map(|s| s["id"].as_str().map(String::from)).collect();
         let json = model.to_string();
         let mut l = self.latest.lock().unwrap();
         if l.json != json {
@@ -108,23 +118,35 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
     let mut lots = Lots::load(!demo);
     let started = std::time::Instant::now();
     let shared = if demo {
-        let shared = Arc::new(Shared::new(token, port, None));
+        let mut sh = Shared::new(token, port, None);
+        sh.demo_player = Some(Mutex::new(demo_progress(&cfg)));
+        let shared = Arc::new(sh);
         let s = shared.clone();
         std::thread::spawn(move || {
             let git = GitCache::default();
+            let mut remotes = Remotes::demo();
             loop {
-                let (snap, messages) = demo_snapshot();
-                s.publish(&model(&snap, &cfg, &mut lots, &git, &messages, true, started.elapsed().as_millis()), None);
-                std::thread::sleep(Duration::from_secs(2));
+                let (mut snap, messages) = demo_snapshot();
+                snap.progress = s.demo_player.as_ref().map(|p| Arc::new(p.lock().unwrap().clone()));
+                s.publish(&model(&snap, &cfg, &mut lots, &git, &mut remotes, &messages, true, started.elapsed().as_millis()), None);
+                // Sooner after a change to the player, so equipping feels instant.
+                let mut l = s.latest.lock().unwrap();
+                l = s.changed.wait_timeout(l, Duration::from_secs(2)).unwrap().0;
+                drop(l);
             }
         });
         shared
     } else {
         let (cmd, snaps) = crate::snapshot::spawn(cfg.clone(), Default::default(), false);
-        let shared = Arc::new(Shared::new(token, port, Some(cmd)));
+        crate::xp::spawn_background(cfg.clone());
+        let mut sh = Shared::new(token, port, Some(cmd));
+        sh.hub_key = cfg.hub_key.clone();
+        sh.roots = cfg.roots.clone();
+        let shared = Arc::new(sh);
         let s = shared.clone();
         std::thread::spawn(move || {
             let git = GitCache::default();
+            let mut remotes = Remotes::default();
             let mut last: Option<Snapshot> = None;
             let mut seen = mtime(&crate::messages::dir());
             loop {
@@ -142,7 +164,7 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
                 }
                 let Some(snap) = &last else { continue };
                 let messages = crate::messages::recent(MESSAGE_WINDOW);
-                let model = model(snap, &cfg, &mut lots, &git, &messages, false, started.elapsed().as_millis());
+                let model = model(snap, &cfg, &mut lots, &git, &mut remotes, &messages, false, started.elapsed().as_millis());
                 s.publish(&model, Some(snap.clone()));
             }
         });
@@ -175,6 +197,10 @@ impl Shared {
             changed: Condvar::new(),
             token,
             port,
+            demo_player: None,
+            shop_ids: Mutex::new(HashSet::new()),
+            hub_key: "M-q".into(),
+            roots: vec![],
             cmd: cmd.map(Mutex::new),
         }
     }
@@ -271,12 +297,33 @@ fn handle(mut stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE.as_bytes()),
         ("GET", "/town.js") => respond(&mut stream, "200 OK", "text/javascript; charset=utf-8", SCRIPT.as_bytes()),
+        ("GET", "/player.js") => respond(&mut stream, "200 OK", "text/javascript; charset=utf-8", PLAYER_SCRIPT.as_bytes()),
         ("GET", "/events") => {
             let token = req.query.split('&').find_map(|kv| kv.strip_prefix("t=")).unwrap_or("");
             if !same(token, &shared.token) {
                 return respond(&mut stream, "403 Forbidden", "text/plain", b"bad token");
             }
             events(stream, shared)
+        }
+        ("POST", "/api/player") => {
+            let origins = hosts.map(|h| format!("http://{h}"));
+            let origin_ok = req.headers.get("origin").is_some_and(|o| origins.contains(o));
+            let token_ok = req.headers.get("x-town-token").is_some_and(|t| same(t, &shared.token));
+            if !origin_ok || !token_ok {
+                return json_reply(&mut stream, "403 Forbidden", json!({"error": "Only the town page on this machine can do that."}));
+            }
+            let (status, v) = player_act(shared, &req.body);
+            json_reply(&mut stream, status, v)
+        }
+        ("POST", "/api/places") => {
+            let origins = hosts.map(|h| format!("http://{h}"));
+            let origin_ok = req.headers.get("origin").is_some_and(|o| origins.contains(o));
+            let token_ok = req.headers.get("x-town-token").is_some_and(|t| same(t, &shared.token));
+            if !origin_ok || !token_ok {
+                return json_reply(&mut stream, "403 Forbidden", json!({"error": "Only the town page on this machine can do that."}));
+            }
+            let (status, v) = places(shared, &req.body);
+            json_reply(&mut stream, status, v)
         }
         ("POST", "/api/act") => {
             let origins = hosts.map(|h| format!("http://{h}"));
@@ -321,6 +368,31 @@ fn act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
     let err = |status, msg: &str| (status, json!({"error": msg}));
     let Some(cmd) = &shared.cmd else { return err("403 Forbidden", "The demo town cannot act on agents.") };
     let Ok(req) = serde_json::from_slice::<Value>(body) else { return err("400 Bad Request", "Bad request.") };
+    // c on a shop, or a place from the picker: a new Claude there, with an optional first task.
+    if req["op"] == "claude" {
+        let shop = match (req["shop"].as_str(), req["path"].as_str()) {
+            (Some(shop), _) if shared.shop_ids.lock().unwrap().contains(shop) => shop.to_string(),
+            (Some(_), _) => return err("404 Not Found", "This shop is gone."),
+            // Any directory, as the hub's n picker allows; resolved, so the workspace matches the real path.
+            (None, Some(path)) => match std::fs::canonicalize(crate::config::expand(path.trim())) {
+                Ok(p) if p.is_dir() => p.display().to_string(),
+                _ => return err("404 Not Found", "No such directory."),
+            },
+            _ => return err("400 Bad Request", "Where should Claude start?"),
+        };
+        let task: String = req["text"].as_str().unwrap_or("").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+        let task = task.trim().to_string();
+        if task.chars().count() > MAX_REPLY {
+            return err("400 Bad Request", "Write a shorter task (at most 4000 characters).");
+        }
+        let has_task = !task.is_empty();
+        let result = crate::tmux::start_claude(&shop, has_task.then_some(task), &shared.hub_key);
+        let _ = cmd.lock().unwrap().send(Cmd::Refresh);
+        return match result {
+            Ok(ws) => ("200 OK", json!({"ok": if has_task { format!("Started Claude in {ws}; it gets your task as soon as it is ready") } else { format!("Started Claude in {ws}") }})),
+            Err(e) => err("500 Internal Server Error", &e),
+        };
+    }
     let agent = {
         let l = shared.latest.lock().unwrap();
         l.snap.as_ref().and_then(|s| s.agents.iter().find(|a| req["key"] == a.key.as_str()).cloned())
@@ -363,6 +435,25 @@ fn act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
         Ok(what) => ("200 OK", json!({"ok": format!("{what} → {}", a.title())})),
         Err(e) => err("500 Internal Server Error", &e),
     }
+}
+
+/// The hub's picker, for the town: open workspaces, repos, recent and other directories matching the
+/// query, or the directories under a typed path.
+fn places(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
+    let Ok(req) = serde_json::from_slice::<Value>(body) else { return ("400 Bad Request", json!({"error": "Bad request."})) };
+    let Some(snap) = shared.latest.lock().unwrap().snap.clone() else { return ("403 Forbidden", json!({"error": "The demo town cannot start agents."})) };
+    let picker = crate::picker::Picker::new(crate::picker::candidates(&snap, &shared.roots), req["q"].as_str().unwrap_or(""));
+    let options: Vec<Value> = picker
+        .options
+        .iter()
+        .take(40)
+        .map(|c| {
+            let spans = &c.line.spans;
+            let tag = spans.get(1).map(|t| t.content.trim().trim_start_matches('●').trim().to_string());
+            json!({"path": c.path, "label": spans.first().map(|l| l.content.trim_end().to_string()), "tag": tag})
+        })
+        .collect();
+    ("200 OK", json!({"options": options}))
 }
 
 // ---------------------------------------------------------------- Lots
@@ -568,8 +659,8 @@ fn shop_of(git: &GitCache, path: &str) -> String {
     git.repo_root(path).unwrap_or_else(|| path.to_string())
 }
 
-fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, messages: &[Message], demo: bool, t: u128) -> Value {
-    let _ = cfg;
+#[allow(clippy::too_many_arguments)]
+fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, remotes: &mut Remotes, messages: &[Message], demo: bool, t: u128) -> Value {
     let mut shops: Vec<(String, Shop)> = vec![];
     fn shop<'a>(shops: &'a mut Vec<(String, Shop)>, root: &str, git: Option<&GitStatus>) -> &'a mut Shop {
         let i = match shops.iter().position(|(r, _)| r == root) {
@@ -608,6 +699,15 @@ fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, message
 
     let paths: Vec<String> = shops.iter().map(|(p, _)| p.clone()).collect();
     let lot = lots.assign(&paths);
+    // Quests whose project is the remote of a shop: a scroll on that shop.
+    // The demo's made-up remotes are on no real host, so it does not check the host.
+    let host = cfg.gitlab_url.as_deref().map(crate::xp::host_of).filter(|_| !demo);
+    let mut quest_shops: HashMap<u64, String> = HashMap::new();
+    for q in snap.progress.iter().flat_map(|p| p.quests.iter()) {
+        if let Some(root) = paths.iter().find(|root| remotes.project(root).is_some_and(|(h, path)| path.eq_ignore_ascii_case(&q.project) && host.as_ref().is_none_or(|x| x.eq_ignore_ascii_case(&h)))) {
+            quest_shops.insert(q.id, root.clone());
+        }
+    }
     let shops_json: Vec<Value> = shops
         .iter()
         .map(|(root, sh)| {
@@ -631,7 +731,8 @@ fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, message
                 "lot": lot.get(root),
                 "git": sh.git.as_ref().map(git_json),
                 "terminals": terminals,
-                "panel": panel_json(|tab| workspace_side(&agents, &ws, tab, t, PANEL_COLUMNS), Some(window_lines(&ws, None)), None),
+                "quests": quest_shops.iter().filter(|(_, r)| *r == root).map(|(id, _)| *id).collect::<Vec<_>>(),
+                "panel": panel_json(|tab| workspace_side(&agents, &ws, tab, t, PANEL_WIDTH), Some(window_lines(&ws, None)), None),
             })
         })
         .collect();
@@ -650,7 +751,7 @@ fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, message
                 "title": a.title(),
                 "tool_kind": tool.as_deref().map(tool_kind),
                 "ts": a.timestamp(),
-                "panel": panel_json(|tab| agent_side(a, ws, tab, t, None, PANEL_COLUMNS), ws.map(|w| window_lines(w, a.window_id.as_deref())), reply),
+                "panel": panel_json(|tab| agent_side(a, ws, tab, t, None, PANEL_WIDTH), ws.map(|w| window_lines(w, a.window_id.as_deref())), reply),
             })
         })
         .collect();
@@ -679,8 +780,208 @@ fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, message
         "shops": shops_json,
         "agents": agents_json,
         "messages": messages_json,
+        "player": player_json(snap.progress.as_deref(), cfg, &quest_shops),
         "time": now(),
     })
+}
+
+// ---------------------------------------------------------------- The player
+
+/// The git remote of each shop, as (host, "group/project"); looked up once per shop.
+#[derive(Default)]
+struct Remotes(HashMap<String, Option<(String, String)>>);
+
+impl Remotes {
+    fn demo() -> Self {
+        let r = |root: &str, path: &str| (root.to_string(), Some(("git.example.com".to_string(), path.to_string())));
+        Remotes(HashMap::from([r("/home/demo/repos/agents-hub", "tools/agents-hub"), r("/home/demo/repos/webshop", "shop/webshop")]))
+    }
+
+    fn project(&mut self, root: &str) -> Option<(String, String)> {
+        self.0
+            .entry(root.to_string())
+            .or_insert_with(|| {
+                let out = std::process::Command::new("git").args(["-C", root, "remote", "get-url", "origin"]).stderr(std::process::Stdio::null()).output().ok()?;
+                parse_remote(String::from_utf8_lossy(&out.stdout).trim())
+            })
+            .clone()
+    }
+}
+
+/// ("git.example.com", "group/project") from an ssh or https remote URL.
+fn parse_remote(url: &str) -> Option<(String, String)> {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    let (host, path) = if let Some((_, rest)) = url.split_once("://") {
+        // https://host/path, ssh://git@host:2222/path
+        let (auth_host, path) = rest.split_once('/')?;
+        let host = auth_host.rsplit('@').next()?.split(':').next()?;
+        (host, path)
+    } else {
+        // git@host:path
+        let (auth_host, path) = url.split_once(':')?;
+        (auth_host.rsplit('@').next()?, path)
+    };
+    (!host.is_empty() && path.contains('/')).then(|| (host.to_string(), path.to_string()))
+}
+
+fn item_json(p: &Progress, it: &crate::loot::Item) -> Value {
+    let mut v = serde_json::to_value(it).unwrap_or_default();
+    v["slot"] = serde_json::to_value(it.kind.slot()).unwrap_or_default();
+    v["base"] = it.base().into();
+    v["compare"] = serde_json::to_value(p.compare(it)).unwrap_or_default();
+    v
+}
+
+/// You in the town: level and XP, quests, loot, what you wear and how to draw it.
+fn player_json(p: Option<&Progress>, cfg: &Config, quest_shops: &HashMap<u64, String>) -> Value {
+    let fresh = Progress::new(now());
+    let p = p.unwrap_or(&fresh);
+    let (level, into, need) = level_for(p.total_xp);
+    let recent: Vec<Value> = p.recent(6).iter().map(|c| json!({"title": c.title, "project": c.project, "iid": c.iid, "weight": c.weight, "xp": c.xp, "url": c.url})).collect();
+    let quests: Vec<Value> = p
+        .quests
+        .iter()
+        .map(|q| json!({"id": q.id, "title": q.title, "project": q.project, "iid": q.iid, "weight": q.weight, "xp": q.xp, "due": q.due_date, "labels": q.labels, "url": q.url, "shop": quest_shops.get(&q.id)}))
+        .collect();
+    // Level-ups the town has not celebrated yet, each with its loot; at most ten, oldest first.
+    let celebrate: Vec<Value> = ((p.celebrated_level.max(1) + 1)..=level).take(10).map(|l| json!({"level": l, "item": p.items.iter().find(|i| i.dropped_at_level == l).map(|i| i.id.clone())})).collect();
+    let mut done: Vec<_> = p.issues.values().filter(|c| c.seq > p.acked_seq).collect();
+    done.sort_by_key(|c| c.seq);
+    let completed: Vec<Value> = done.iter().rev().take(5).rev().map(|c| json!({"seq": c.seq, "title": c.title, "project": c.project, "xp": c.xp})).collect();
+    let class = crate::class::class_of(p);
+    json!({
+        "class": {
+            "key": class.map(|c| c.key),
+            "name": class.map_or(crate::class::NO_CLASS.0, |c| c.name),
+            "calling": class.map(|c| c.calling),
+            "flavor": class.map_or(crate::class::NO_CLASS.1, |c| c.flavor),
+            "standings": crate::class::standings(p),
+        },
+        "appearance": p.appearance,
+        "level": level,
+        "xp": into,
+        "need": need,
+        "total": p.total_xp,
+        "issues": p.issues.len(),
+        "recent": recent,
+        "quests": quests,
+        "items": p.items.iter().map(|i| item_json(p, i)).collect::<Vec<_>>(),
+        "equipped": p.equipped,
+        "bag": p.bag().iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+        "layers": crate::gear::layers(p),
+        "totals": p.totals(),
+        "slots": crate::gear::Slot::ALL.iter().map(|s| json!({"slot": s, "kinds": s.kinds()})).collect::<Vec<_>>(),
+        "celebrate": celebrate,
+        "completed": completed,
+        "completed_total": done.len(),
+        "completed_xp": done.iter().map(|c| c.xp).sum::<u64>(),
+        "last_seq": p.issues.values().map(|c| c.seq).max().unwrap_or(0),
+        "sync": {"last_ok": p.sync.last_ok, "error": p.sync.last_error, "configured": cfg.gitlab_url.is_some() || cfg.gitlab_username.is_some()},
+        "sound": cfg.sound,
+    })
+}
+
+/// Equip, unequip, change your look, or say what the page has celebrated.
+fn player_act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
+    let err = |status, msg: &str| (status, json!({"error": msg}));
+    let Ok(req) = serde_json::from_slice::<Value>(body) else { return err("400 Bad Request", "Bad request.") };
+    let change = |p: &mut Progress| -> Result<String, String> {
+        let slot = req["slot"].as_str().map(|s| crate::gear::Slot::parse(s).ok_or("No such slot."));
+        let slot = slot.transpose()?;
+        match req["op"].as_str() {
+            Some("equip") => {
+                let id = req["item"].as_str().ok_or("Which item?")?;
+                p.equip(id, slot).map_err(|e| e.to_string())?;
+                Ok(format!("Equipped {}", p.item(id).map_or("", |i| i.name.as_str())))
+            }
+            Some("unequip") => {
+                let gone = match (slot, req["item"].as_str()) {
+                    (Some(s), _) => p.unequip(s),
+                    (None, Some(id)) => p.unequip_item(id).map(|_| id.to_string()),
+                    _ => None,
+                };
+                gone.map(|id| format!("Unequipped {}", p.item(&id).map_or("", |i| i.name.as_str()))).ok_or_else(|| "Nothing to take off there.".into())
+            }
+            Some("appearance") => {
+                let a: crate::progress::Appearance = serde_json::from_value(req["appearance"].clone()).map_err(|_| "Bad appearance.")?;
+                p.appearance = Some(a.clamped());
+                Ok("Saved your look".into())
+            }
+            Some("ack") => {
+                if let Some(l) = req["level"].as_u64() {
+                    p.celebrated_level = p.celebrated_level.max(l.min(p.level as u64) as u32);
+                }
+                if let Some(seq) = req["seq"].as_u64() {
+                    p.acked_seq = p.acked_seq.max(seq);
+                }
+                Ok(String::new())
+            }
+            _ => Err("Unknown action.".into()),
+        }
+    };
+    let result = match &shared.demo_player {
+        Some(demo) => change(&mut demo.lock().unwrap()),
+        None => crate::progress::Store::default().update(change).unwrap_or_else(|e| Err(format!("Cannot save your progress: {e}"))),
+    };
+    shared.changed.notify_all();
+    if let Some(cmd) = &shared.cmd {
+        let _ = cmd.lock().unwrap().send(Cmd::Refresh);
+    }
+    match result {
+        Ok(msg) => ("200 OK", json!({"ok": msg})),
+        Err(e) => err("409 Conflict", &e),
+    }
+}
+
+/// A made-up player for the demo town: a few levels of real loot from a demo seed, and quests.
+fn demo_progress(cfg: &Config) -> Progress {
+    use crate::progress::{Issue, Rules};
+    let mut p = Progress::new(now());
+    p.username = Some("demo".into());
+    // Generous XP, so the demo has a few levels of loot to show.
+    let rules = Rules { username: "demo".into(), xp_per_weight: 60, default_weight: 1, since: 0, chances: cfg.drop_chances.clone() };
+    let titles = ["Fix the flaky login test", "Speed up the search page", "Write the onboarding guide", "Upgrade the database driver", "Add dark mode to the dashboard", "Remove the old billing code", "Cache the product images", "Handle timeouts in the importer"];
+    let closed: Vec<Issue> = titles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| Issue {
+            id: 900 + i as u64,
+            project_id: 1,
+            project: if i % 2 == 0 { "tools/agents-hub" } else { "shop/webshop" }.into(),
+            iid: 40 + i as u64,
+            title: (*t).into(),
+            weight: [Some(3), Some(8), None, Some(5), Some(13), Some(2), Some(8), Some(20)][i],
+            labels: vec![["Type::Bug", "Type::Enhancement", "Documentation", "Type::Bug", "Type::Enhancement", "Type::Tech Debt", "Type::Bug", "Severity::Critical"][i].to_string()],
+            closed_at: Some(now() - 86400 * (10 - i as u64)),
+            ..Default::default()
+        })
+        .collect();
+    p.count_closed(&closed, &rules, now());
+    let open = [("Draw the quest log", "tools/agents-hub", Some(5), Some("2026-12-01")), ("Make checkout faster", "shop/webshop", Some(8), None), ("Rotate the DNS keys", "ops/infra", None, None)];
+    let open: Vec<Issue> = open
+        .iter()
+        .enumerate()
+        .map(|(i, (t, proj, w, due))| Issue { id: 950 + i as u64, project: (*proj).into(), iid: 60 + i as u64, title: (*t).into(), weight: *w, due_date: due.map(String::from), labels: vec!["demo".into()], ..Default::default() })
+        .collect();
+    p.set_quests(&open, &rules);
+    // And one legendary to show off, worn.
+    let only = crate::config::DropChances { poor: 0.0, common: 0.0, uncommon: 0.0, rare: 0.0, epic: 0.0, legendary: 1.0 };
+    let mut legend = crate::loot::generate(crate::loot::random_seed(), 1, &only, &[]);
+    legend.id = "demo-legendary".into();
+    p.items.push(legend);
+    p.scale_legendaries();
+    let _ = p.equip("demo-legendary", None);
+    let ids: Vec<String> = p.items.iter().map(|i| i.id.clone()).collect();
+    for id in ids.iter().take(2) {
+        if p.item(id).is_some_and(|i| p.worn(i.kind.slot()).is_none()) {
+            let _ = p.equip(id, None);
+        }
+    }
+    // Show off the celebration once: the last level is not celebrated yet.
+    p.celebrated_level = p.level.saturating_sub(1).max(1);
+    p.acked_seq = p.issues.len() as u64 - 1;
+    p
 }
 
 // ---------------------------------------------------------------- Demo
@@ -786,6 +1087,49 @@ mod tests {
     }
 
     #[test]
+    fn remotes_parse_to_host_and_project() {
+        let want = Some(("git.example.com".to_string(), "group/sub/app".to_string()));
+        assert_eq!(parse_remote("git@git.example.com:group/sub/app.git"), want);
+        assert_eq!(parse_remote("https://git.example.com/group/sub/app.git/"), want);
+        assert_eq!(parse_remote("ssh://git@git.example.com:2222/group/sub/app"), want);
+        assert_eq!(parse_remote("https://oauth2:secret@git.example.com/group/sub/app"), want);
+        assert_eq!(parse_remote(""), None);
+        assert_eq!(parse_remote("/local/path"), None);
+    }
+
+    #[test]
+    fn demo_player_has_loot_quests_and_a_quest_shop() {
+        crate::theme::select("dark-modern").ok();
+        let (mut snap, messages) = demo_snapshot();
+        snap.progress = Some(Arc::new(demo_progress(&Config::default())));
+        let mut lots = Lots { lots: HashMap::new(), save: false };
+        let cfg = Config { gitlab_url: Some("https://git.elsewhere.example".into()), ..Config::default() };
+        let m = model(&snap, &cfg, &mut lots, &GitCache::default(), &mut Remotes::demo(), &messages, true, 0);
+        let pl = &m["player"];
+        assert_eq!(pl["class"]["name"], "Verminbane");
+        assert!(pl["level"].as_u64().unwrap() >= 3, "{pl}");
+        assert_eq!(pl["quests"].as_array().unwrap().len(), 3);
+        assert_eq!(pl["quests"][0]["shop"], "/home/demo/repos/agents-hub", "the quest with a due date, in the shop with that remote");
+        assert_eq!(pl["celebrate"].as_array().unwrap().len(), 1);
+        let hub = m["shops"].as_array().unwrap().iter().find(|s| s["name"] == "agents-hub").unwrap();
+        assert_eq!(hub["quests"].as_array().unwrap().len(), 1);
+        assert_eq!(pl["layers"][0]["part"].as_str().map(|p| p == "back" || p == "body"), Some(true));
+    }
+
+    #[test]
+    fn only_the_town_map_is_pinned_to_the_corner() {
+        // A position rule on every canvas once pinned all item icons over the dock's strip.
+        let css = &PAGE[PAGE.find("<style>").unwrap()..PAGE.find("</style>").unwrap()];
+        for rule in css.split('}') {
+            let (selector, body) = rule.split_once('{').unwrap_or(("", ""));
+            if selector.trim() == "canvas" {
+                assert!(!body.contains("position"), "a bare canvas rule must not position: {rule}");
+            }
+        }
+        assert!(css.contains("#town { position: absolute"));
+    }
+
+    #[test]
     fn same_is_exact() {
         assert!(same("abc", "abc"));
         assert!(!same("abc", "abd"));
@@ -797,7 +1141,7 @@ mod tests {
         crate::theme::select("dark-modern").ok();
         let (snap, messages) = demo_snapshot();
         let mut lots = Lots { lots: HashMap::new(), save: false };
-        let m = model(&snap, &Config::default(), &mut lots, &GitCache::default(), &messages, true, 0);
+        let m = model(&snap, &Config::default(), &mut lots, &GitCache::default(), &mut Remotes::demo(), &messages, true, 0);
         let shops = m["shops"].as_array().unwrap();
         // agents-hub, webshop, infra, and notes, which has an agent but no hub workspace.
         assert_eq!(shops.len(), 4);
