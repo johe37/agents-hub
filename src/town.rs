@@ -847,17 +847,18 @@ fn player_json(p: Option<&Progress>, cfg: &Config, quest_shops: &HashMap<u64, St
     let fresh = Progress::new(now());
     let p = p.unwrap_or(&fresh);
     let (level, into, need) = level_for(p.total_xp);
-    let recent: Vec<Value> = p.recent(6).iter().map(|c| json!({"title": c.title, "project": c.project, "iid": c.iid, "weight": c.weight, "xp": c.xp, "url": c.url})).collect();
+    let recent: Vec<Value> = p.recent(6).iter().map(|c| json!({"title": c.title, "project": c.project, "iid": c.iid, "weight": c.weight, "xp": c.xp, "url": c.url, "kind": c.kind})).collect();
     let quests: Vec<Value> = p
         .quests
         .iter()
         .map(|q| json!({"id": q.id, "title": q.title, "project": q.project, "iid": q.iid, "weight": q.weight, "xp": q.xp, "due": q.due_date, "labels": q.labels, "url": q.url, "shop": quest_shops.get(&q.id)}))
         .collect();
     // Level-ups the town has not celebrated yet, each with its loot; at most ten, oldest first.
-    let celebrate: Vec<Value> = ((p.celebrated_level.max(1) + 1)..=level).take(10).map(|l| json!({"level": l, "item": p.items.iter().find(|i| i.dropped_at_level == l).map(|i| i.id.clone())})).collect();
-    let mut done: Vec<_> = p.issues.values().filter(|c| c.seq > p.acked_seq).collect();
+    // Up to the level the progress file has reached (its loot dropped), not one the XP is about to reach.
+    let celebrate: Vec<Value> = ((p.celebrated_level.max(1) + 1)..=level.min(p.level.max(1))).take(10).map(|l| json!({"level": l, "item": p.items.iter().find(|i| i.dropped_at_level == l).map(|i| i.id.clone())})).collect();
+    let mut done: Vec<_> = p.issues.values().chain(p.mrs.values()).filter(|c| c.seq > p.acked_seq).collect();
     done.sort_by_key(|c| c.seq);
-    let completed: Vec<Value> = done.iter().rev().take(5).rev().map(|c| json!({"seq": c.seq, "title": c.title, "project": c.project, "xp": c.xp})).collect();
+    let completed: Vec<Value> = done.iter().rev().take(5).rev().map(|c| json!({"seq": c.seq, "title": c.title, "project": c.project, "xp": c.xp, "kind": c.kind})).collect();
     let class = crate::class::class_of(p);
     json!({
         "class": {
@@ -885,7 +886,8 @@ fn player_json(p: Option<&Progress>, cfg: &Config, quest_shops: &HashMap<u64, St
         "completed": completed,
         "completed_total": done.len(),
         "completed_xp": done.iter().map(|c| c.xp).sum::<u64>(),
-        "last_seq": p.issues.values().map(|c| c.seq).max().unwrap_or(0),
+        "last_seq": p.issues.values().chain(p.mrs.values()).map(|c| c.seq).max().unwrap_or(0),
+        "mrs": p.mrs.len(),
         "sync": {"last_ok": p.sync.last_ok, "error": p.sync.last_error, "configured": cfg.gitlab_url.is_some() || cfg.gitlab_username.is_some()},
         "sound": cfg.sound,
     })
@@ -949,7 +951,7 @@ fn demo_progress(cfg: &Config) -> Progress {
     let mut p = Progress::new(now());
     p.username = Some("demo".into());
     // Generous XP, so the demo has a few levels of loot to show.
-    let rules = Rules { username: "demo".into(), xp_per_weight: 60, default_weight: 1, since: 0, chances: cfg.drop_chances.clone() };
+    let rules = Rules { username: "demo".into(), xp_per_weight: 25, default_weight: 1, since: 0, chances: cfg.drop_chances.clone(), xp_per_merged_mr: cfg.xp_per_merged_mr, xp_per_review: cfg.xp_per_review };
     let titles = ["Fix the flaky login test", "Speed up the search page", "Write the onboarding guide", "Upgrade the database driver", "Add dark mode to the dashboard", "Remove the old billing code", "Cache the product images", "Handle timeouts in the importer"];
     let closed: Vec<Issue> = titles
         .iter()

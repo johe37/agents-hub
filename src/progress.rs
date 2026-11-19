@@ -17,13 +17,15 @@ use crate::loot::{self, Item};
 /// 4: Common items toned down (multiplier 1.4 → 1.2).
 /// 5: flatter scaling: Poor is item level + 1, the other rarities multiply that.
 /// 6: three hand-written legendaries per slot, which grow with your level.
-pub const VERSION: u32 = 6;
+/// 7: merged MRs and reviews give XP; a gentler level curve.
+pub const VERSION: u32 = 7;
 
 // ---------------------------------------------------------------- the level curve
 
-/// XP needed to go from `level` to the next one. The one place to tune how steep levelling is.
+/// XP needed to go from `level` to the next one. The one place to tune how steep levelling is:
+/// 50 for level 2, about 1000 at level 10, and a little steeper with every level.
 pub fn xp_to_next(level: u32) -> u64 {
-    (100.0 * (level.max(1) as f64).powf(1.5)).round() as u64
+    (50.0 * (level.max(1) as f64).powf(1.3)).round() as u64
 }
 
 /// The level for this much XP, how far into that level it is, and how much the level needs.
@@ -52,6 +54,8 @@ pub struct Progress {
     pub sync: SyncState,
     /// Every issue that gave XP, by GitLab's global issue id. An id here never counts again.
     pub issues: BTreeMap<u64, Counted>,
+    /// Every merged MR that gave XP, by role and GitLab's global MR id ("mr:123", "review:123").
+    pub mrs: BTreeMap<String, Counted>,
     /// Open issues assigned to you, as of the last sync.
     pub quests: Vec<Quest>,
     pub total_xp: u64,
@@ -79,6 +83,9 @@ pub struct SyncState {
     pub cursor_since: Option<u64>,
     pub failures: u32,
     pub last_error: Option<String>,
+    /// Like `cursor`, for merged MRs.
+    pub mr_cursor: Option<u64>,
+    pub mr_cursor_since: Option<u64>,
 }
 
 /// An issue that gave XP, as it was when it first counted.
@@ -100,6 +107,8 @@ pub struct Counted {
     pub seq: u64,
     /// Its labels when it counted; None in files from before labels were kept (the next sync fills them).
     pub labels: Option<Vec<String>>,
+    /// None for an issue; "mr" for a merged MR you were assigned to, "review" for one you reviewed.
+    pub kind: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -179,6 +188,9 @@ pub struct Rules {
     /// Only issues closed at or after this count.
     pub since: u64,
     pub chances: DropChances,
+    /// Flat XP for a merged MR you were assigned to, and for one you reviewed.
+    pub xp_per_merged_mr: u64,
+    pub xp_per_review: u64,
 }
 
 impl Rules {
@@ -191,8 +203,26 @@ impl Rules {
 #[derive(Debug, Default, PartialEq)]
 pub struct Gains {
     pub issues: Vec<u64>,
+    /// "mr:123", "review:123".
+    pub mrs: Vec<String>,
     pub xp: u64,
     pub levels: Vec<u32>,
+}
+
+/// Which merged MRs: those you were assigned to, or those you reviewed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MrRole {
+    Assignee,
+    Reviewer,
+}
+
+impl MrRole {
+    pub fn key(self) -> &'static str {
+        match self {
+            MrRole::Assignee => "mr",
+            MrRole::Reviewer => "review",
+        }
+    }
 }
 
 impl Progress {
@@ -224,10 +254,9 @@ impl Progress {
         fresh.sort_by_key(|i| (i.closed_at, i.id));
         fresh.dedup_by_key(|i| i.id);
         let mut gains = Gains::default();
-        let mut seq = self.issues.values().map(|c| c.seq).max().unwrap_or(0);
         for i in fresh {
             let xp = rules.xp(i.weight);
-            seq += 1;
+            let seq = self.next_seq();
             self.issues.insert(
                 i.id,
                 Counted {
@@ -242,30 +271,96 @@ impl Progress {
                     xp,
                     seq,
                     labels: Some(i.labels.clone()),
+                    kind: None,
                 },
             );
-            self.total_xp += xp;
             gains.issues.push(i.id);
-            gains.xp += xp;
-            let (level, _, _) = level_for(self.total_xp);
-            while self.level.max(1) < level {
-                self.level = self.level.max(1) + 1;
-                gains.levels.push(self.level);
-                self.drop_loot(self.level, Some(i.id), &rules.chances);
-            }
+            let trigger = self.issues.get(&i.id).map(trigger_of);
+            self.add_xp(xp, trigger, &mut gains, &rules.chances);
         }
         self.scale_legendaries();
         gains
     }
 
+    /// Count merged MRs: flat XP for each you were assigned to (or reviewed), once per MR and role,
+    /// merged at or after `rules.since`. In `mrs`, `closed_at` is when it was merged and `assignees`
+    /// the assignees (or reviewers) GitLab listed.
+    pub fn count_merged(&mut self, mrs: &[Issue], role: MrRole, rules: &Rules, now: u64) -> Gains {
+        self.username.get_or_insert_with(|| rules.username.clone());
+        let xp = match role {
+            MrRole::Assignee => rules.xp_per_merged_mr,
+            MrRole::Reviewer => rules.xp_per_review,
+        };
+        let key = |id: u64| format!("{}:{id}", role.key());
+        let mut fresh: Vec<&Issue> = mrs
+            .iter()
+            .filter(|m| !self.mrs.contains_key(&key(m.id)))
+            .filter(|m| m.assignees.as_ref().is_none_or(|a| a.iter().any(|u| u.eq_ignore_ascii_case(&rules.username))))
+            .filter(|m| m.closed_at.is_some_and(|c| c >= rules.since))
+            .collect();
+        fresh.sort_by_key(|m| (m.closed_at, m.id));
+        fresh.dedup_by_key(|m| m.id);
+        let mut gains = Gains::default();
+        for m in fresh {
+            let seq = self.next_seq();
+            let c = Counted {
+                project_id: m.project_id,
+                project: m.project.clone(),
+                iid: m.iid,
+                title: m.title.clone(),
+                url: m.url.clone(),
+                weight: None,
+                closed_at: m.closed_at.unwrap_or(now),
+                counted_at: now,
+                xp,
+                seq,
+                labels: None,
+                kind: Some(role.key().into()),
+            };
+            let trigger = Some(trigger_of(&c));
+            self.mrs.insert(key(m.id), c);
+            gains.mrs.push(key(m.id));
+            self.add_xp(xp, trigger, &mut gains, &rules.chances);
+        }
+        self.scale_legendaries();
+        gains
+    }
+
+    fn next_seq(&self) -> u64 {
+        self.issues.values().chain(self.mrs.values()).map(|c| c.seq).max().unwrap_or(0) + 1
+    }
+
+    /// Add XP and level up as far as it reaches, one loot drop per level.
+    fn add_xp(&mut self, xp: u64, trigger: Option<loot::Trigger>, gains: &mut Gains, chances: &DropChances) {
+        self.total_xp += xp;
+        gains.xp += xp;
+        self.catch_up(trigger, gains, chances);
+    }
+
+    /// Reach the level your XP is worth (after a gentler curve, too), with a drop for each new level.
+    pub fn catch_up(&mut self, trigger: Option<loot::Trigger>, gains: &mut Gains, chances: &DropChances) {
+        let (level, _, _) = level_for(self.total_xp);
+        while self.level.max(1) < level {
+            self.level = self.level.max(1) + 1;
+            gains.levels.push(self.level);
+            self.drop_loot(self.level, trigger.clone(), chances);
+        }
+        self.scale_legendaries();
+    }
+
+    /// The most recent thing that gave XP, as a loot trigger.
+    pub fn latest_trigger(&self) -> Option<loot::Trigger> {
+        self.issues.values().chain(self.mrs.values()).max_by_key(|c| c.seq).map(trigger_of)
+    }
+
     /// A random item for reaching `level`. Rolled once and stored, so it stays what it was.
-    fn drop_loot(&mut self, level: u32, trigger: Option<u64>, chances: &DropChances) {
+    fn drop_loot(&mut self, level: u32, trigger: Option<loot::Trigger>, chances: &DropChances) {
         if self.items.iter().any(|it| it.dropped_at_level == level) {
             return;
         }
         let taken: Vec<String> = self.items.iter().filter(|i| i.rarity == loot::Rarity::Legendary).map(|i| i.name.clone()).collect();
         let mut item = loot::generate(loot::random_seed(), level, chances, &taken);
-        item.trigger = trigger.and_then(|id| self.issues.get(&id)).map(|c| loot::Trigger { project: c.project.clone(), iid: c.iid, title: c.title.clone() });
+        item.trigger = trigger;
         self.items.push(item);
     }
 
@@ -293,7 +388,7 @@ impl Progress {
 
     /// The issues that gave XP, newest first.
     pub fn recent(&self, n: usize) -> Vec<&Counted> {
-        let mut v: Vec<&Counted> = self.issues.values().collect();
+        let mut v: Vec<&Counted> = self.issues.values().chain(self.mrs.values()).collect();
         v.sort_by_key(|c| std::cmp::Reverse(c.seq));
         v.truncate(n);
         v
@@ -380,6 +475,10 @@ impl Progress {
     pub fn item(&self, id: &str) -> Option<&Item> {
         self.items.iter().find(|i| i.id == id)
     }
+}
+
+fn trigger_of(c: &Counted) -> loot::Trigger {
+    loot::Trigger { project: c.project.clone(), iid: c.iid, title: c.title.clone(), kind: c.kind.clone() }
 }
 
 // ---------------------------------------------------------------- the file
@@ -526,7 +625,7 @@ pub mod tests {
     use super::*;
 
     pub fn rules() -> Rules {
-        Rules { username: "osbo".into(), xp_per_weight: 10, default_weight: 1, since: 0, chances: DropChances::default() }
+        Rules { username: "osbo".into(), xp_per_weight: 10, default_weight: 1, since: 0, chances: DropChances::default(), xp_per_merged_mr: 25, xp_per_review: 10 }
     }
 
     pub fn issue(id: u64, weight: Option<u64>, closed: &str) -> Issue {
@@ -547,17 +646,21 @@ pub mod tests {
 
     #[test]
     fn level_curve_gets_steeper() {
-        assert_eq!(xp_to_next(1), 100);
-        assert_eq!(xp_to_next(2), 283);
-        assert_eq!(xp_to_next(3), 520);
-        assert_eq!(xp_to_next(10), 3162);
-        for n in 1..60 {
-            assert!(xp_to_next(n + 1) - xp_to_next(n) >= xp_to_next(n) - xp_to_next(n.saturating_sub(1).max(1)), "level {n}");
+        assert_eq!(xp_to_next(1), 50);
+        assert_eq!(xp_to_next(2), 123);
+        assert_eq!(xp_to_next(3), 209);
+        assert_eq!(xp_to_next(10), 998);
+        for n in 1..80 {
+            assert!(xp_to_next(n + 1) > xp_to_next(n), "level {n}");
+            // Steeper than linear: twice the level needs more than twice the XP.
+            assert!(xp_to_next(2 * n) > 2 * xp_to_next(n), "level {n}");
         }
-        assert_eq!(level_for(0), (1, 0, 100));
-        assert_eq!(level_for(99), (1, 99, 100));
-        assert_eq!(level_for(100), (2, 0, 283));
-        assert_eq!(level_for(100 + 283 + 5), (3, 5, 520));
+        assert_eq!(level_for(0), (1, 0, 50));
+        assert_eq!(level_for(49), (1, 49, 50));
+        assert_eq!(level_for(50), (2, 0, 123));
+        assert_eq!(level_for(50 + 123 + 5), (3, 5, 209));
+        // About a year and a half of issues, merged MRs and reviews (8880 XP) is level 14.
+        assert_eq!(level_for(8880).0, 14);
     }
 
     #[test]
@@ -617,13 +720,15 @@ pub mod tests {
     #[test]
     fn one_item_per_level_credited_to_the_issue_that_crossed_it() {
         let mut p = Progress::new(0);
-        // 100 to level 2, 283 more to level 3: 40 weight points reach level 3 with one issue.
+        // 50 XP for level 2: the first issue (also 50) gets there, the second goes several levels further.
         let g = p.count_closed(&[issue(1, Some(5), "2026-11-01T00:00:00Z"), issue(2, Some(40), "2026-11-02T00:00:00Z")], &rules(), 1);
         assert_eq!(p.total_xp, 450);
-        assert_eq!(g.levels, vec![2, 3]);
-        assert_eq!(p.level, 3);
-        assert_eq!(p.items.iter().map(|i| i.dropped_at_level).collect::<Vec<_>>(), vec![2, 3]);
-        assert!(p.items.iter().all(|i| i.trigger.as_ref().unwrap().title == "Issue 2"));
+        let top = level_for(450).0;
+        assert_eq!(g.levels, (2..=top).collect::<Vec<_>>());
+        assert_eq!(p.level, top);
+        assert_eq!(p.items.iter().map(|i| i.dropped_at_level).collect::<Vec<_>>(), (2..=top).collect::<Vec<_>>());
+        assert_eq!(p.items[0].trigger.as_ref().unwrap().title, "Issue 1");
+        assert!(p.items[1..].iter().all(|i| i.trigger.as_ref().unwrap().title == "Issue 2"));
         assert_eq!(p.username.as_deref(), Some("osbo"));
     }
 
@@ -635,6 +740,43 @@ pub mod tests {
         let t = parse_time("2026-11-19T10:20:30Z").unwrap();
         assert_eq!(format_time(t), "2026-11-19T10:20:30Z");
         assert_eq!(parse_time("garbage"), None);
+    }
+
+    #[test]
+    fn merged_mrs_and_reviews_give_flat_xp_once_per_role() {
+        let mut p = Progress::new(0);
+        let mr = |id: u64, merged: &str, who: &[&str]| Issue { id, project: "group/app".into(), iid: id, title: format!("MR {id}"), closed_at: parse_time(merged), assignees: Some(who.iter().map(|w| w.to_string()).collect()), ..Default::default() };
+        let mut r = rules();
+        r.since = parse_time("2026-01-01").unwrap();
+        let assigned = [mr(1, "2026-03-01T00:00:00Z", &["osbo"]), mr(2, "2026-03-02T00:00:00Z", &["vilu"]), mr(3, "2025-12-31T00:00:00Z", &["osbo"])];
+        let g = p.count_merged(&assigned, MrRole::Assignee, &r, 5);
+        assert_eq!(g.mrs, vec!["mr:1"], "not mine, and merged before the start, give nothing");
+        assert_eq!(p.total_xp, 25);
+        // Seen again in the next sync: nothing new.
+        assert_eq!(p.count_merged(&assigned, MrRole::Assignee, &r, 6), Gains::default());
+        // Reviewing the same MR is a separate credit.
+        let g = p.count_merged(&[mr(1, "2026-03-01T00:00:00Z", &["osbo"]), mr(4, "2026-03-03T00:00:00Z", &["osbo"])], MrRole::Reviewer, &r, 7);
+        assert_eq!(g.mrs, vec!["review:1", "review:4"]);
+        assert_eq!(p.total_xp, 45);
+        assert_eq!(p.mrs["review:4"].kind.as_deref(), Some("review"));
+        // They show in the recent list, newest first, between issues.
+        p.count_closed(&[issue(9, Some(1), "2026-03-04T00:00:00Z")], &r, 8);
+        let recent: Vec<Option<&str>> = p.recent(3).iter().map(|c| c.kind.as_deref()).collect();
+        assert_eq!(recent, vec![None, Some("review"), Some("review")]);
+        // MRs never decide your class.
+        assert!(crate::class::class_of(&p).is_none());
+    }
+
+    #[test]
+    fn a_gentler_curve_catches_up_with_a_drop_per_level() {
+        let mut p = Progress::new(0);
+        p.total_xp = 8880;
+        p.level = 6; // what the old curve gave for less
+        let mut g = Gains::default();
+        p.catch_up(None, &mut g, &DropChances::default());
+        assert_eq!(p.level, 14);
+        assert_eq!(g.levels, (7..=14).collect::<Vec<_>>());
+        assert_eq!(p.items.len(), 8);
     }
 
     #[test]

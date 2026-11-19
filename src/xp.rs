@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::config::Config;
-use crate::progress::{self, Gains, Issue, Progress, Rules, Store, format_time, level_for, parse_time};
+use crate::progress::{self, Gains, Issue, MrRole, Progress, Rules, Store, format_time, level_for, parse_time};
 
 /// Closed issues this much older than the newest one seen are fetched again next time, in case
 /// GitLab's clocks or our cursor are a little off. Counted ones are skipped by id.
@@ -86,6 +86,37 @@ fn parse_issues(text: &str) -> Result<Vec<Issue>, String> {
     Ok(parse_pages(text)?.iter().filter_map(parse_issue).collect())
 }
 
+/// A merged MR, in the shape counting uses: `closed_at` is when it was merged, `assignees` the users
+/// in the role asked about (its assignees or its reviewers).
+pub fn parse_mr(v: &Value, role: MrRole) -> Option<Issue> {
+    let mut m = parse_issue(v)?;
+    m.closed_at = v["merged_at"].as_str().and_then(parse_time);
+    m.moved = false;
+    let field = match role {
+        MrRole::Assignee => "assignees",
+        MrRole::Reviewer => "reviewers",
+    };
+    m.assignees = v[field].as_array().map(|a| a.iter().filter_map(|u| u["username"].as_str().map(String::from)).collect());
+    // "group/app!17" → "group/app"
+    let full = v["references"]["full"].as_str().unwrap_or_default();
+    m.project = full.rsplit_once('!').map_or(full, |(p, _)| p).to_string();
+    Some(m)
+}
+
+fn parse_mrs(text: &str, role: MrRole) -> Result<Vec<Issue>, String> {
+    Ok(parse_pages(text)?.iter().filter_map(|v| parse_mr(v, role)).collect())
+}
+
+/// What one sync fetched.
+struct Fetched {
+    user: String,
+    closed: Vec<Issue>,
+    open: Vec<Issue>,
+    merged: Vec<Issue>,
+    reviewed: Vec<Issue>,
+    start: u64,
+}
+
 /// When counting starts, from `xp_since`: the progress file's birth, the beginning of time, or a date.
 pub fn since(cfg: &Config, p: &Progress) -> u64 {
     match cfg.xp_since.trim() {
@@ -134,14 +165,35 @@ pub fn sync(cfg: &Config, store: &Store, api: &dyn Api, force: bool) -> Result<O
     let fetched = fetch(cfg, &p, api);
     let result = store
         .update(|p| match fetched {
-            Ok((user, closed, open, start)) => {
-                let rules = Rules { username: user, xp_per_weight: cfg.xp_per_weight, default_weight: cfg.default_weight, since: start, chances: cfg.drop_chances.clone() };
-                let gains = p.count_closed(&closed, &rules, now);
-                p.set_quests(&open, &rules);
-                if let Some(newest) = closed.iter().filter_map(|i| i.updated_at).max() {
+            Ok(f) => {
+                let rules = Rules {
+                    username: f.user,
+                    xp_per_weight: cfg.xp_per_weight,
+                    default_weight: cfg.default_weight,
+                    since: f.start,
+                    chances: cfg.drop_chances.clone(),
+                    xp_per_merged_mr: cfg.xp_per_merged_mr,
+                    xp_per_review: cfg.xp_per_review,
+                };
+                let mut gains = p.count_closed(&f.closed, &rules, now);
+                for (list, role) in [(&f.merged, MrRole::Assignee), (&f.reviewed, MrRole::Reviewer)] {
+                    let g = p.count_merged(list, role, &rules, now);
+                    gains.mrs.extend(g.mrs);
+                    gains.xp += g.xp;
+                    gains.levels.extend(g.levels);
+                }
+                // A gentler level curve can owe you levels for XP you already had.
+                let trigger = p.latest_trigger();
+                p.catch_up(trigger, &mut gains, &rules.chances);
+                p.set_quests(&f.open, &rules);
+                if let Some(newest) = f.closed.iter().filter_map(|i| i.updated_at).max() {
                     p.sync.cursor = Some(newest.saturating_sub(OVERLAP).max(p.sync.cursor.unwrap_or(0)));
                 }
-                p.sync.cursor_since = Some(start);
+                if let Some(newest) = f.merged.iter().chain(&f.reviewed).filter_map(|i| i.updated_at).max() {
+                    p.sync.mr_cursor = Some(newest.saturating_sub(OVERLAP).max(p.sync.mr_cursor.unwrap_or(0)));
+                }
+                p.sync.cursor_since = Some(f.start);
+                p.sync.mr_cursor_since = Some(f.start);
                 p.sync.last_ok = Some(now);
                 p.sync.failures = 0;
                 p.sync.last_error = None;
@@ -157,8 +209,9 @@ pub fn sync(cfg: &Config, store: &Store, api: &dyn Api, force: bool) -> Result<O
     result.map(Some)
 }
 
-/// The GitLab user, the closed issues to look at, the open ones, and when counting starts.
-fn fetch(cfg: &Config, p: &Progress, api: &dyn Api) -> Result<(String, Vec<Issue>, Vec<Issue>, u64), String> {
+/// The GitLab user, the closed issues to look at, the open ones, merged MRs you were assigned to and
+/// reviewed, and when counting starts.
+fn fetch(cfg: &Config, p: &Progress, api: &dyn Api) -> Result<Fetched, String> {
     let user = match &cfg.gitlab_username {
         Some(u) => u.clone(),
         None => {
@@ -182,7 +235,18 @@ fn fetch(cfg: &Config, p: &Progress, api: &dyn Api) -> Result<(String, Vec<Issue
     }
     let closed = parse_issues(&api.get(&closed_q)?)?;
     let open = parse_issues(&api.get(&format!("{base}&state=opened"))?)?;
-    Ok((user, closed, open, start))
+    // Merged MRs, the same way: from their own cursor, or everything from the start the first time.
+    let mr_after = p.sync.mr_cursor.filter(|_| p.sync.mr_cursor_since == Some(start)).unwrap_or(0).max(start);
+    let mr_query = |who: &str| {
+        let mut q = format!("merge_requests?scope=all&state=merged&{who}_username={user}&per_page=100&order_by=updated_at&sort=asc");
+        if mr_after > 0 {
+            q.push_str(&format!("&updated_after={}", format_time(mr_after)));
+        }
+        q
+    };
+    let merged = parse_mrs(&api.get(&mr_query("assignee"))?, MrRole::Assignee)?;
+    let reviewed = parse_mrs(&api.get(&mr_query("reviewer"))?, MrRole::Reviewer)?;
+    Ok(Fetched { user, closed, open, merged, reviewed, start })
 }
 
 /// Sync in the background whenever it is due. Only when a GitLab is configured, so the hub does not
@@ -207,6 +271,10 @@ pub const USAGE: &str = "usage: claude-hub xp [sync]
 
 Show your level and XP, or with sync, fetch closed GitLab issues now.";
 
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
 pub fn run(cfg: Config, args: &[String]) -> ExitCode {
     let store = Store::default();
     match args.first().map(String::as_str) {
@@ -220,10 +288,12 @@ pub fn run(cfg: Config, args: &[String]) -> ExitCode {
         Some("sync") => match sync(&cfg, &store, &Glab::new(&cfg), true) {
             Ok(Some(r)) => {
                 let g = &r.gains;
-                if g.issues.is_empty() {
-                    println!("No new closed issues.");
+                let reviews = g.mrs.iter().filter(|k| k.starts_with("review:")).count();
+                let merged = g.mrs.len() - reviews;
+                if g.xp == 0 {
+                    println!("Nothing new closed or merged.");
                 } else {
-                    println!("{} new closed issue{}: +{} XP.", g.issues.len(), if g.issues.len() == 1 { "" } else { "s" }, g.xp);
+                    println!("+{} XP: {} closed issue{}, {} merged MR{}, {} review{}.", g.xp, g.issues.len(), plural(g.issues.len()), merged, plural(merged), reviews, plural(reviews));
                 }
                 for l in &g.levels {
                     let item = store.load().and_then(|p| p.items.iter().find(|i| i.dropped_at_level == *l).map(|i| format!("{} ({:?})", i.name, i.rarity)));
@@ -252,7 +322,7 @@ pub fn run(cfg: Config, args: &[String]) -> ExitCode {
 fn summary(cfg: &Config, p: &Progress) -> String {
     let (level, into, need) = level_for(p.total_xp);
     let class = crate::class::class_of(p).map_or(crate::class::NO_CLASS.0, |c| c.name);
-    let mut out = format!("{class}, level {level}  {into}/{need} XP  ({} total from {} issues)\n", p.total_xp, p.issues.len());
+    let mut out = format!("{class}, level {level}  {into}/{need} XP  ({} total from {} issues and {} merged MRs and reviews)\n", p.total_xp, p.issues.len(), p.mrs.len());
     out += &format!("Counting issues closed since {}\n", match since(cfg, p) {
         0 => "the beginning".into(),
         t => format_time(t)[..10].to_string(),
@@ -293,8 +363,14 @@ mod tests {
         fn get(&self, path: &str) -> Result<String, String> {
             self.asked.borrow_mut().push(path.to_string());
             let answers = self.answers.borrow();
-            let key = answers.keys().filter(|k| path.starts_with(**k) || path.contains(**k)).max_by_key(|k| k.len()).copied();
-            key.map(|k| answers[k].clone()).unwrap_or_else(|| Err(format!("mock: nothing for {path}")))
+            // "user" is a whole path; every other key matches any path containing it.
+            let key = answers.keys().filter(|k| if **k == "user" { path == "user" } else { path.contains(**k) }).max_by_key(|k| k.len()).copied();
+            match key {
+                Some(k) => answers[k].clone(),
+                // Tests about issues do not care about MRs: none merged.
+                None if path.starts_with("merge_requests") => Ok("[]".into()),
+                None => Err(format!("mock: nothing for {path}")),
+            }
         }
     }
 
@@ -456,6 +532,35 @@ mod tests {
         gl.asked.borrow_mut().clear();
         sync(&cfg(), &store, &gl, true).unwrap();
         assert!(gl.asked.borrow().iter().any(|q| q.contains("updated_after")));
+        std::fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn merged_mrs_and_reviews_sync_with_their_own_cursor() {
+        let store = temp_store("mrs");
+        let gl = MockGitLab::default();
+        gl.answers.borrow_mut().insert("user", Ok(r#"{"username":"osbo"}"#.into()));
+        gl.answers.borrow_mut().insert("state=closed&order_by", Ok("[]".into()));
+        gl.answers.borrow_mut().insert("state=opened", Ok("[]".into()));
+        let mr = |id: u64, merged: &str, assignee: &str, reviewer: &str| serde_json::json!({
+            "id": id, "iid": id, "project_id": 7, "title": format!("MR {id}"), "state": "merged",
+            "web_url": format!("https://git.example.com/group/app/-/merge_requests/{id}"),
+            "references": {"full": format!("group/app!{id}")}, "merged_at": merged, "updated_at": merged,
+            "assignees": [{"username": assignee}], "reviewers": [{"username": reviewer}],
+        });
+        gl.answers.borrow_mut().insert("assignee_username=osbo&per_page=100&order_by", Ok(pages(&[vec![mr(1, "2026-10-01T00:00:00Z", "osbo", "vilu")]])));
+        gl.answers.borrow_mut().insert("reviewer_username=osbo", Ok(pages(&[vec![mr(2, "2026-10-02T00:00:00Z", "vilu", "osbo"), mr(3, "2026-10-03T00:00:00Z", "vilu", "osbo")]])));
+        let r = sync(&cfg(), &store, &gl, true).unwrap().unwrap();
+        assert_eq!(r.total_xp, 25 + 10 + 10);
+        let p = store.load().unwrap();
+        assert_eq!(p.mrs["mr:1"].project, "group/app");
+        assert_eq!(p.mrs.len(), 3);
+        assert!(gl.asked.borrow().iter().any(|q| q.starts_with("merge_requests?scope=all&state=merged&assignee_username=osbo")));
+        // The next sync asks only for what changed, and counts nothing twice.
+        gl.asked.borrow_mut().clear();
+        let r = sync(&cfg(), &store, &gl, true).unwrap().unwrap();
+        assert_eq!(r.total_xp, 45);
+        assert!(gl.asked.borrow().iter().filter(|q| q.starts_with("merge_requests")).all(|q| q.contains("updated_after=2026-10-02T23:50:00Z")), "{:?}", gl.asked.borrow());
         std::fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
     }
 

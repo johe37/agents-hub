@@ -871,17 +871,22 @@ function drawXpBar(t) {
 }
 
 function xpTip() {
-  const out = [el('b', '', `${player.class.name}, level ${player.level}`), el('div', '', `${player.xp} / ${player.need} XP to level ${player.level + 1} · ${player.total} XP in all from ${player.issues} issue${player.issues === 1 ? '' : 's'}`)];
+  const out = [el('b', '', `${player.class.name}, level ${player.level}`), el('div', '', `${player.xp} / ${player.need} XP to level ${player.level + 1} · ${player.total} XP in all from ${player.issues} issue${player.issues === 1 ? '' : 's'} and ${player.mrs} merged MR${player.mrs === 1 ? '' : 's'} and reviews`)];
   if (player.recent.length) {
     out.push(el('div', 'dim', 'Recent XP:'));
-    for (const r of player.recent) out.push(el('div', '', `+${r.xp}  ${r.title}`), el('div', 'dim', `   ${r.project}#${r.iid} · weight ${r.weight ?? '–'}`));
-  } else out.push(el('div', 'dim', 'Close an issue assigned to you to earn XP.'));
+    for (const r of player.recent) out.push(el('div', '', `+${r.xp}  ${r.title}`), el('div', 'dim', `   ${ref(r)} · ${what(r)}`));
+  } else out.push(el('div', 'dim', 'Close issues assigned to you, and get MRs you work on or review merged, to earn XP.'));
   const s = player.sync;
   if (!s.configured) out.push(el('div', 'dim', 'Set gitlab_url in ~/.config/claude-hub/config.toml to earn XP.'));
   else if (s.error) out.push(el('div', 'dim', 'GitLab sync failed: ' + s.error));
   else if (s.last_ok) out.push(el('div', 'dim', 'Synced ' + ago(s.last_ok)));
   return out;
 }
+
+// "group/app#17" for an issue, "group/app!17" for an MR; and what it was.
+function ref(x) { return `${x.project}${x.kind ? '!' : '#'}${x.iid}`; }
+function what(x) { return x.kind === 'review' ? 'reviewed MR' : x.kind === 'mr' ? 'merged MR' : `weight ${x.weight ?? '–'}`; }
+function verb(x) { return x.kind === 'review' ? 'reviewing' : x.kind === 'mr' ? 'merging' : 'closing'; }
 
 function ago(secs) {
   const d = Math.max(0, Date.now() / 1000 - secs);
@@ -1191,7 +1196,7 @@ function questLog() {
     wrap.append(el('div', 'dsub', 'Completed'));
     for (const r of player.recent) {
       const row = el('div', 'done');
-      row.append(el('span', 'dx', `+${r.xp}`), ' ', r.title, el('span', 'qm', `  ${r.project}#${r.iid}`));
+      row.append(el('span', 'dx', `+${r.xp}`), ' ', r.title, el('span', 'qm', `  ${ref(r)}${r.kind ? ' · ' + what(r) : ''}`));
       wrap.append(row);
     }
   }
@@ -1241,7 +1246,7 @@ function showItemTip(it, e, compare) {
     }
   }
   if (it.flavor) t.append(el('div', 'fl', `“${it.flavor}”`));
-  t.append(el('div', 'src', `Dropped at level ${it.dropped_at_level}` + (it.trigger ? `, for closing ${it.trigger.project}#${it.trigger.iid}: ${it.trigger.title}` : '')));
+  t.append(el('div', 'src', `Dropped at level ${it.dropped_at_level}` + (it.trigger ? `, for ${verb(it.trigger)} ${ref(it.trigger)}: ${it.trigger.title}` : '')));
   t.hidden = false;
   moveItemTip(e);
 }
@@ -1286,7 +1291,7 @@ function queueCelebrations() {
   if (fresh.length) {
     celebrated.seq = Math.max(...fresh.map((q) => q.seq));
     // A big sync: one toast for all of them.
-    if (player.completed_total > 2) queue.push({ type: 'quest', q: { title: `${player.completed_total} issues closed`, xp: player.completed_xp } });
+    if (player.completed_total > 2) queue.push({ type: 'quest', q: { title: `${player.completed_total} issues and MRs`, xp: player.completed_xp, summary: true } });
     else for (const q of fresh) queue.push({ type: 'quest', q });
   }
   for (const c of player.celebrate) if (c.level > celebrated.level) { queue.push({ type: 'level', ...c }); celebrated.level = c.level; }
@@ -1301,7 +1306,8 @@ function runQueue() {
   const next = queue.shift();
   if (next.type === 'quest') {
     sfx('quest');
-    toast(`Quest complete! ${next.q.title}  +${next.q.xp} XP`);
+    const head = next.q.summary ? 'XP!' : next.q.kind === 'review' ? 'Review merged!' : next.q.kind === 'mr' ? 'MR merged!' : 'Quest complete!';
+    toast(`${head} ${next.q.title}  +${next.q.xp} XP`);
     setTimeout(() => {
       if (!queue.some((x) => x.type === 'quest')) playerAct({ op: 'ack', seq: player.last_seq });
       busy = false;
@@ -1335,7 +1341,7 @@ function levelUp(c) {
     const stats = el('div', 'lstats', STATS.filter((s) => it.stats[s]).map((s) => `+${it.stats[s]} ${STAT_LABEL[s]}`).join('   '));
     card.append(stats);
     if (it.flavor) card.append(el('div', 'fl', `“${it.flavor}”`));
-    if (it.trigger) card.append(el('div', 'src', `For closing ${it.trigger.project}#${it.trigger.iid}: ${it.trigger.title}`));
+    if (it.trigger) card.append(el('div', 'src', `For ${verb(it.trigger)} ${ref(it.trigger)}: ${it.trigger.title}`));
     setTimeout(() => sfx('loot', it.rarity), 500);
   }
   const buttons = el('div', 'lbtns');

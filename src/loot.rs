@@ -152,11 +152,14 @@ pub enum Aura {
     Shadow,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Trigger {
     pub project: String,
     pub iid: u64,
     pub title: String,
+    /// None for an issue, "mr" or "review" for a merged MR.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

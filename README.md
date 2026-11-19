@@ -234,12 +234,15 @@ your agents or answer them. Options: `--port N`, `--no-open`.
 
 Closing GitLab issues levels you up. Every closed issue that is **assigned to you** gives XP,
 also the ones you closed before you installed claude-hub: its weight times `xp_per_weight`. An
-issue without a weight counts as weight 1 (`default_weight`). Who closed it
+issue without a weight counts as weight 1 (`default_weight`). Merged merge requests give a flat
+bonus on top: `xp_per_merged_mr` (25) for each one you were assigned to and `xp_per_review` (10) for
+each one you reviewed, counted once per MR and role. Who closed it
 does not matter, and an issue you closed but were not assigned to gives nothing. Your open
 assigned issues are your **quests**.
 
 XP fills the bar at the bottom of the town; hover it for the issues that gave the latest XP. Each
-level needs more XP than the last (`100 × level^1.5`). On a level-up your character jumps and a
+level needs a little more XP than the last (`50 × level^1.3`: 50 for level 2, about 1000 at level
+10). On a level-up your character jumps and a
 random piece of loot drops, with an item level equal to your new level.
 
 Each drop is rolled in three steps:
@@ -300,6 +303,8 @@ The hub's footer shows your level too.
 gitlab_url = "https://git.example.com"  # your GitLab; without it glab's default host is used
 # gitlab_username = "me"                # default: whoever glab is logged in as
 xp_per_weight = 10                      # XP per weight point
+xp_per_merged_mr = 25                   # flat XP per merged MR you were assigned to
+xp_per_review = 10                      # flat XP per merged MR you reviewed
 default_weight = 1                      # an issue without a weight counts as this
 sync_minutes = 15                       # how often the hub and the town sync in the background
 xp_since = "all"                        # "all", "install", or a date like "2026-01-01"
