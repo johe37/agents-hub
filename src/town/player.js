@@ -925,12 +925,13 @@ function stripIcon(rows, colors) {
 const STRIP_ICONS = {
   character: [['....hhhh....', '...hhhhhh...', '...hssssh...', '...hskssk...', '....ssss....', '...cccccc...', '..scccccccs.', '..s.cccc.s..', '....cccc....', '....pp.pp...', '....pp.pp...', '....kk.kk...'], { h: '#5a3a22', s: '#eec09a', k: INK, c: '#4f7cac', p: '#2f3a4f' }],
   bag: [['....kkkk....', '...k....k...', '...k....k...', '.bbbbbbbbbb.', 'bBBBBBBBBBBb', 'bBBBByyBBBBb', 'bBBBByyBBBBb', 'bBBBBBBBBBBb', 'bBBBBBBBBBBb', 'bBBBBBBBBBBb', '.bbbbbbbbbb.', '............'], { k: '#6e4a2a', b: '#6e4a2a', B: '#a0703f', y: '#ffd23f' }],
+  store: [['..rrrrrrrr..', '.rwrwrwrwrw.', 'rwrwrwrwrwrw', 'wwwwwwwwwwww', '.b........b.', '.b.yy..yy.b.', '.b.yy..yy.b.', '.b........b.', '.bbbbbbbbbb.', '.bBBBBBBBBb.', '.bBBBBBBBBb.', '.bbbbbbbbbb.'], { r: '#c4553f', w: '#fbf7ef', b: '#6e4a2a', B: '#a0703f', y: '#ffd23f' }],
   quests: [['.wwwwwwwwww.', 'wppppppppppw', '.pkkkkkkkkp.', '.pppppppppp.', '.pkkkkkkp...', '.pppppppppp.', '.pkkkkkkkkp.', '.pppppppppp.', '.pkkkkkp....', '.pppppppppp.', 'wppppppppppw', '.wwwwwwwwww.'], { w: '#6e4a2a', p: '#f3e3b5', k: '#2b2b3a' }],
 };
 
 function initDock() {
   const strip = $p('dock-strip');
-  for (const [name, label, key] of [['character', 'Character', 'p'], ['bag', 'Bag', 'i'], ['quests', 'Quests', 'q']]) {
+  for (const [name, label, key] of [['character', 'Character', 'p'], ['bag', 'Bag', 'i'], ['quests', 'Quests', 'q'], ['store', 'Store', 's']]) {
     const b = el('button', 'dtab');
     b.type = 'button';
     b.dataset.tab = name;
@@ -962,12 +963,13 @@ function renderDock(force) {
   body.hidden = !dockTab;
   updateDockMode();
   if (!dockTab) { dockSig = ''; return; }
-  const sig = JSON.stringify([dockTab, player.items, player.equipped, player.quests, player.recent, player.level, player.xp, player.appearance, player.totals]);
+  const sig = JSON.stringify([dockTab, player.items, player.equipped, player.quests, player.recent, player.level, player.xp, player.appearance, player.totals, player.gold, player.store, sellArmed]);
   if (!force && sig === dockSig) return;
   dockSig = sig;
   const parts = [header()];
   if (dockTab === 'character') parts.push(sheet(), bagGrid(true));
   else if (dockTab === 'bag') parts.push(bagGrid(false));
+  else if (dockTab === 'store') parts.push(storePanel());
   else parts.push(questLog());
   body.replaceChildren(...parts);
 }
@@ -982,7 +984,7 @@ function header() {
   fill.style.width = Math.round((100 * player.xp) / Math.max(1, player.need)) + '%';
   bar.append(fill);
   bar.title = `${player.total} XP in all`;
-  h.append(name, bar, el('div', 'dxpt', `${player.xp} / ${player.need} XP to level ${player.level + 1}`));
+  h.append(name, bar, el('div', 'dxpt', `${player.xp} / ${player.need} XP to level ${player.level + 1}`), el('div', 'dgold', `${player.gold.toLocaleString()} gold`));
   return h;
 }
 
@@ -1203,6 +1205,75 @@ function questLog() {
   return wrap;
 }
 
+// ---- The store: today's stock to buy at your item level, and your bag to sell from.
+
+let sellArmed = null; // an Epic or Legendary waiting for a second click before it is sold
+
+function untilMidnight() {
+  const now = new Date(), next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  const m = Math.max(1, Math.round((next - now) / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+
+function tradeRow(it, priceText, button) {
+  const row = el('div', 'trow');
+  const icon = iconCanvas(it, 32);
+  const box = el('div', 'ticon');
+  box.style.borderColor = RARITY[it.rarity].color;
+  box.append(icon);
+  const text = el('div', 'ttext');
+  const name = el('div', 'tname', it.name);
+  name.style.color = RARITY[it.rarity].color;
+  text.append(name, el('div', 'tmeta', `${SLOT_LABEL[it.slot]} · ${KIND_LABEL[it.kind]} · item level ${it.item_level}`));
+  const right = el('div', 'tright');
+  right.append(el('div', 'tprice', priceText), button);
+  row.append(box, text, right);
+  row.addEventListener('mouseenter', (e) => { hoverItem = it; showItemTip(it, e, true); });
+  row.addEventListener('mousemove', moveItemTip);
+  row.addEventListener('mouseleave', () => { hoverItem = null; hideItemTip(); });
+  return row;
+}
+
+function storePanel() {
+  const wrap = el('div', 'store');
+  wrap.append(el('div', 'dsub', 'Store'), el('div', 'dhint', `You have ${player.gold.toLocaleString()} gold. New stock in ${untilMidnight()}. Closed issues give gold; so does selling.`));
+  const stock = player.store.items;
+  if (!stock.length) wrap.append(el('div', 'dhint', 'Sold out until tomorrow.'));
+  for (const it of stock) {
+    const b = el('button', 'tbtn', 'Buy');
+    b.type = 'button';
+    const afford = player.gold >= it.price;
+    b.disabled = !afford;
+    b.title = afford ? `Buy for ${it.price} gold` : `You need ${it.price - player.gold} more gold`;
+    b.addEventListener('click', () => playerAct({ op: 'buy', item: it.id }));
+    wrap.append(tradeRow(it, `${it.price.toLocaleString()} gold`, b));
+  }
+  wrap.append(el('div', 'dsub', 'Sell from your bag'));
+  const bag = player.bag.map((id) => itemsById.get(id)).filter(Boolean);
+  if (!bag.length) wrap.append(el('div', 'dhint', 'Nothing in your bag. Worn items have to come off before you can sell them.'));
+  for (const it of bag) {
+    const careful = it.rarity === 'epic' || it.rarity === 'legendary';
+    const armed = sellArmed === it.id;
+    const b = el('button', 'tbtn' + (armed ? ' armed' : ''), armed ? 'Sure? Sell' : 'Sell');
+    b.type = 'button';
+    b.title = careful && !armed ? 'Click twice to sell' : `Sell for ${it.sell_price} gold`;
+    b.addEventListener('click', () => {
+      // Epics and legendaries need a second click: a legendary sold is gone until it drops again.
+      if (careful && !armed) {
+        sellArmed = it.id;
+        renderDock(true);
+        setTimeout(() => { if (sellArmed === it.id) { sellArmed = null; renderDock(true); } }, 4000);
+        return;
+      }
+      sellArmed = null;
+      playerAct({ op: 'sell', item: it.id });
+    });
+    wrap.append(tradeRow(it, `${it.sell_price.toLocaleString()} gold`, b));
+  }
+  return wrap;
+}
+
 function showShop(id) {
   const s = shops.get(id);
   if (!s) return;
@@ -1246,7 +1317,11 @@ function showItemTip(it, e, compare) {
     }
   }
   if (it.flavor) t.append(el('div', 'fl', `“${it.flavor}”`));
-  t.append(el('div', 'src', `Dropped at level ${it.dropped_at_level}` + (it.trigger ? `, for ${verb(it.trigger)} ${ref(it.trigger)}: ${it.trigger.title}` : '')));
+  const inStore = player.store.items.some((x) => x.id === it.id);
+  if (inStore) t.append(el('div', 'price', `Price: ${it.price.toLocaleString()} gold`));
+  else if (typeof it.sell_price === 'number') t.append(el('div', 'price', `Sells for ${it.sell_price.toLocaleString()} gold`));
+  if (inStore) { t.hidden = false; moveItemTip(e); return; }
+  t.append(el('div', 'src', it.bought ? `Bought at level ${it.dropped_at_level}` : `Dropped at level ${it.dropped_at_level}` + (it.trigger ? `, for ${verb(it.trigger)} ${ref(it.trigger)}: ${it.trigger.title}` : '')));
   t.hidden = false;
   moveItemTip(e);
 }
@@ -1544,7 +1619,7 @@ function playerKey(e) {
     return false;
   }
   // p, not c: c always means Claude, as in the hub.
-  const tabs = { p: 'character', i: 'bag', q: 'quests' };
+  const tabs = { p: 'character', i: 'bag', q: 'quests', s: 'store' };
   if (tabs[e.key]) { e.preventDefault(); setDock(tabs[e.key]); return true; }
   if (e.key === 'Escape' && !selected && dockTab) { setDock(dockTab); return true; }
   return false;

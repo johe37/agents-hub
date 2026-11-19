@@ -174,6 +174,7 @@ pub fn sync(cfg: &Config, store: &Store, api: &dyn Api, force: bool) -> Result<O
                     chances: cfg.drop_chances.clone(),
                     xp_per_merged_mr: cfg.xp_per_merged_mr,
                     xp_per_review: cfg.xp_per_review,
+                    gold_per_issue: cfg.gold_per_issue,
                 };
                 let mut gains = p.count_closed(&f.closed, &rules, now);
                 for (list, role) in [(&f.merged, MrRole::Assignee), (&f.reviewed, MrRole::Reviewer)] {
@@ -327,7 +328,7 @@ fn summary(cfg: &Config, p: &Progress) -> String {
         0 => "the beginning".into(),
         t => format_time(t)[..10].to_string(),
     });
-    out += &format!("{} items, {} open quests\n", p.items.len(), p.quests.len());
+    out += &format!("{} items, {} gold, {} open quests\n", p.items.len(), p.gold(), p.quests.len());
     match (p.sync.last_ok, &p.sync.last_error) {
         (_, Some(e)) => out += &format!("Last sync failed: {e}\n"),
         (Some(t), None) => out += &format!("Last sync {}\n", format_time(t)),

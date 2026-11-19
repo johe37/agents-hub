@@ -18,7 +18,12 @@ use crate::loot::{self, Item};
 /// 5: flatter scaling: Poor is item level + 1, the other rarities multiply that.
 /// 6: three hand-written legendaries per slot, which grow with your level.
 /// 7: merged MRs and reviews give XP; a gentler level curve.
-pub const VERSION: u32 = 7;
+/// 8: gold and the store (no change to old data).
+pub const VERSION: u32 = 8;
+
+
+/// The store's daily stock, worst first: five Common, three Uncommon, two Rare and one Epic.
+pub const STOCK: [(loot::Rarity, usize); 4] = [(loot::Rarity::Common, 5), (loot::Rarity::Uncommon, 3), (loot::Rarity::Rare, 2), (loot::Rarity::Epic, 1)];
 
 // ---------------------------------------------------------------- the level curve
 
@@ -70,6 +75,38 @@ pub struct Progress {
     pub celebrated_level: u32,
     /// The town has shown "quest complete" for issues counted up to this (`Counted::seq`).
     pub acked_seq: u64,
+    /// Gold paid in the store, and gold got for selling there.
+    pub gold_spent: u64,
+    pub gold_from_sales: u64,
+    pub store: Stock,
+}
+
+/// What the store sells today.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Stock {
+    /// The local date it was stocked ("2026-11-19"); a new date restocks it.
+    pub day: String,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TradeError {
+    NotInStore,
+    NotInBag,
+    Worn,
+    TooPoor { price: u64, gold: u64 },
+}
+
+impl std::fmt::Display for TradeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            TradeError::NotInStore => write!(f, "The store does not have that any more."),
+            TradeError::NotInBag => write!(f, "You do not have that item."),
+            TradeError::Worn => write!(f, "Take it off before you sell it."),
+            TradeError::TooPoor { price, gold } => write!(f, "That costs {price} gold; you have {gold}."),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -109,6 +146,8 @@ pub struct Counted {
     pub labels: Option<Vec<String>>,
     /// None for an issue; "mr" for a merged MR you were assigned to, "review" for one you reviewed.
     pub kind: Option<String>,
+    /// Gold it gave (closed issues only). None for issues counted before gold existed; the next sync fills it.
+    pub gold: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -191,6 +230,8 @@ pub struct Rules {
     /// Flat XP for a merged MR you were assigned to, and for one you reviewed.
     pub xp_per_merged_mr: u64,
     pub xp_per_review: u64,
+    /// Gold for every closed issue.
+    pub gold_per_issue: u64,
 }
 
 impl Rules {
@@ -237,6 +278,10 @@ impl Progress {
     /// and issues closed before `rules.since` never count.
     pub fn count_closed(&mut self, issues: &[Issue], rules: &Rules, now: u64) -> Gains {
         self.username.get_or_insert_with(|| rules.username.clone());
+        // Issues counted before gold existed earn it now, once.
+        for c in self.issues.values_mut().filter(|c| c.gold.is_none()) {
+            c.gold = Some(rules.gold_per_issue);
+        }
         // Issues counted before labels were kept get their labels now; nothing else about them changes.
         for i in issues {
             if let Some(c) = self.issues.get_mut(&i.id).filter(|c| c.labels.is_none()) {
@@ -272,6 +317,7 @@ impl Progress {
                     seq,
                     labels: Some(i.labels.clone()),
                     kind: None,
+                    gold: Some(rules.gold_per_issue),
                 },
             );
             gains.issues.push(i.id);
@@ -316,6 +362,7 @@ impl Progress {
                 seq,
                 labels: None,
                 kind: Some(role.key().into()),
+                gold: None,
             };
             let trigger = Some(trigger_of(&c));
             self.mrs.insert(key(m.id), c);
@@ -355,7 +402,7 @@ impl Progress {
 
     /// A random item for reaching `level`. Rolled once and stored, so it stays what it was.
     fn drop_loot(&mut self, level: u32, trigger: Option<loot::Trigger>, chances: &DropChances) {
-        if self.items.iter().any(|it| it.dropped_at_level == level) {
+        if self.items.iter().any(|it| it.dropped_at_level == level && !it.bought) {
             return;
         }
         let taken: Vec<String> = self.items.iter().filter(|i| i.rarity == loot::Rarity::Legendary).map(|i| i.name.clone()).collect();
@@ -395,15 +442,81 @@ impl Progress {
     }
 
     /// Legendaries grow with you: item level = your level, stats = the legendary budget for it,
-    /// in the proportions they dropped with.
+    /// in the proportions they dropped with. So does the store's stock: it sells at your item level.
     pub fn scale_legendaries(&mut self) {
         let level = self.level.max(1);
-        for it in self.items.iter_mut().filter(|it| it.rarity == loot::Rarity::Legendary) {
+        for it in self.items.iter_mut().filter(|it| it.rarity == loot::Rarity::Legendary).chain(self.store.items.iter_mut()) {
             if it.item_level != level || it.stats.values().sum::<u32>() != loot::stat_budget(level, it.rarity) {
                 it.item_level = level;
                 it.stats = loot::rescale(&it.stats, loot::stat_budget(level, it.rarity));
             }
         }
+    }
+
+    /// Your gold: what closed issues gave, plus sales, minus what you spent.
+    pub fn gold(&self) -> u64 {
+        let earned: u64 = self.issues.values().filter_map(|c| c.gold).sum();
+        (earned + self.gold_from_sales).saturating_sub(self.gold_spent)
+    }
+
+    /// A fresh stock when the day has changed: five Common, three Uncommon, two Rare and one Epic, each
+    /// for a random slot, at your level. True if it restocked.
+    pub fn restock(&mut self, today: &str) -> bool {
+        if self.store.day == today {
+            return false;
+        }
+        let level = self.level.max(1);
+        let mut items = vec![];
+        for (rarity, n) in STOCK {
+            let only = DropChances {
+                poor: 0.0,
+                common: (rarity == loot::Rarity::Common) as u8 as f64,
+                uncommon: (rarity == loot::Rarity::Uncommon) as u8 as f64,
+                rare: (rarity == loot::Rarity::Rare) as u8 as f64,
+                epic: (rarity == loot::Rarity::Epic) as u8 as f64,
+                legendary: 0.0,
+            };
+            for _ in 0..n {
+                let mut it = loot::generate(loot::random_seed(), level, &only, &[]);
+                it.id = format!("store-{today}-{}", items.len());
+                it.bought = true;
+                items.push(it);
+            }
+        }
+        self.store = Stock { day: today.to_string(), items };
+        true
+    }
+
+    /// Buy an item from today's stock: it goes into your bag. Returns its new id.
+    pub fn buy(&mut self, store_id: &str, now: u64) -> Result<String, TradeError> {
+        let i = self.store.items.iter().position(|it| it.id == store_id).ok_or(TradeError::NotInStore)?;
+        let price = self.store.items[i].price();
+        let gold = self.gold();
+        if price > gold {
+            return Err(TradeError::TooPoor { price, gold });
+        }
+        let mut it = self.store.items.remove(i);
+        let n = self.items.iter().filter(|x| x.bought).count();
+        it.id = format!("bought-{now}-{n}");
+        it.dropped_at_level = self.level.max(1);
+        it.trigger = None;
+        it.bought = true;
+        self.gold_spent += price;
+        let id = it.id.clone();
+        self.items.push(it);
+        Ok(id)
+    }
+
+    /// Sell an item from your bag (not one you wear) for a quarter of its price.
+    pub fn sell(&mut self, item_id: &str) -> Result<u64, TradeError> {
+        if self.equipped.values().any(|id| id == item_id) {
+            return Err(TradeError::Worn);
+        }
+        let i = self.items.iter().position(|it| it.id == item_id).ok_or(TradeError::NotInBag)?;
+        let gold = self.items[i].sell_price();
+        self.items.remove(i);
+        self.gold_from_sales += gold;
+        Ok(gold)
     }
 
     /// Bring a file from an older version up to date. True if anything changed.
@@ -572,6 +685,17 @@ impl Store {
 
 // ---------------------------------------------------------------- time
 
+/// Today's local date ("2026-11-19"), when the store restocks. From `date`, since std has no time zones.
+pub fn local_today() -> String {
+    std::process::Command::new("date")
+        .arg("+%F")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|d| d.len() == 10)
+        .unwrap_or_else(|| format_time(crate::state::now())[..10].to_string())
+}
+
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -625,7 +749,7 @@ pub mod tests {
     use super::*;
 
     pub fn rules() -> Rules {
-        Rules { username: "osbo".into(), xp_per_weight: 10, default_weight: 1, since: 0, chances: DropChances::default(), xp_per_merged_mr: 25, xp_per_review: 10 }
+        Rules { username: "osbo".into(), xp_per_weight: 10, default_weight: 1, since: 0, chances: DropChances::default(), xp_per_merged_mr: 25, xp_per_review: 10, gold_per_issue: 25 }
     }
 
     pub fn issue(id: u64, weight: Option<u64>, closed: &str) -> Issue {
@@ -777,6 +901,86 @@ pub mod tests {
         assert_eq!(p.level, 14);
         assert_eq!(g.levels, (7..=14).collect::<Vec<_>>());
         assert_eq!(p.items.len(), 8);
+    }
+
+    #[test]
+    fn the_store_stocks_once_a_day_and_trades_for_gold() {
+        let mut p = Progress::new(0);
+        p.level = 10;
+        // 40 closed issues at 25 gold each; MRs give none.
+        for id in 0..40 {
+            p.issues.insert(id, Counted { gold: Some(25), ..Default::default() });
+        }
+        p.mrs.insert("mr:1".into(), Counted { kind: Some("mr".into()), ..Default::default() });
+        assert_eq!(p.gold(), 1000);
+        assert!(p.restock("2026-11-19"));
+        let count = |r| p.store.items.iter().filter(|i| i.rarity == r).count();
+        assert_eq!([count(loot::Rarity::Common), count(loot::Rarity::Uncommon), count(loot::Rarity::Rare), count(loot::Rarity::Epic), count(loot::Rarity::Legendary)], [5, 3, 2, 1, 0]);
+        assert!(p.store.items.iter().all(|i| i.item_level == 10));
+        let before = p.store.clone();
+        assert!(!p.restock("2026-11-19"), "once a day");
+        assert_eq!(p.store, before);
+
+        // Buy a Common (165 gold at level 10): into the bag, at your level, gold goes down.
+        let common = p.store.items.iter().find(|i| i.rarity == loot::Rarity::Common).unwrap().clone();
+        let id = p.buy(&common.id, 5).unwrap();
+        assert_eq!(p.gold(), 1000 - 165);
+        assert_eq!(p.store.items.len(), 10);
+        assert!(p.bag().iter().any(|i| i.id == id && i.bought && i.name == common.name));
+        assert_eq!(p.buy(&common.id, 5), Err(TradeError::NotInStore));
+        // The Epic (4400) is far too dear.
+        let epic = p.store.items.iter().find(|i| i.rarity == loot::Rarity::Epic).unwrap().id.clone();
+        assert_eq!(p.buy(&epic, 5), Err(TradeError::TooPoor { price: 4400, gold: 835 }));
+
+        // Sell it back for a quarter (41); a worn item has to come off first.
+        assert_eq!(p.sell(&id), Ok(41));
+        assert_eq!(p.gold(), 835 + 41);
+        let mut other = p.store.items[0].clone();
+        other.id = "worn".into();
+        p.items.push(other);
+        p.equip("worn", None).unwrap();
+        assert_eq!(p.sell("worn"), Err(TradeError::Worn));
+        assert_eq!(p.sell("nope"), Err(TradeError::NotInBag));
+
+        // The stock follows your level during the day, and a new day restocks.
+        p.level = 12;
+        p.scale_legendaries();
+        assert!(p.store.items.iter().all(|i| i.item_level == 12 && i.stats.values().sum::<u32>() == loot::stat_budget(12, i.rarity)));
+        assert!(p.restock("2026-11-20"));
+        assert_eq!(p.store.items.len(), 11);
+    }
+
+    #[test]
+    fn closed_issues_give_gold_and_old_ones_get_it_once() {
+        let mut p = Progress::new(0);
+        p.count_closed(&[issue(1, Some(3), "2026-11-01T00:00:00Z")], &rules(), 1);
+        assert_eq!(p.gold(), 25);
+        // An issue counted before gold existed earns it at the next count, once.
+        p.issues.insert(99, Counted { gold: None, ..Default::default() });
+        let mut r = rules();
+        r.gold_per_issue = 40;
+        p.count_closed(&[], &r, 2);
+        assert_eq!(p.gold(), 65);
+        p.count_closed(&[], &r, 3);
+        assert_eq!(p.gold(), 65);
+        // Merged MRs and reviews give XP, no gold.
+        let mr = Issue { id: 5, closed_at: Some(10), ..Default::default() };
+        p.count_merged(&[mr], MrRole::Assignee, &r, 4);
+        assert_eq!(p.gold(), 65);
+    }
+
+    #[test]
+    fn a_bought_item_does_not_take_the_place_of_a_level_drop() {
+        let mut p = Progress::new(0);
+        p.total_xp = 49;
+        p.restock("2026-11-19");
+        p.gold_from_sales = 1000;
+        let id = p.store.items[0].id.clone();
+        p.buy(&id, 1).unwrap(); // bought at level 1
+        p.total_xp = 49 + 1;
+        let mut g = Gains::default();
+        p.catch_up(None, &mut g, &DropChances::default());
+        assert_eq!(p.items.iter().filter(|i| !i.bought).count(), 1, "level 2 still drops its loot");
     }
 
     #[test]

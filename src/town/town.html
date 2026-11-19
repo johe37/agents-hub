@@ -126,6 +126,16 @@
   .qlabel { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: var(--input); color: var(--muted); }
   .done { font-size: 12.5px; padding: 3px 0; } .done .dx { color: #8a6bff; font-weight: 700; }
   .quest-line { color: #ffd23f; }
+  .dgold { margin-top: 4px; color: #ffd23f; font-weight: 600; font-size: 12.5px; }
+  .trow { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; margin-bottom: 6px; background: var(--panel); border-radius: 6px; }
+  .ticon { width: 40px; height: 40px; border: 2px solid var(--border); border-radius: 6px; background: #15151f; display: grid; place-items: center; }
+  .ttext { min-width: 0; } .tname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .tmeta { font-size: 11.5px; color: var(--muted); }
+  .tright { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .tprice { color: #ffd23f; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .tbtn { border: 1px solid var(--border); background: var(--input); color: var(--bright); border-radius: 4px; padding: 1px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .tbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .tbtn.armed { border-color: var(--error); color: var(--error); }
+  #itip .price { color: #ffd23f; margin-top: 4px; }
   #xpbar { bottom: 10px; left: 50%; transform: translateX(-50%); image-rendering: pixelated; cursor: pointer; }
   #itip { position: fixed; z-index: 30; pointer-events: none; background: #0d0f1af2; border: 1px solid #5a5f7a; border-radius: 4px;
     padding: 8px 11px; min-width: 220px; max-width: 300px; font: 13px/1.4 system-ui, sans-serif; color: #fff; box-shadow: 0 4px 14px #000a; }
@@ -190,7 +200,7 @@
     <div id="badges" class="overlay"><button id="newclaude" class="badge newbtn" type="button" title="Start Claude in any repo or folder (c or n)">+ New Claude</button><span id="conn" class="badge" hidden>Reconnecting…</span><span id="demo" class="badge" hidden>Demo town</span></div>
     <button id="counter" class="overlay" type="button">Loading the town…</button>
     <div id="tip" class="overlay" hidden></div>
-    <div id="help" class="overlay">Drag to move · scroll to zoom · click a shop, a person or yourself · c new Claude · p i q: character, bag, quests</div>
+    <div id="help" class="overlay">Drag to move · scroll to zoom · click a shop, a person or yourself · c new Claude · p i q s: character, bag, quests, store</div>
     <canvas id="xpbar" class="overlay" aria-label="Your level and XP"></canvas>
     <div id="toast" class="overlay" role="status" hidden></div>
     <div id="loot" class="modal" role="dialog" aria-label="Level up" hidden></div>

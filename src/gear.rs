@@ -171,6 +171,7 @@ mod tests {
             trigger: None,
             look: 0,
             aura: (rarity == Rarity::Legendary).then_some(Aura::Ember),
+            bought: false,
         }
     }
 

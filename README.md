@@ -268,6 +268,15 @@ Each drop is rolled in three steps:
 
 Each drop is rolled once and kept in your progress file.
 
+**The store** (`s`, below Quests in the dock) sells eleven items a day at your item level: five
+Common, three Uncommon, two Rare and one Epic, each for a random slot. Legendaries are never for
+sale. The stock is kept in your progress file and changes at midnight; it follows your level
+during the day. Prices scale with item level and are steep on purpose: `(item level + 1)` times 5
+(Poor), 15 (Common), 40 (Uncommon), 120 (Rare) or 400 (Epic), so an Epic at level 14 is 6000 gold.
+Gold comes from closed issues (`gold_per_issue`, 25 each) and from selling: the store pays a
+quarter of an item's price for anything in your bag (take worn items off first; Epics and
+legendaries ask for a second click).
+
 Your **class** comes from the label you have closed the most issues with. Only these labels
 count, matched exactly (ignoring case); every other label is ignored:
 
@@ -305,6 +314,7 @@ gitlab_url = "https://git.example.com"  # your GitLab; without it glab's default
 xp_per_weight = 10                      # XP per weight point
 xp_per_merged_mr = 25                   # flat XP per merged MR you were assigned to
 xp_per_review = 10                      # flat XP per merged MR you reviewed
+gold_per_issue = 25                     # gold per closed issue, for the store
 default_weight = 1                      # an issue without a weight counts as this
 sync_minutes = 15                       # how often the hub and the town sync in the background
 xp_since = "all"                        # "all", "install", or a date like "2026-01-01"

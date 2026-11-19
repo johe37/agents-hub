@@ -68,6 +68,20 @@ impl Rarity {
     }
 }
 
+/// What an item costs in the store: (item level + 1) times a rate by rarity. The one place to tune prices.
+/// Dear on purpose: at level 14 an Epic is 6000 gold, while a closed issue gives 25.
+pub fn price(item_level: u32, rarity: Rarity) -> u64 {
+    let rate = match rarity {
+        Rarity::Poor => 5,
+        Rarity::Common => 15,
+        Rarity::Uncommon => 40,
+        Rarity::Rare => 120,
+        Rarity::Epic => 400,
+        Rarity::Legendary => 800,
+    };
+    (item_level.max(1) as u64 + 1) * rate
+}
+
 /// The total of all stats on an item: item level + 1 for Poor, times the rarity's multiplier.
 /// A Poor item at level 1 has 2; the one place to tune how strong items get.
 pub fn stat_budget(item_level: u32, rarity: Rarity) -> u32 {
@@ -178,9 +192,22 @@ pub struct Item {
     /// Picks the base shape and trim pattern the town draws.
     pub look: u32,
     pub aura: Option<Aura>,
+    /// Bought in the store, not dropped by a level-up.
+    #[serde(default)]
+    pub bought: bool,
 }
 
 impl Item {
+    /// What the store asks for it.
+    pub fn price(&self) -> u64 {
+        price(self.item_level, self.rarity)
+    }
+
+    /// What the store pays for it: a quarter of its price.
+    pub fn sell_price(&self) -> u64 {
+        (self.price() / 4).max(1)
+    }
+
     /// Which base shape (index into the kind's base names) the item has; the town draws that shape.
     pub fn base(&self) -> usize {
         self.look as usize % self.kind.bases().len()
@@ -392,7 +419,7 @@ pub fn generate(seed: u64, level: u32, chances: &DropChances, taken: &[String]) 
         (None, *rng.pick(&slot.kinds()))
     };
     let stats = roll_stats(&mut rng, level, rarity);
-    let mut item = Item { id: format!("lvl-{level}"), name: String::new(), kind, rarity, item_level: level, stats, flavor: None, dropped_at_level: level, trigger: None, look, aura: None };
+    let mut item = Item { id: format!("lvl-{level}"), name: String::new(), kind, rarity, item_level: level, stats, flavor: None, dropped_at_level: level, trigger: None, look, aura: None, bought: false };
     match legend {
         Some((name, aura, flavor)) => {
             item.name = name;
@@ -510,6 +537,21 @@ mod tests {
         assert_eq!(r.values().sum::<u32>(), 11);
         assert!(r[&Stat::Speed] > r[&Stat::Stamina]);
         assert_eq!(rescale(&s, 1).values().sum::<u32>(), 2, "every stat keeps at least 1");
+    }
+
+    #[test]
+    fn prices_scale_with_item_level_and_rarity() {
+        assert_eq!(price(14, Rarity::Common), 225);
+        assert_eq!(price(14, Rarity::Epic), 6000);
+        for level in 1..60 {
+            assert!(price(level + 1, Rarity::Rare) > price(level, Rarity::Rare));
+            for w in Rarity::ALL.windows(2) {
+                assert!(price(level, w[1]) > price(level, w[0]));
+            }
+        }
+        let it = generate(1, 10, &only(Rarity::Uncommon), &[]);
+        assert_eq!(it.price(), 440);
+        assert_eq!(it.sell_price(), 110, "a quarter of the price");
     }
 
     #[test]

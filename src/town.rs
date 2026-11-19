@@ -127,6 +127,9 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
             let mut remotes = Remotes::demo();
             loop {
                 let (mut snap, messages) = demo_snapshot();
+                if let Some(p) = &s.demo_player {
+                    p.lock().unwrap().restock(&crate::progress::local_today());
+                }
                 snap.progress = s.demo_player.as_ref().map(|p| Arc::new(p.lock().unwrap().clone()));
                 s.publish(&model(&snap, &cfg, &mut lots, &git, &mut remotes, &messages, true, started.elapsed().as_millis()), None);
                 // Sooner after a change to the player, so equipping feels instant.
@@ -147,6 +150,7 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
         std::thread::spawn(move || {
             let git = GitCache::default();
             let mut remotes = Remotes::default();
+            let mut day = Today::default();
             let mut last: Option<Snapshot> = None;
             let mut seen = mtime(&crate::messages::dir());
             loop {
@@ -163,6 +167,11 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
                     Err(_) => return,
                 }
                 let Some(snap) = &last else { continue };
+                // The store restocks on the first look after midnight; the next snapshot shows it.
+                let today = day.get();
+                if snap.progress.as_ref().is_none_or(|p| p.store.day != today) {
+                    let _ = crate::progress::Store::default().update(|p| p.restock(&today));
+                }
                 let messages = crate::messages::recent(MESSAGE_WINDOW);
                 let model = model(snap, &cfg, &mut lots, &git, &mut remotes, &messages, false, started.elapsed().as_millis());
                 s.publish(&model, Some(snap.clone()));
@@ -796,6 +805,23 @@ fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, remotes
 
 // ---------------------------------------------------------------- The player
 
+/// Today's local date, asked of `date` at most once a minute.
+#[derive(Default)]
+struct Today {
+    at: Option<std::time::Instant>,
+    day: String,
+}
+
+impl Today {
+    fn get(&mut self) -> String {
+        if self.at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+            self.day = crate::progress::local_today();
+            self.at = Some(std::time::Instant::now());
+        }
+        self.day.clone()
+    }
+}
+
 /// The git remote of each shop, as (host, "group/project"); looked up once per shop.
 #[derive(Default)]
 struct Remotes(HashMap<String, Option<(String, String)>>);
@@ -838,6 +864,8 @@ fn item_json(p: &Progress, it: &crate::loot::Item) -> Value {
     let mut v = serde_json::to_value(it).unwrap_or_default();
     v["slot"] = serde_json::to_value(it.kind.slot()).unwrap_or_default();
     v["base"] = it.base().into();
+    v["price"] = it.price().into();
+    v["sell_price"] = it.sell_price().into();
     v["compare"] = serde_json::to_value(p.compare(it)).unwrap_or_default();
     v
 }
@@ -890,6 +918,8 @@ fn player_json(p: Option<&Progress>, cfg: &Config, quest_shops: &HashMap<u64, St
         "mrs": p.mrs.len(),
         "sync": {"last_ok": p.sync.last_ok, "error": p.sync.last_error, "configured": cfg.gitlab_url.is_some() || cfg.gitlab_username.is_some()},
         "sound": cfg.sound,
+        "gold": p.gold(),
+        "store": {"day": p.store.day, "items": p.store.items.iter().map(|i| item_json(p, i)).collect::<Vec<_>>()},
     })
 }
 
@@ -913,6 +943,19 @@ fn player_act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
                     _ => None,
                 };
                 gone.map(|id| format!("Unequipped {}", p.item(&id).map_or("", |i| i.name.as_str()))).ok_or_else(|| "Nothing to take off there.".into())
+            }
+            Some("buy") => {
+                let id = req["item"].as_str().ok_or("Which item?")?;
+                let name = p.store.items.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_default();
+                let price = p.store.items.iter().find(|i| i.id == id).map(|i| i.price()).unwrap_or(0);
+                p.buy(id, now()).map_err(|e| e.to_string())?;
+                Ok(format!("Bought {name} for {price} gold"))
+            }
+            Some("sell") => {
+                let id = req["item"].as_str().ok_or("Which item?")?;
+                let name = p.item(id).map(|i| i.name.clone()).unwrap_or_default();
+                let gold = p.sell(id).map_err(|e| e.to_string())?;
+                Ok(format!("Sold {name} for {gold} gold"))
             }
             Some("appearance") => {
                 let a: crate::progress::Appearance = serde_json::from_value(req["appearance"].clone()).map_err(|_| "Bad appearance.")?;
@@ -951,7 +994,7 @@ fn demo_progress(cfg: &Config) -> Progress {
     let mut p = Progress::new(now());
     p.username = Some("demo".into());
     // Generous XP, so the demo has a few levels of loot to show.
-    let rules = Rules { username: "demo".into(), xp_per_weight: 25, default_weight: 1, since: 0, chances: cfg.drop_chances.clone(), xp_per_merged_mr: cfg.xp_per_merged_mr, xp_per_review: cfg.xp_per_review };
+    let rules = Rules { username: "demo".into(), xp_per_weight: 25, default_weight: 1, since: 0, chances: cfg.drop_chances.clone(), xp_per_merged_mr: cfg.xp_per_merged_mr, xp_per_review: cfg.xp_per_review, gold_per_issue: cfg.gold_per_issue };
     let titles = ["Fix the flaky login test", "Speed up the search page", "Write the onboarding guide", "Upgrade the database driver", "Add dark mode to the dashboard", "Remove the old billing code", "Cache the product images", "Handle timeouts in the importer"];
     let closed: Vec<Issue> = titles
         .iter()

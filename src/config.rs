@@ -60,6 +60,8 @@ pub struct Config {
     /// Flat XP for every merged MR you were assigned to, and for every merged MR you reviewed.
     pub xp_per_merged_mr: u64,
     pub xp_per_review: u64,
+    /// Gold for every closed issue; the store's other gold comes from selling.
+    pub gold_per_issue: u64,
     /// Which closed issues count: "all" (every one, also those closed before claude-hub), "install"
     /// (closed since the progress file was made), or a date "2026-01-01".
     pub xp_since: String,
@@ -104,6 +106,7 @@ impl Default for Config {
             sync_minutes: 15.0,
             xp_per_merged_mr: 25,
             xp_per_review: 10,
+            gold_per_issue: 25,
             xp_since: "all".into(),
             sound: false,
             drop_chances: DropChances::default(),
