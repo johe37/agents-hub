@@ -507,6 +507,19 @@ pub fn type_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
     on_socket(socket, &["send-keys", "-t", pane, "-l", "--", text])
 }
 
+/// Put text in a tmux buffer and, through the terminal (OSC 52), in the system clipboard.
+pub fn copy(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut child = Command::new("tmux")
+        .args(["-L", SOCKET_NAME, "load-buffer", "-w", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("tmux: {e}"))?;
+    child.stdin.take().unwrap().write_all(text.as_bytes()).map_err(|e| format!("tmux: {e}"))?;
+    check(child.wait_with_output().ok())
+}
+
 /// Press a named key (Enter, Escape, ...) in a pane.
 pub fn send_key(socket: &str, pane: &str, key: &str) -> Result<(), String> {
     on_socket(socket, &["send-keys", "-t", pane, key])

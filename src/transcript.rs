@@ -53,8 +53,12 @@ fn prompt_text(record: &Value) -> Option<String> {
         }
         _ => return None,
     };
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = flatten(&text);
     (!text.is_empty() && !text.starts_with('<')).then_some(text)
+}
+
+pub fn flatten(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn tail(s: &str, n: usize) -> String {
@@ -74,6 +78,9 @@ fn apply(t: &mut Transcript, r: &Value) {
                 t.first_prompt.get_or_insert_with(|| text.clone());
                 t.last_prompt = Some(text);
                 t.turns += 1;
+                // A new turn: the previous reply no longer answers the prompt on show.
+                t.last_text = None;
+                t.last_tool = None;
             }
         }
         Some("assistant") => {
@@ -185,6 +192,8 @@ mod tests {
         assert_eq!(t.title.as_deref(), Some("Bug fix"));
         assert_eq!(t.last_text.as_deref(), Some("done"));
         assert_eq!(t.last_tool.as_deref(), Some("Bash: ls"));
+        apply(&mut t, &json!({"type": "user", "message": {"content": "next"}}));
+        assert_eq!(t.last_text, None);
     }
 
     #[test]

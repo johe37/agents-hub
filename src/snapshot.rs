@@ -72,6 +72,10 @@ pub struct Agent {
 }
 
 impl Agent {
+    fn transcript_file(&self) -> Option<&str> {
+        self.session.as_ref().and_then(|s| s.transcript_path.as_deref()).or(self.transcript_path.as_deref())
+    }
+
     pub fn title(&self) -> String {
         if let Some(t) = &self.transcript {
             if let Some(s) = t.title.as_ref().or(t.first_prompt.as_ref()) {
@@ -156,6 +160,8 @@ struct Collector {
     speculative: Option<String>,
     dirs: Arc<Vec<(String, bool)>>,
     need_scan: bool,
+    /// Transcripts of live agents. Claude writes its replies there without a hook event.
+    watched: Vec<String>,
 }
 
 /// Start the collector thread. It sends a Snapshot whenever data may have changed.
@@ -167,6 +173,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
         let mut c = Collector {
             hub_socket: tmux::socket_path(),
             need_scan: cached.is_none(),
+            watched: vec![],
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
             git: GitCache::default(),
@@ -192,8 +199,14 @@ impl Collector {
         let events = events_dir();
         let mut events_mtime = mtime(&events);
         let mut last = Instant::now() - interval;
+        let mut replies = vec![];
         loop {
             let mut due = last.elapsed() >= interval;
+            let r: Vec<_> = self.watched.iter().map(|p| mtime(p.as_ref())).collect();
+            if r != replies {
+                replies = r;
+                due = true;
+            }
             // Hooks write by rename, so the directory mtime changes on every event: status shows up at once.
             let m = mtime(&events);
             if m != events_mtime {
@@ -284,6 +297,7 @@ impl Collector {
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
         let agents = self.agents(&workspaces, elsewhere, live_claudes(), closed);
+        self.watched = agents.iter().filter(|a| a.status.alive()).filter_map(|a| a.transcript_file().map(String::from)).collect();
         write_summary(&sessions);
 
         if self.need_scan {
@@ -465,7 +479,7 @@ impl Collector {
         }
         let tc = &self.transcripts;
         let transcripts =
-            par_map(&agents, |a| a.session.as_ref().and_then(|s| s.transcript_path.as_deref()).or(a.transcript_path.as_deref()).and_then(|p| tc.get(p)));
+            par_map(&agents, |a| a.transcript_file().and_then(|p| tc.get(p)));
         for (a, t) in agents.iter_mut().zip(transcripts) {
             a.transcript = t;
         }

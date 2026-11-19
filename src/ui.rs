@@ -18,6 +18,7 @@ use crate::snapshot::{Agent, Workspace};
 use crate::state::{Status, age};
 use crate::theme::*;
 use crate::tmux::key_label;
+use crate::transcript::Transcript;
 use crate::usage;
 
 const COMMENT: &str = "\u{f0e5}";
@@ -527,27 +528,121 @@ fn meta_line(name: Option<&str>, path: &str, git: Option<&GitStatus>) -> Line<'s
     Line::from(v)
 }
 
-fn chat_lines(a: &Agent) -> Vec<Line<'static>> {
-    let Some(t) = &a.transcript else { return vec![Line::from(s("No conversation yet.", fg(colors().muted)))] };
+/// Lines word-wrapped to width and filled edge to edge with bg, so the background reads as one block.
+fn card(lines: Vec<Line<'static>>, width: u16, bg: Color) -> Vec<Line<'static>> {
+    let inner = (width as usize).saturating_sub(2).max(10);
+    let row = |cells: &[(char, Style)]| {
+        let mut spans = vec![s(" ", Style::new().bg(bg))];
+        for chunk in cells.chunk_by(|a, b| a.1 == b.1) {
+            spans.push(Span::styled(chunk.iter().map(|c| c.0).collect::<String>(), chunk[0].1.bg(bg)));
+        }
+        let used: usize = cells.iter().map(|c| c.0.width().unwrap_or(0)).sum();
+        spans.push(s(" ".repeat(inner.saturating_sub(used) + 1), Style::new().bg(bg)));
+        Line::from(spans)
+    };
     let mut out = vec![];
-    if let Some(p) = &t.last_prompt {
-        out.push(Line::from(s("You", fg(colors().accent).bold())));
+    for line in lines {
+        let cells: Vec<(char, Style)> = line.spans.iter().flat_map(|sp| sp.content.chars().map(move |c| (c, sp.style))).collect();
+        let mut rest = &cells[..];
+        loop {
+            let (mut used, mut end, mut space) = (0, 0, None);
+            while let Some(&(c, _)) = rest.get(end) {
+                let w = c.width().unwrap_or(0);
+                if used + w > inner {
+                    break;
+                }
+                if c == ' ' {
+                    space = Some(end);
+                }
+                used += w;
+                end += 1;
+            }
+            let (this, next) = match space.filter(|&i| i > 0 && end < rest.len()) {
+                Some(i) => (&rest[..i], &rest[i + 1..]),
+                None => rest.split_at(end),
+            };
+            out.push(row(this));
+            rest = next;
+            if rest.is_empty() {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Highlight the dragged-over text and, once the mouse is released, copy it.
+fn draw_selection(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some(sel) = app.sel else { return };
+    let (from, to) = if sel.from <= sel.to { (sel.from, sel.to) } else { (sel.to, sel.from) };
+    let buf = f.buffer_mut();
+    let mut rows = vec![];
+    for y in 0..area.height {
+        let row = y + app.detail_scroll;
+        if row < from.0 || row > to.0 {
+            continue;
+        }
+        let first = if row == from.0 { from.1 } else { 0 };
+        let last = if row == to.0 { to.1 } else { area.width - 1 };
+        let mut text = String::new();
+        for x in first..=last.min(area.width - 1) {
+            let cell = &mut buf[(area.x + x, area.y + y)];
+            text.push_str(cell.symbol());
+            cell.set_bg(colors().selection);
+        }
+        rows.push(text.trim_end().to_string());
+    }
+    if !sel.copy {
+        return;
+    }
+    app.sel.as_mut().unwrap().copy = false;
+    // Cards pad every line; drop the indent all lines share.
+    let indent = rows.iter().filter(|r| !r.is_empty()).map(|r| r.len() - r.trim_start().len()).min().unwrap_or(0);
+    let text = rows.iter().map(|r| r.get(indent..).unwrap_or("")).collect::<Vec<_>>().join("\n");
+    match crate::tmux::copy(&text) {
+        Ok(()) => app.notify(format!("Copied {} character{}", text.chars().count(), plural(text.chars().count())), false),
+        Err(e) => app.notify(format!("Copy failed: {e}"), true),
+    }
+}
+
+fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
+    let sent = app.sent.get(&a.key).map(|(text, _)| text);
+    let empty = Transcript::default();
+    let t = match (&a.transcript, sent) {
+        (Some(t), _) => t,
+        (None, Some(_)) => &empty,
+        (None, None) => return vec![Line::from(s("No conversation yet.", fg(colors().muted)))],
+    };
+    let mut out = vec![];
+    // Show a prompt sent from here at once; the transcript gets it only when Claude takes it.
+    if let Some(p) = sent.or(t.last_prompt.as_ref()) {
+        let mut you = vec![Line::from(s("❯ You", fg(colors().accent).bold()))];
         let lines: Vec<&str> = p.lines().collect();
         for l in lines.iter().take(MAX_PROMPT_LINES) {
-            out.push(Line::from(vec![s("│ ", fg(colors().accent)), s(l.chars().take(300).collect::<String>(), fg(colors().fg))]));
+            you.push(Line::from(s(l.chars().take(300).collect::<String>(), fg(colors().bright))));
         }
         if lines.len() > MAX_PROMPT_LINES {
-            out.push(Line::from(vec![s("│ ", fg(colors().accent)), s("…", fg(colors().dim))]));
+            you.push(Line::from(s("…", fg(colors().dim))));
         }
+        out.extend(card(you, width, tint(colors().accent, colors().bg, 0.18)));
         out.push(Line::default());
     }
-    if let Some(text) = &t.last_text {
-        out.push(Line::from(s("✻ Claude", fg(colors().claude).bold())));
+    let reply = if sent.is_some() { None } else { t.last_text.as_ref() };
+    if reply.is_none() && (sent.is_some() || a.status == Status::Working) {
+        let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold())), Line::from(s("Working on a reply…", fg(colors().muted).italic()))];
+        if let Some(tool) = a.session.as_ref().and_then(|s| s.tool.clone()).filter(|_| sent.is_none()) {
+            claude.push(Line::from(s(tool, fg(colors().dim))));
+        }
+        out.extend(card(claude, width, tint(colors().claude, colors().bg, 0.10)));
+    }
+    if let Some(text) = reply {
         let all: Vec<&str> = text.lines().collect();
         if all.len() > MAX_MESSAGE_LINES {
             out.push(Line::from(s("… earlier lines hidden, Enter opens the full conversation", fg(colors().dim).italic())));
         }
-        out.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
+        let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold()))];
+        claude.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
+        out.extend(card(claude, width, tint(colors().claude, colors().bg, 0.10)));
     }
     let mut parts: Vec<String> = t.model.iter().cloned().collect();
     if t.turns > 0 {
@@ -649,7 +744,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     let git = a.git.as_ref();
     let mut body_links = vec![];
     let body = match app.tab {
-        0 => chat_lines(a),
+        0 => chat_lines(app, a, app.hits.detail.width),
         1 => change_lines(git),
         3 => {
             let (lines, links) = pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t, app.hits.detail.width);
@@ -885,6 +980,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             let max_scroll = (side.body.len() as u16).saturating_sub(4);
             app.detail_scroll = app.detail_scroll.min(max_scroll);
             f.render_widget(Paragraph::new(side.body).wrap(Wrap { trim: false }).scroll((app.detail_scroll, 0)), body_area);
+            draw_selection(f, app, body_area);
             for (line, x, w, url) in &side.body_links {
                 let Some(y) = (*line as u16).checked_sub(app.detail_scroll).filter(|&y| y < body_area.height) else { continue };
                 let w = (*w).min(body_area.width.saturating_sub(*x));
