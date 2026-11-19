@@ -152,6 +152,8 @@ code in a separate git worktree of your local clone (under `~/.cache/claude-hub/
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
 then press `Enter`. Your own checkout is never touched. `x` on a review workspace closes it and
 deletes the checkout. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
+The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not
+gitlab.com, set it once, or the list stays empty: `glab config set --global host git.example.com`.
 
 Links in the panel (the `!140` line of an MR, "Open the thread in GitLab") are real terminal
 hyperlinks: Ctrl+click (Cmd+click on macOS) opens them in the browser of the computer you sit
