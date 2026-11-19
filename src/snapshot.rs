@@ -127,6 +127,8 @@ pub struct Snapshot {
     pub usage: Option<crate::usage::Usage>,
 }
 
+/// Keep a Claude ready for this many of the last selected workspaces, so moving between two of them finds one ready.
+const CLAUDE_TARGETS: usize = 2;
 const CLAUDE_MAX_AGE: Duration = Duration::from_secs(10 * 60);
 const CLAUDE_PAUSE: Duration = Duration::from_secs(60);
 /// Count a Claude as started after this long, even without a SessionStart event, as hooks may be missing.
@@ -175,7 +177,8 @@ struct Collector {
     screens: Arc<Mutex<ScreenCache>>,
     hub_socket: String,
     speculative: Option<String>,
-    claude_target: Option<String>,
+    /// Paths to keep a Claude ready for, last selected first.
+    claude_targets: Vec<String>,
     claude_spares: Vec<ClaudeSpare>,
     /// When a spare for a path last exited or failed to start.
     claude_pause: HashMap<String, Instant>,
@@ -199,7 +202,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             watched: vec![],
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
-            claude_target: None,
+            claude_targets: vec![],
             claude_spares: vec![],
             claude_pause: HashMap::new(),
             hub_seen: Instant::now(),
@@ -254,7 +257,9 @@ impl Collector {
                 }
                 Ok(Cmd::Prewarm(path)) => self.prewarm(path),
                 Ok(Cmd::PrewarmClaude(path)) => {
-                    self.claude_target = Some(path);
+                    self.claude_targets.retain(|p| *p != path);
+                    self.claude_targets.insert(0, path);
+                    self.claude_targets.truncate(CLAUDE_TARGETS);
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::ForgetMr(path)) => {
@@ -544,9 +549,9 @@ impl Collector {
         }
     }
 
-    /// Keep one Claude started for the workspace selected in the hub, or the directory
+    /// Keep a Claude started for the last workspaces selected in the hub, or directories
     /// highlighted in the picker, so c or Ctrl+O shows it at once.
-    /// Only one, as each takes a few hundred MB; replaced when old or on another branch,
+    /// Only a few, as each takes a few hundred MB; replaced when old or on another branch,
     /// as Claude reads the git state and CLAUDE.md files when it starts.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
     fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>) {
@@ -554,7 +559,7 @@ impl Collector {
             self.hub_seen = Instant::now();
         }
         let wanted: Vec<String> = self
-            .claude_target
+            .claude_targets
             .iter()
             .filter(|p| self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN && std::path::Path::new(p).is_dir())
             .cloned()
