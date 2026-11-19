@@ -2,15 +2,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
+use ratatui::text::Line;
 
 use crate::config::{Config, shorten};
 use crate::input::Input;
 use crate::picker::{self, Picker};
+use crate::screens::ScreenCache;
 use crate::snapshot::{Agent, Cmd, Snapshot, Workspace, basename};
 use crate::state::Status;
 use crate::tmux::{self, Fail, Res};
@@ -54,6 +57,7 @@ pub enum Action {
     Confirm(bool),
     Fold,
     FoldAll,
+    Type,
 }
 
 pub enum Modal {
@@ -69,6 +73,8 @@ pub enum Focus {
     List,
     Filter,
     Reply,
+    /// Keys go to the selected terminal.
+    Terminal,
 }
 
 pub struct Toast {
@@ -134,6 +140,16 @@ pub struct App {
     rescanning: bool,
     quit: bool,
     pub attach_to: Option<String>,
+    screens: Arc<Mutex<ScreenCache>>,
+    /// The screen of the terminal being typed into, fresher than the snapshot's.
+    pub live: Option<Live>,
+}
+
+pub struct Live {
+    pub pane: String,
+    pub lines: Vec<Line<'static>>,
+    /// (row, column) on the pane's screen.
+    pub cursor: Option<(u16, u16)>,
 }
 
 /// Positions are (row, column) in the panel's content, so they stay put when it scrolls.
@@ -149,7 +165,7 @@ pub const FLASH: Duration = Duration::from_millis(1500);
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
 impl App {
-    pub fn new(cfg: Config, cmd: Sender<Cmd>) -> Self {
+    pub fn new(cfg: Config, cmd: Sender<Cmd>, screens: Arc<Mutex<ScreenCache>>) -> Self {
         App {
             cfg,
             snap: Snapshot::default(),
@@ -181,6 +197,8 @@ impl App {
             rescanning: false,
             quit: false,
             attach_to: None,
+            screens,
+            live: None,
         }
     }
 
@@ -188,8 +206,14 @@ impl App {
         let mut last_request_check = Instant::now();
         while !self.quit {
             term.draw(|f| crate::ui::draw(f, self))?;
-            // Fast ticks only while something animates.
-            let timeout = if self.animating() { Duration::from_millis(80) } else { Duration::from_millis(250) };
+            // Fast ticks only while something animates, faster still while typing so echo feels immediate.
+            let timeout = if self.focus == Focus::Terminal {
+                Duration::from_millis(30)
+            } else if self.animating() {
+                Duration::from_millis(80)
+            } else {
+                Duration::from_millis(250)
+            };
             if event::poll(timeout)? {
                 // Drain queued input before the next frame, so held keys never lag behind.
                 loop {
@@ -217,11 +241,33 @@ impl App {
                 }
             }
             self.prewarm_claude();
+            self.update_live();
             if self.toast.as_ref().is_some_and(|t| t.at.elapsed() > t.life()) {
                 self.toast = None;
             }
         }
         Ok(())
+    }
+
+    /// While typing, read the terminal's screen every tick instead of waiting for the next snapshot.
+    fn update_live(&mut self) {
+        let pane = match (self.focus == Focus::Terminal, self.current_terminal()) {
+            (true, Some((_, w))) => (w.pane_id.clone(), w.width, w.height),
+            (true, None) => {
+                self.focus = Focus::List;
+                self.live = None;
+                return;
+            }
+            _ => {
+                self.live = None;
+                return;
+            }
+        };
+        let mut screens = self.screens.lock().unwrap();
+        let lines = screens.lines(&pane.0, pane.1, pane.2);
+        let cursor = screens.cursor(&pane.0);
+        drop(screens);
+        self.live = Some(Live { pane: pane.0, lines: lines.unwrap_or_default(), cursor });
     }
 
     /// Moving through the list only starts a Claude where the selection stays for a second.
@@ -467,6 +513,12 @@ impl App {
         let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo });
     }
 
+    pub fn current_terminal(&self) -> Option<(&Workspace, &crate::snapshot::Window)> {
+        let Some(Row::Terminal(wi, ti)) = self.current() else { return None };
+        let ws = self.snap.workspaces.get(wi)?;
+        Some((ws, ws.windows.get(ti)?))
+    }
+
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
             Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
@@ -568,6 +620,12 @@ impl App {
             Action::Approve => self.answer(true),
             Action::Deny => self.answer(false),
             Action::Filter => self.focus = Focus::Filter,
+            Action::Type => {
+                if self.current_terminal().is_some() {
+                    self.focus = Focus::Terminal;
+                    self.update_live();
+                }
+            }
             Action::Help => self.modal = Some(Modal::Help),
             Action::Leave => {
                 if tmux::inside_hub_server() {
@@ -1005,6 +1063,7 @@ impl App {
                 }
                 return;
             }
+            Focus::Terminal => return self.type_key(k),
             Focus::List => {}
         }
         let page = self.hits.list.height.max(2) as isize - 1;
@@ -1044,9 +1103,28 @@ impl App {
             KeyCode::Char(' ') => self.act(Action::Fold),
             KeyCode::Char('z') => self.act(Action::FoldAll),
             KeyCode::Char('/') => self.act(Action::Filter),
+            KeyCode::Char('i') => self.act(Action::Type),
             KeyCode::Char('?') => self.act(Action::Help),
             KeyCode::Char('q') => self.act(Action::Leave),
             _ => {}
+        }
+    }
+
+    /// Ctrl+] gives the keyboard back to the hub; every other key goes to the terminal.
+    fn type_key(&mut self, k: KeyEvent) {
+        // Legacy terminals report Ctrl+] as Ctrl+5.
+        if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char(']' | '5')) {
+            self.focus = Focus::List;
+            return;
+        }
+        let Some(pane) = self.current_terminal().map(|(_, w)| w.pane_id.clone()) else { return };
+        let Some(key) = tmux::key_for(k) else { return };
+        let r = match key {
+            Ok(text) => tmux::type_text(&tmux::socket_path(), &pane, &text),
+            Err(name) => tmux::send_key(&tmux::socket_path(), &pane, &name),
+        };
+        if let Err(e) = r {
+            self.notify(e, true);
         }
     }
 
@@ -1168,6 +1246,10 @@ impl App {
     }
 
     fn on_click(&mut self, pos: Position) {
+        // A click anywhere but the screen leaves typing; the screen's own button turns it back on.
+        if self.focus == Focus::Terminal {
+            self.focus = Focus::List;
+        }
         if let Some((_, action)) = self.hits.buttons.iter().find(|(r, _)| r.contains(pos)).cloned() {
             return self.act(action);
         }

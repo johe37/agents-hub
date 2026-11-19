@@ -170,7 +170,7 @@ struct Collector {
     reviews: Arc<crate::gitlab::ReviewCache>,
     notices: Arc<Mutex<Vec<(String, bool)>>>,
     transcripts: TranscriptCache,
-    screens: ScreenCache,
+    screens: Arc<Mutex<ScreenCache>>,
     hub_socket: String,
     speculative: Option<String>,
     claude_target: Option<String>,
@@ -186,7 +186,7 @@ struct Collector {
 }
 
 /// Start the collector thread. It sends a Snapshot whenever data may have changed.
-pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
+pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Receiver<Snapshot>) {
     let (cmd_tx, cmd_rx) = channel();
     let (snap_tx, snap_rx) = channel();
     std::thread::spawn(move || {
@@ -206,7 +206,7 @@ pub fn spawn(cfg: Config) -> (Sender<Cmd>, Receiver<Snapshot>) {
             reviews: Default::default(),
             notices: Default::default(),
             transcripts: TranscriptCache::default(),
-            screens: ScreenCache::default(),
+            screens,
             cfg,
         };
         c.run(cmd_rx, snap_tx);
@@ -405,13 +405,14 @@ impl Collector {
     fn previews(&mut self, workspaces: &mut [Workspace], all_panes: &[Pane]) {
         let _ = std::fs::create_dir_all(screens_dir());
         let piped: HashSet<&str> = all_panes.iter().filter(|p| p.piped).map(|p| p.pane_id.as_str()).collect();
+        let mut screens = self.screens.lock().unwrap();
         for w in workspaces.iter_mut().flat_map(|ws| ws.windows.iter_mut()).filter(|w| !w.is_claude()) {
             if !piped.contains(w.pane_id.as_str()) {
                 tmux::pipe_pane(&w.pane_id, &log_path(&w.pane_id).display().to_string());
             }
-            w.screen = self.screens.lines(&w.pane_id, w.width, w.height);
+            w.screen = screens.lines(&w.pane_id, w.width, w.height);
         }
-        self.screens.forget(&all_panes.iter().map(|p| p.pane_id.clone()).collect());
+        screens.forget(&all_panes.iter().map(|p| p.pane_id.clone()).collect());
     }
 
     fn agents(&self, workspaces: &[Workspace], elsewhere: Vec<Session>, mut live: Vec<Live>, closed: Vec<Session>) -> Vec<Agent> {

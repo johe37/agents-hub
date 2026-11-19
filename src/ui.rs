@@ -216,7 +216,7 @@ fn panel(title: Line<'static>, focused: bool) -> Block<'static> {
 }
 
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
-    let focused = app.modal.is_none() && app.focus != Focus::Reply;
+    let focused = app.modal.is_none() && matches!(app.focus, Focus::List | Focus::Filter);
     let block = panel(Line::default(), focused);
     let mut inner = block.inner(area);
     f.render_widget(block, area);
@@ -1063,14 +1063,28 @@ fn draw_terminal(f: &mut Frame, app: &mut App, area: Rect, wi: usize, ti: usize)
     ];
     f.render_widget(Paragraph::new(info_lines), info);
 
-    let screen_block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(fg(colors().border))
-        .title(s(" screen · ↵ to open ", fg(colors().dim)))
-        .style(Style::new().bg(colors().bar));
+    let live = app.live.as_ref().filter(|l| app.focus == Focus::Terminal && l.pane == w.pane_id);
+    let (border, title) = match live {
+        Some(_) => (fg(colors().accent), s(" typing · Ctrl+] or click outside to stop ", fg(colors().accent))),
+        None => (fg(colors().border), s(" screen · click or i to type · ↵ to open ", fg(colors().dim))),
+    };
+    let screen_block = Block::bordered().border_type(BorderType::Rounded).border_style(border).title(title).style(Style::new().bg(colors().bar));
     let screen_inner = screen_block.inner(screen_area);
     f.render_widget(screen_block, screen_area);
-    app.hits.buttons.push((screen_area, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
+    app.hits.buttons.push((screen_area, Action::Type));
+    if let Some(l) = live {
+        // Keep the cursor's row in view even when the rows below it are still blank.
+        let rows = l.lines.len().max(l.cursor.map_or(0, |(r, _)| r as usize + 1));
+        let skip = rows.saturating_sub(screen_inner.height as usize);
+        f.render_widget(Paragraph::new(l.lines.iter().skip(skip).cloned().collect::<Vec<_>>()).style(fg(colors().fg)), screen_inner);
+        if let Some((r, c)) = l.cursor {
+            let (y, x) = ((r as usize).saturating_sub(skip) as u16, c);
+            if (r as usize) >= skip && y < screen_inner.height && x < screen_inner.width {
+                f.set_cursor_position(Position::new(screen_inner.x + x, screen_inner.y + y));
+            }
+        }
+        return;
+    }
     match &w.screen {
         None => f.render_widget(
             Paragraph::new(s("Nothing captured yet. The preview starts with the next output in this terminal.", fg(colors().muted))).wrap(Wrap { trim: true }),
@@ -1418,6 +1432,7 @@ const HELP: &[(&str, &str)] = &[
     ("w", "jump to the next agent waiting for you"),
     ("↵ on closed", "resume a recently closed agent in a workspace"),
     ("r", "reply: type a message, Enter sends it to the agent"),
+    ("i", "type into the selected terminal from its preview; Ctrl+] stops"),
     ("y / d", "approve / deny a permission prompt"),
     ("j k / arrows", "move   g G  top / bottom"),
     ("h l / ← → / Tab", "previous / next panel tab: chat, changes, windows, pipeline (or 1–4)"),
@@ -1443,6 +1458,7 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "Mouse"),
     ("click", "select; click again or double-click to open"),
+    ("click screen", "type into the terminal; click elsewhere to stop"),
     ("wheel", "scroll the list or the detail panel"),
 ];
 

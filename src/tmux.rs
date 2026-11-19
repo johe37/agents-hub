@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::config::{shorten, state_dir};
 use crate::theme::*;
 
@@ -560,6 +562,44 @@ pub fn send_key(socket: &str, pane: &str, key: &str) -> Result<(), String> {
     on_socket(socket, &["send-keys", "-t", pane, key])
 }
 
+/// What send-keys needs to press key in a pane: Ok for text typed as is, Err for a tmux key name.
+pub fn key_for(k: KeyEvent) -> Option<Result<String, String>> {
+    let m = k.modifiers;
+    let mut prefix = String::new();
+    if m.contains(KeyModifiers::CONTROL) {
+        prefix.push_str("C-");
+    }
+    if m.contains(KeyModifiers::ALT) {
+        prefix.push_str("M-");
+    }
+    let name = match k.code {
+        KeyCode::Char(' ') if !prefix.is_empty() => "Space".into(),
+        KeyCode::Char(c) if prefix.is_empty() => return Some(Ok(c.to_string())),
+        KeyCode::Char(c) => c.to_lowercase().to_string(),
+        KeyCode::Enter => "Enter".into(),
+        KeyCode::Tab => "Tab".into(),
+        KeyCode::BackTab => "BTab".into(),
+        KeyCode::Backspace => "BSpace".into(),
+        KeyCode::Esc => "Escape".into(),
+        KeyCode::Up => "Up".into(),
+        KeyCode::Down => "Down".into(),
+        KeyCode::Left => "Left".into(),
+        KeyCode::Right => "Right".into(),
+        KeyCode::Home => "Home".into(),
+        KeyCode::End => "End".into(),
+        KeyCode::PageUp => "PPage".into(),
+        KeyCode::PageDown => "NPage".into(),
+        KeyCode::Delete => "DC".into(),
+        KeyCode::Insert => "IC".into(),
+        KeyCode::F(n) => format!("F{n}"),
+        _ => return None,
+    };
+    if m.contains(KeyModifiers::SHIFT) && !matches!(k.code, KeyCode::Char(_) | KeyCode::BackTab) {
+        prefix.push_str("S-");
+    }
+    Some(Err(format!("{prefix}{name}")))
+}
+
 /// Replace this process with a tmux client attached to session.
 pub fn exec_attach(config: &str, session: &str) -> std::io::Error {
     use std::os::unix::process::CommandExt;
@@ -580,6 +620,16 @@ mod tests {
         assert_eq!(unique_session_name(".dot", &[]), "dot");
         assert_eq!(unique_session_name("a", &["a".into(), "a-2".into()]), "a-3");
         assert_eq!(unique_session_name("", &[]), "workspace");
+    }
+
+    #[test]
+    fn keys_map_to_send_keys() {
+        let k = |c, m| key_for(KeyEvent::new(c, m));
+        assert_eq!(k(KeyCode::Char('A'), KeyModifiers::SHIFT), Some(Ok("A".into())));
+        assert_eq!(k(KeyCode::Char('c'), KeyModifiers::CONTROL), Some(Err("C-c".into())));
+        assert_eq!(k(KeyCode::Char('x'), KeyModifiers::ALT), Some(Err("M-x".into())));
+        assert_eq!(k(KeyCode::Left, KeyModifiers::CONTROL), Some(Err("C-Left".into())));
+        assert_eq!(k(KeyCode::Esc, KeyModifiers::NONE), Some(Err("Escape".into())));
     }
 
     #[test]

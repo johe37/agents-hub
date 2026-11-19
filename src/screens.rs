@@ -106,6 +106,12 @@ impl ScreenCache {
         Some(styled_lines(parser.screen()))
     }
 
+    /// Where the pane's cursor is, as (row, col), unless the program hides it.
+    pub fn cursor(&self, pane_id: &str) -> Option<(u16, u16)> {
+        let screen = self.screens.get(pane_id)?.0.screen();
+        (!screen.hide_cursor()).then(|| screen.cursor_position())
+    }
+
     /// Drop state and files of panes that no longer exist.
     pub fn forget(&mut self, live: &HashSet<String>) {
         self.screens.retain(|id, _| live.contains(id));
