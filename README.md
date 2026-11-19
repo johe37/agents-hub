@@ -2,7 +2,7 @@
 
 One place for your Claude Code sessions and the terminals around them.
 
-![The hub with three workspaces, one agent waiting for permission](docs/screenshot.png)
+![The hub with four workspaces, merge requests and one agent waiting for permission](docs/screenshot.png)
 
 The hub lists your **workspaces**, the ones that need you first. A workspace is a directory
 with its Claude sessions, shells and editors. Under each workspace you see its **agents**
