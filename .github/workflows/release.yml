@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  # Run by hand to create the releases that are missing, e.g. for tags pushed before this workflow.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,15 +14,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # checkout fetches the tag without its annotation, which holds the release notes.
-      - run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-      - name: Create the GitHub release
+      # checkout fetches tags without their annotation, which holds the release notes.
+      - run: git fetch --force --tags origin
+      - name: Create the GitHub releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" > notes.md
-          if [ -s notes.md ] && grep -q '[^[:space:]]' notes.md; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
+          versions=$(git tag -l '[0-9]*.[0-9]*.[0-9]*' --sort=v:refname)
+          newest=$(echo "$versions" | tail -n 1)
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tags=$GITHUB_REF_NAME
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+            have=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+            tags=$(echo "$versions" | grep -vxF -f <(echo "$have") || true)
           fi
+          for tag in $tags; do
+            git tag -l --format='%(contents:body)' "$tag" > notes.md
+            if grep -q '[^[:space:]]' notes.md; then
+              notes=(--notes-file notes.md)
+            else
+              notes=(--generate-notes)
+            fi
+            latest=$([ "$tag" = "$newest" ] && echo true || echo false)
+            gh release create "$tag" --verify-tag --title "$tag" --latest="$latest" "${notes[@]}"
+          done
