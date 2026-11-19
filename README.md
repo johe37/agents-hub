@@ -215,6 +215,11 @@ your last request, its last reply, changed files, windows, model and cost. `y`, 
 To start a new Claude in a repo, select its shop and press `c` (or click **new Claude here**).
 To start one anywhere else, press `c` (or `n`) with no shop selected, or click **+ New Claude**:
 search your repos, recent places and folders like the hub's picker, or type a path (`~/`, `/`).
+In a folder Claude has not worked in before, the town asks first: Claude's safety check would
+otherwise wait unseen in the new window, and its default answer (*No, exit*) closes Claude. Press
+`Enter` again or click **Trust and start**, and the hub answers the check with *Yes, I trust this
+folder* for you. A first task is sent once Claude is ready; with `claude-hub install-hooks` done
+that is as soon as Claude reports in, without hooks once its screen has settled.
 Type a first task, or leave it empty, and press `Enter`: Claude starts in a new window of the repo's
 workspace (the workspace is made if there is none), and the task is sent as soon as Claude is ready.
 The new agent shows up behind the counter; `Alt+Q` in the hub or the workspace's bar takes you to it. The counter in the corner

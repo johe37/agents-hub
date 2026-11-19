@@ -746,7 +746,7 @@ function lines(list, parent) {
 function select(h) {
   const changed = (h && h.kind + h.id) !== (selected && selected.kind + selected.id);
   selected = h ? { kind: h.kind, id: h.id } : null;
-  if (changed) { input.value = ''; setNote(''); tab = 0; starting = false; }
+  if (changed) { input.value = ''; setNote(''); tab = 0; starting = false; trustAsked = null; }
   renderPanel(true);
   draw();
 }
@@ -761,15 +761,33 @@ function beginStart() {
   input.focus();
 }
 
-async function startClaude(task) {
-  setNote('Starting Claude…');
+// A folder Claude has not worked in needs your word first: its safety check would close it otherwise.
+let trustAsked = null; // the shop or path the warning is about; Enter again (or the button) trusts it
+
+function askTrust(noteEl, message, onTrust) {
+  noteEl.replaceChildren(message + ' ');
+  const b = el('button', 'btn trustbtn', 'Trust and start');
+  b.type = 'button';
+  b.addEventListener('click', onTrust);
+  noteEl.append(b, el('span', '', ' or press Enter again'));
+  noteEl.className = 'note warn';
+}
+
+async function startClaude(task, trust) {
+  setNote(trust ? 'Starting Claude and trusting the folder…' : 'Starting Claude…');
   try {
     const res = await fetch('/api/act', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN },
-      body: JSON.stringify({ op: 'claude', shop: selected.id, text: task }),
+      body: JSON.stringify({ op: 'claude', shop: selected.id, text: task, trust: !!trust }),
     });
     const data = await res.json();
+    if (data.needs_trust) {
+      trustAsked = selected.id;
+      askTrust(note, data.error, async () => { if (await startClaude(task, true)) { input.value = ''; starting = false; renderPanel(true); } });
+      return false;
+    }
+    trustAsked = null;
     if (!res.ok) { setNote(data.error || 'Failed.', 'err'); return false; }
     setNote(data.ok, 'ok');
     return true;
@@ -927,8 +945,8 @@ async function act(op, a, textValue) {
 replyForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (selected && selected.kind === 'shop' && starting) {
-    // An empty task is fine: Claude just starts.
-    if (await startClaude(input.value.trim())) { input.value = ''; starting = false; input.blur(); renderPanel(true); }
+    // An empty task is fine: Claude just starts. Enter after the trust warning means "trust it".
+    if (await startClaude(input.value.trim(), trustAsked === selected.id)) { input.value = ''; starting = false; input.blur(); renderPanel(true); }
     return;
   }
   const a = selected && agents.get(selected.id);
@@ -951,6 +969,7 @@ function openPicker(query) {
   pkNote.textContent = ''; pkNote.className = 'note';
   pkQ.value = query || '';
   pkTask.value = '';
+  trustAsked = null;
   pkQ.focus();
   searchPlaces();
 }
@@ -1002,10 +1021,18 @@ function choosePlace() {
 }
 
 async function startPlace() {
-  pkNote.textContent = 'Starting Claude…'; pkNote.className = 'note';
+  const trust = trustAsked === pkPath;
+  pkNote.textContent = trust ? 'Starting Claude and trusting the folder…' : 'Starting Claude…'; pkNote.className = 'note';
   try {
-    const res = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN }, body: JSON.stringify({ op: 'claude', path: pkPath, text: pkTask.value.trim() }) });
+    const res = await fetch('/api/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Town-Token': TOKEN }, body: JSON.stringify({ op: 'claude', path: pkPath, text: pkTask.value.trim(), trust }) });
     const data = await res.json();
+    if (data.needs_trust) {
+      trustAsked = pkPath;
+      askTrust(pkNote, data.error, () => startPlace());
+      pkTask.focus();
+      return;
+    }
+    trustAsked = null;
     if (!res.ok) { pkNote.textContent = data.error || 'Failed.'; pkNote.className = 'note err'; return; }
     closePicker();
     if (typeof toast === 'function') toast(data.ok);

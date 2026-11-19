@@ -485,36 +485,146 @@ pub fn open_review(dir: &str, name: &str, prompt: &str) -> Result<String, String
     Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
 }
 
+/// Why Claude was not started.
+#[derive(Debug, PartialEq)]
+pub enum StartError {
+    /// Claude has not worked in this folder: it would stop at its safety check, whose default
+    /// answer ("No, exit") closes it. The caller asks the user first and comes back with `trust`.
+    NeedsTrust,
+    Failed(String),
+}
+
+/// Whether Claude trusts this folder already: it, or a folder above it, accepted in `~/.claude.json`.
+pub fn claude_trusts(path: &str) -> bool {
+    let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(crate::config::home);
+    let Some(v) = std::fs::read(dir.join(".claude.json")).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else { return false };
+    let projects = &v["projects"];
+    Path::new(&canonical(path)).ancestors().any(|a| projects[a.to_string_lossy().as_ref()]["hasTrustDialogAccepted"] == true)
+}
+
 /// Start Claude in a new window of the workspace for path, making the workspace (and the hub's tmux
 /// server) first if needed. No client is switched to it: the town starts agents in the background.
-/// A first task, if given, is typed in and sent once Claude is ready. Returns the workspace name.
-pub fn start_claude(path: &str, task: Option<String>, hub_key: &str) -> Result<String, String> {
+///
+/// In a folder Claude does not trust yet, it starts only with `trust` (the user said so), and then
+/// answers Claude's safety check with "Yes, I trust this folder". A first task, if given, is typed in
+/// and sent once Claude is ready, never into the safety check. Returns the workspace name.
+pub fn start_claude(path: &str, task: Option<String>, hub_key: &str, trust: bool) -> Result<String, StartError> {
+    let fail = StartError::Failed;
     if !Path::new(path).is_dir() {
-        return Err(format!("{path} is not a directory"));
+        return Err(fail(format!("{path} is not a directory")));
+    }
+    let trusted = claude_trusts(path);
+    if !trusted && !trust {
+        return Err(StartError::NeedsTrust);
     }
     if !server_running() {
         let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into());
         let conf = write_config(&exe, hub_key);
         ensure_hub(&exe, &conf);
     }
-    let session = ensure_workspace(path)?;
+    let session = ensure_workspace(path).map_err(fail)?;
     let target = format!("={session}:");
-    let out = run(&["new-window", "-t", &target, "-c", path, "-n", "claude", "-P", "-F", "#{pane_id}", "claude"]).ok_or("tmux not found")?;
+    let out = run(&["new-window", "-t", &target, "-c", path, "-n", "claude", "-P", "-F", "#{pane_id}", "claude"]).ok_or_else(|| fail("tmux not found".into()))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() { "tmux could not open a window".into() } else { err });
+        return Err(fail(if err.is_empty() { "tmux could not open a window".into() } else { err }));
     }
     let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if let Some(task) = task.filter(|t| !t.trim().is_empty()) {
-        // Claude drops typing until it is up, so wait for it in the background.
-        std::thread::spawn(move || {
-            if wait_for_claude(&pane) && type_text(&socket_path(), &pane, &task).is_ok() {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let _ = send_key(&socket_path(), &pane, "Enter");
-            }
-        });
+    let task = task.filter(|t| !t.trim().is_empty());
+    if !trusted || task.is_some() {
+        std::thread::spawn(move || look_after_start(&pane, !trusted, task));
     }
     Ok(session)
+}
+
+/// What a pane has shown, without escape codes and spaces, so words can be found in it.
+fn squashed(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // CSI (ESC [ ... letter), OSC (ESC ] ... BEL), or a two-character escape.
+            match chars.next() {
+                Some('[') => while let Some(n) = chars.next() { if n.is_ascii_alphabetic() || n == '~' { break } },
+                Some(']') => while let Some(n) = chars.next() { if n == '\x07' { break } },
+                _ => {}
+            }
+        } else if !c.is_whitespace() && !c.is_control() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Claude's first-run safety check, as it reads with the spaces taken out.
+const TRUST_PROMPT: &str = "Itrustthisfolder";
+
+/// Watch a freshly started Claude: answer the safety check when it comes (only when the user agreed),
+/// then send the first task once Claude is ready.
+fn look_after_start(pane: &str, answer_trust: bool, task: Option<String>) {
+    let log = crate::screens::log_path(pane);
+    let _ = std::fs::create_dir_all(crate::screens::screens_dir());
+    run(&["pipe-pane", "-o", "-t", pane, &format!("cat >> {}", quote(&log.display().to_string()))]);
+    let read = || std::fs::read(&log).unwrap_or_default();
+    let socket = socket_path();
+    let mut after = 0;
+    if answer_trust {
+        // Up to 20 s for the safety check, then move from "No, exit" to "Yes, I trust this folder".
+        for _ in 0..66 {
+            let bytes = read();
+            if squashed(&bytes).contains(TRUST_PROMPT) {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let _ = send_key(&socket, pane, "Down");
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = send_key(&socket, pane, "Enter");
+                after = read().len();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+    if let Some(task) = task {
+        if wait_until_ready(pane, &log, after) {
+            // Never into the safety check: it would take Enter as "No, exit".
+            let since = read().get(after..).map(squashed).unwrap_or_default();
+            if !since.contains(TRUST_PROMPT) && type_text(&socket, pane, &task).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = send_key(&socket, pane, "Enter");
+            }
+        }
+    }
+    run(&["pipe-pane", "-t", pane]);
+    let _ = std::fs::remove_file(&log);
+}
+
+/// Ready for typing: its hook says it started, or (without hooks) it drew its screen and has been
+/// quiet for a moment. At most 30 s.
+fn wait_until_ready(pane: &str, log: &Path, after: usize) -> bool {
+    let len = || std::fs::metadata(log).map(|m| m.len() as usize).unwrap_or(0);
+    let (mut last, mut quiet) = (len(), 0);
+    for _ in 0..100 {
+        if hook_started(pane) {
+            // shortcut: the input box appears a moment after SessionStart; wait for the prompt on screen if typing still gets lost.
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            return true;
+        }
+        let now = len();
+        quiet = if now == last { quiet + 1 } else { 0 };
+        last = now;
+        if now > after + 200 && quiet >= 6 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    false
+}
+
+/// Whether Claude in pane has reported its first hook event.
+fn hook_started(pane: &str) -> bool {
+    std::fs::read_dir(crate::hooks::events_dir()).into_iter().flatten().flatten().any(|e| {
+        std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).is_some_and(|v| v["tmux_pane"] == pane)
+    })
 }
 
 /// Wait until Claude in pane reports its first hook event: before that it drops typed input.
@@ -690,6 +800,32 @@ pub fn exec_attach(config: &str, session: &str) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_safety_check_is_found_through_escape_codes() {
+        let screen = b"\x1b[?25l\x1b[2K  \x1b[1m\xe2\x9d\xaf No, exit\x1b[0m\r\n    Yes, I \x1b[38;5;2mtrust\x1b[0m this folder\r\n\x1b]0;title\x07Enter to confirm";
+        let s = squashed(screen);
+        assert!(s.contains(TRUST_PROMPT), "{s}");
+        assert!(s.contains("No,exit") && s.contains("Entertoconfirm") && !s.contains("title"));
+    }
+
+    #[test]
+    fn trust_comes_from_the_folder_or_one_above_it() {
+        let dir = std::env::temp_dir().join(format!("claude-hub-trust-{}", std::process::id()));
+        let work = dir.join("work/repo");
+        std::fs::create_dir_all(&work).unwrap();
+        let real = |p: &Path| std::fs::canonicalize(p).unwrap().display().to_string();
+        let json = serde_json::json!({"projects": {real(&dir.join("work")): {"hasTrustDialogAccepted": true}, real(&dir): {"hasTrustDialogAccepted": false}}});
+        std::fs::write(dir.join(".claude.json"), json.to_string()).unwrap();
+        // SAFETY: tests that read CLAUDE_CONFIG_DIR run only here.
+        unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", &dir) };
+        assert!(claude_trusts(work.to_str().unwrap()), "a trusted parent counts");
+        assert!(claude_trusts(dir.join("work").to_str().unwrap()));
+        assert!(!claude_trusts(dir.to_str().unwrap()), "accepted: false is not trusted");
+        assert!(!claude_trusts("/"));
+        unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") };
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn verify_pane_needs_claudes_own_terminal() {

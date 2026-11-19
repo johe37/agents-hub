@@ -386,11 +386,20 @@ fn act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
             return err("400 Bad Request", "Write a shorter task (at most 4000 characters).");
         }
         let has_task = !task.is_empty();
-        let result = crate::tmux::start_claude(&shop, has_task.then_some(task), &shared.hub_key);
+        let trust = req["trust"] == true;
+        let result = crate::tmux::start_claude(&shop, has_task.then_some(task), &shared.hub_key, trust);
         let _ = cmd.lock().unwrap().send(Cmd::Refresh);
         return match result {
-            Ok(ws) => ("200 OK", json!({"ok": if has_task { format!("Started Claude in {ws}; it gets your task as soon as it is ready") } else { format!("Started Claude in {ws}") }})),
-            Err(e) => err("500 Internal Server Error", &e),
+            Ok(ws) => ("200 OK", json!({"ok": match (has_task, trust) {
+                (true, _) => format!("Started Claude in {ws}; it gets your task as soon as it is ready"),
+                (false, true) => format!("Started Claude in {ws}, and told it to trust the folder"),
+                (false, false) => format!("Started Claude in {ws}"),
+            }})),
+            Err(crate::tmux::StartError::NeedsTrust) => ("409 Conflict", json!({
+                "error": format!("Claude has not worked in {} before. If you trust it, Claude may read, edit and run files there.", shorten(&shop)),
+                "needs_trust": true,
+            })),
+            Err(crate::tmux::StartError::Failed(e)) => err("500 Internal Server Error", &e),
         };
     }
     let agent = {
