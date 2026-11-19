@@ -42,6 +42,8 @@ pub struct Session {
     pub notification_type: Option<String>,
     pub tool: Option<String>,
     pub permission_mode: Option<String>,
+    /// The Claude process: recorded by the hook, or found in Claude Code's registry.
+    pub pid: Option<u32>,
     path: PathBuf,
 }
 
@@ -54,6 +56,28 @@ impl Session {
         std::fs::write(&tmp, record.to_string())?;
         // shortcut: a hook event landing between the read and the rename is lost; the agent's next event fixes the status.
         std::fs::rename(&tmp, &self.path)
+    }
+}
+
+impl Session {
+    /// A made-up session, for the demo town.
+    pub fn demo(session_id: &str, cwd: &str, status: Status, timestamp: u64, tool: Option<&str>, notification_type: Option<&str>, message: Option<&str>) -> Session {
+        Session {
+            session_id: session_id.into(),
+            cwd: cwd.into(),
+            status,
+            timestamp,
+            tmux_socket: None,
+            tmux_pane: None,
+            tmux_session: None,
+            transcript_path: None,
+            message: message.map(String::from),
+            notification_type: notification_type.map(String::from),
+            tool: tool.map(String::from),
+            permission_mode: Some("default".into()),
+            pid: None,
+            path: PathBuf::new(),
+        }
     }
 }
 
@@ -94,13 +118,15 @@ fn read_event(path: PathBuf) -> Option<Session> {
         notification_type: opt(&event["notification_type"]).filter(|_| waiting),
         tool: (name == "PreToolUse").then(|| tool_summary(event["tool_name"].as_str(), &event["tool_input"])).flatten(),
         permission_mode: opt(&event["permission_mode"]),
+        pid: record["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
         path,
     })
 }
 
 /// Read the latest event of every session and mark dead ones stale.
 /// `live_panes(socket)` returns (pane_id, tmux_session) for the panes alive on that tmux server.
-pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_minutes: f64) -> Vec<Session> {
+/// `registry` maps session ids to their Claude process, from Claude Code's registry.
+pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_minutes: f64, registry: &HashMap<String, u32>) -> Vec<Session> {
     let now = now();
     let Ok(rd) = std::fs::read_dir(events_dir()) else { return vec![] };
     let mut sessions: Vec<Session> = rd
@@ -109,6 +135,21 @@ pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_m
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .filter_map(read_event)
         .collect();
+    for s in &mut sessions {
+        if let Some(&pid) = registry.get(&s.session_id) {
+            s.pid = Some(pid);
+        }
+    }
+    // A process runs one session at a time (/clear starts a new one), so older sessions of a pid are over.
+    let mut newest_of_pid: HashMap<u32, (u64, String)> = HashMap::new();
+    for s in sessions.iter().filter(|s| s.status.alive()) {
+        if let Some(pid) = s.pid {
+            let e = newest_of_pid.entry(pid).or_insert((0, String::new()));
+            if s.timestamp >= e.0 {
+                *e = (s.timestamp, s.session_id.clone());
+            }
+        }
+    }
 
     let mut newest_in_pane: HashMap<(String, String), (u64, String)> = HashMap::new();
     for s in sessions.iter().filter(|s| s.status.alive()) {
@@ -122,6 +163,17 @@ pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_m
 
     let mut live_cache: HashMap<String, HashMap<String, String>> = HashMap::new();
     for s in sessions.iter_mut().filter(|s| s.status.alive()) {
+        // With a known process, it alone says whether the session lives: a pane can hold several
+        // Claudes, for example in nvim terminals, which all report the pane nvim runs in.
+        if let Some(pid) = s.pid {
+            if !is_claude(pid) || newest_of_pid[&pid].1 != s.session_id {
+                s.status = Status::Stale;
+            } else if let (Some(sock), Some(pane)) = (&s.tmux_socket, &s.tmux_pane) {
+                let live = live_cache.entry(sock.clone()).or_insert_with(|| live_panes(sock).into_iter().collect());
+                s.tmux_session = live.get(pane).cloned();
+            }
+            continue;
+        }
         match (&s.tmux_socket, &s.tmux_pane) {
             (Some(sock), Some(pane)) => {
                 let live = live_cache.entry(sock.clone()).or_insert_with(|| live_panes(sock).into_iter().collect());
@@ -144,6 +196,26 @@ pub fn load_sessions(live_panes: impl Fn(&str) -> Vec<(String, String)>, stale_m
     }
     sessions.sort_by_key(|s| (s.status, std::cmp::Reverse(s.timestamp)));
     sessions
+}
+
+/// Whether pid is a running Claude process. The registry and hook records outlive crashed processes, and pids get reused.
+pub fn is_claude(pid: u32) -> bool {
+    comm(pid) == "claude"
+}
+
+pub fn comm(pid: u32) -> String {
+    std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim().to_string()).unwrap_or_default()
+}
+
+pub fn parent(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The command name is in parentheses and may hold spaces; the parent pid is the second field after it.
+    stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok().filter(|&p| p > 1)
+}
+
+/// The terminal a process reads from, e.g. /dev/pts/3.
+pub fn tty_of(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/fd/0")).ok().map(|p| p.display().to_string()).filter(|p| p.starts_with("/dev/"))
 }
 
 /// A running interactive Claude, from Claude Code's own registry.
@@ -170,8 +242,7 @@ pub fn live_claudes() -> Vec<Live> {
                 return None;
             }
             let pid = u32::try_from(v["pid"].as_u64()?).ok()?;
-            // The registry outlives crashed processes, and pids get reused.
-            if std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim() != "claude" {
+            if !is_claude(pid) {
                 return None;
             }
             let session_id = opt(&v["sessionId"]).filter(|id| valid_id(id))?;

@@ -30,10 +30,23 @@ pub fn report() {
     if event["notification_type"] == "agent_completed" {
         return;
     }
+    crate::messages::spot_send_keys(id, &event);
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let tmux = std::env::var("TMUX").unwrap_or_default();
+    // The Claude process that runs this hook, a parent or two up (Claude runs hooks through a shell).
+    let mut pid = std::process::id();
+    let mut claude = None;
+    for _ in 0..4 {
+        let Some(p) = crate::state::parent(pid) else { break };
+        if crate::state::is_claude(p) {
+            claude = Some(p);
+            break;
+        }
+        pid = p;
+    }
     let record = json!({
         "time": now,
+        "pid": claude,
         "tmux": tmux.split(',').next().unwrap_or(""),
         "tmux_pane": std::env::var("TMUX_PANE").unwrap_or_default(),
         "event": event,

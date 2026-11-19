@@ -187,31 +187,66 @@ claude-hub town            # opens the town in your browser
 claude-hub town --demo     # a made-up town, to see what it looks like
 ```
 
-The same data as the hub, drawn as a small pixel art town. Every workspace is a house,
-and so is every repo where an agent runs. Every agent is a person:
+The same data as the hub, drawn as a small pixel art town. Every git repo is a shop, and so
+is every directory outside a repo. Agents in the same repo share a shop, whether they run in
+the hub, in your own tmux or in a plain terminal; subdirectories and worktrees count as their
+repo. A shop grows a counter space for each agent and never moves once it has a lot.
 
 | You see | It means |
 |---|---|
-| Someone at a window, a tool icon above the roof (✎ edit, 🔍 search, ⚙ bash…) | Working |
-| Someone outside the door with a blinking **!**, and a **!** over the roof | Needs your permission |
-| Someone on the bench with a **?** bubble (a plain bubble when done) | Waits for your reply, or is done |
-| **z z z** | Asleep: idle for longer than `stale_minutes`, or stale |
-| A tent in the camp at the edge of town | Runs outside the hub |
+| Someone typing at the counter, a tool icon over the shop (✎ edit, 🔍 search, ⚙ bash…) | Working |
+| Someone at the door with a blinking **!**, and a **!** over the roof | Needs your permission |
+| A **?** bubble at the counter | Waits for your reply |
+| Head on the counter, **z z z** | Done with its turn, or stale |
+| Someone walking the street with a letter | Taking a message to another agent |
 
-On the houses, scaffolding or loose bricks mean uncommitted changes, a raised flag on the
-mailbox means commits to push, and a letter in it means commits to pull. A cottage without a
-mailbox is not a git repo. Smoking chimneys are terminals running something, lamp posts are
-open editors, and lit windows mean someone is active there. Hover a house for its branch.
+On the shop front, crates mean uncommitted changes, parcels right of the shop are commits to
+push and parcels left of the door are commits to pull. A shop with a plain wooden awning and
+no crates or parcels is not a git repo. Smoking chimneys are terminals running something,
+lamp posts are open editors, and a lit window means someone works there. Hover a shop for its
+branch.
 
-Click a house or a person to open the panel: what the agent waits for, the exact tool call
-it wants to run, your last request, its last reply, changed files, model and cost. You can
-reply, approve and deny from there, just like `r`, `y` and `d` in the hub. The counter in the
-corner shows how many agents wait for you; click it to go to the next one. Drag to move,
-scroll to zoom. The town follows your clock, and dark mode makes it night.
+Click a shop or a person to open the panel. It is the hub's own detail panel, built by the
+same code and in the same colours, so it shows what the hub shows: what the agent waits for,
+your last request, its last reply, changed files, windows, model and cost. `y`, `d`, `r` and
+`m` work there as in the hub, and `1`–`4` or `h`/`l` switch tabs. The counter in the corner
+shows how many agents wait for you; click it to go to the next one. Drag to move, scroll to
+zoom. The town follows your clock, and dark mode makes it night.
 
 The server listens on 127.0.0.1 only. The page gets a random token in its URL, and the
 server refuses requests without it or from other origins, so other web pages cannot see
 your agents or answer them. Options: `--port N`, `--no-open`.
+
+### Agents talking to each other
+
+```sh
+claude-hub send <agent-or-workspace> "Can you check the login tests?"
+```
+
+types the message into that agent, the way the hub's reply does. The target is a session id
+(or its first characters), a workspace, repo or directory name, or an agent's title. Run by an
+agent, the message starts with who sent it and how to answer, and in the town the sender walks
+over to the other shop, says it at the door and walks back. An agent running
+`tmux send-keys -t <pane>` to another agent's pane counts too. Each message is stored in
+`~/.local/state/claude-hub/messages/` for a day. `send` refuses an agent that waits for a
+permission answer, so a message never approves anything.
+
+### Claude in your own tmux, nvim or a plain terminal
+
+The hub finds every Claude, not only those in its own workspaces, and can type into one when
+its tmux pane is Claude's own terminal. Claude in an nvim `:terminal` works too, in or out of
+tmux: keys sent to the pane would go to nvim, so the hub writes to that terminal through nvim's
+RPC socket (`$NVIM`) instead. That reaches the right Claude whatever nvim shows and whichever
+mode it is in, also with several Claudes in one nvim. Claude inside other programs in a pane
+(screen, ssh) and in plain terminals outside tmux is read-only, with the reason in the panel.
+
+```sh
+claude-hub debug-sessions
+```
+
+lists every Claude session the hub finds: pid, directory, tmux socket and pane, whether its
+hook has reported, and whether the hub can type into it, and if not, why. If it says the hook
+never reported, run `claude-hub install-hooks` and start Claude again.
 
 ## Notes
 

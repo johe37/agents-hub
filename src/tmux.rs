@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 13] = [
+const FIELDS: [&str; 14] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -34,6 +34,7 @@ const FIELDS: [&str; 13] = [
     "pane_pipe",
     "pane_width",
     "pane_height",
+    "pane_tty",
 ];
 
 #[derive(Clone, Debug)]
@@ -50,6 +51,7 @@ pub struct Pane {
     pub piped: bool,
     pub width: u16,
     pub height: u16,
+    pub tty: String,
 }
 
 /// Why a tmux action did not complete in place.
@@ -212,7 +214,9 @@ pub fn source_config(config: &str, hub_key: &str) {
 /// Every pane on the hub server, including the hidden _hub and _pool sessions.
 pub fn list_all_panes() -> Vec<Pane> {
     let fmt = FIELDS.iter().map(|f| format!("#{{{f}}}")).collect::<Vec<_>>().join("\t");
-    let Some(out) = run(&["list-panes", "-a", "-F", &fmt]).filter(|o| o.status.success()) else { return vec![] };
+    // -u: without a UTF-8 locale tmux prints the tabs in the format as '_'.
+    let out = Command::new("tmux").args(["-u", "-L", SOCKET_NAME, "list-panes", "-a", "-F", &fmt]).output().ok();
+    let Some(out) = out.filter(|o| o.status.success()) else { return vec![] };
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|line| {
@@ -230,6 +234,7 @@ pub fn list_all_panes() -> Vec<Pane> {
                 piped: p[10] == "1",
                 width: p[11].parse().unwrap_or(80),
                 height: p[12].parse().unwrap_or(24),
+                tty: p[13].into(),
             })
         })
         .collect()
@@ -282,9 +287,54 @@ pub fn hub_visible() -> bool {
         .is_none_or(|o| String::from_utf8_lossy(&o.stdout).trim() != "0")
 }
 
+/// A pane on any tmux server, with the terminal its program runs on.
+pub struct PaneTty {
+    pub pane_id: String,
+    pub tty: String,
+    pub command: String,
+    pub place: String,
+}
+
+impl From<&Pane> for PaneTty {
+    fn from(p: &Pane) -> Self {
+        PaneTty { pane_id: p.pane_id.clone(), tty: p.tty.clone(), command: p.command.clone(), place: format!("{}:{}", p.session, p.window_index) }
+    }
+}
+
+/// Whether keys sent to pane reach the Claude with this pid, and if not, why.
+/// Claude may run nested in another terminal inside the pane (an nvim :terminal, screen, ssh), which
+/// gives it the pane's $TMUX_PANE; there keys would go to that program instead. So the pane must be
+/// Claude's own terminal.
+pub fn verify_pane(pid: Option<u32>, pane: &str, panes: &Result<Vec<PaneTty>, String>) -> Result<(), String> {
+    let panes = panes.as_ref().map_err(|e| format!("Its tmux server cannot be reached ({e})."))?;
+    let Some(p) = panes.iter().find(|p| p.pane_id == pane) else { return Err(format!("Its tmux pane {pane} is gone.")) };
+    match pid.and_then(crate::state::tty_of) {
+        Some(tty) if tty == p.tty => Ok(()),
+        Some(_) => Err(format!("It runs in a terminal inside {} (pane {pane}, {}), so keys sent to the pane would reach {}, not Claude.", p.command, p.place, p.command)),
+        None if p.command == "claude" => Ok(()),
+        None => Err(format!("Pane {pane} runs {}, and the hub cannot tell whether Claude reads from it.", p.command)),
+    }
+}
+
+/// Every pane on the tmux server at socket, or why it could not be asked.
+pub fn pane_ttys(socket: &str) -> Result<Vec<PaneTty>, String> {
+    let fmt = "#{pane_id}\t#{pane_tty}\t#{pane_current_command}\t#{session_name}:#{window_index}";
+    let out = Command::new("tmux").args(["-u", "-S", socket, "list-panes", "-a", "-F", fmt]).output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() == 4).then(|| PaneTty { pane_id: f[0].into(), tty: f[1].into(), command: f[2].into(), place: f[3].into() })
+        })
+        .collect())
+}
+
 /// Pane ids on any tmux server, given its socket path, as (pane_id, session_name).
 pub fn live_panes(socket: &str) -> Vec<(String, String)> {
-    let Ok(out) = Command::new("tmux").args(["-S", socket, "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}"]).output()
+    let Ok(out) = Command::new("tmux").args(["-u", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}\t#{session_name}"]).output()
     else {
         return vec![];
     };
@@ -533,14 +583,6 @@ fn on_socket(socket: &str, args: &[&str]) -> Result<(), String> {
     check(Command::new("tmux").arg("-S").arg(socket).args(args).output().ok())
 }
 
-/// Type text into a pane and press Enter, as if the user wrote it.
-pub fn send_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
-    type_text(socket, pane, text)?;
-    // Claude Code reads a burst of text as a paste and turns an Enter inside it into a newline; let the paste end first.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    on_socket(socket, &["send-keys", "-t", pane, "Enter"])
-}
-
 /// Type text into a pane without pressing Enter.
 pub fn type_text(socket: &str, pane: &str, text: &str) -> Result<(), String> {
     // Its own call: tmux reads a trailing ';' in any argument as a command separator and drops it.
@@ -616,6 +658,21 @@ pub fn exec_attach(config: &str, session: &str) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verify_pane_needs_claudes_own_terminal() {
+        let pane = |id: &str, cmd: &str| PaneTty { pane_id: id.into(), tty: "/dev/pts/999".into(), command: cmd.into(), place: "s:0".into() };
+        let panes = Ok(vec![pane("%1", "claude"), pane("%2", "nvim")]);
+        assert!(verify_pane(None, "%1", &panes).is_ok());
+        assert!(verify_pane(None, "%2", &panes).unwrap_err().contains("runs nvim"));
+        assert!(verify_pane(None, "%3", &panes).unwrap_err().contains("gone"));
+        // This test process runs on some other terminal (or none) than the made-up /dev/pts/999.
+        let me = std::process::id();
+        if crate::state::tty_of(me).is_some() {
+            assert!(verify_pane(Some(me), "%1", &panes).unwrap_err().contains("inside claude"));
+        }
+        assert!(verify_pane(None, "%1", &Err("no server".into())).unwrap_err().contains("cannot be reached"));
+    }
 
     #[test]
     fn session_names_are_valid_and_unique() {

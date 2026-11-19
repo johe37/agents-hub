@@ -1,10 +1,13 @@
 mod app;
 mod config;
+mod debug;
 mod fuzzy;
 mod git;
 mod gitlab;
 mod hooks;
 mod input;
+mod messages;
+mod nvim;
 mod picker;
 mod screens;
 mod snapshot;
@@ -21,13 +24,15 @@ use std::process::ExitCode;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | town [--port N] [--no-open] [--demo] | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | town [--port N] [--no-open] [--demo] | send <agent> <message> | debug-sessions | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
   town            show your workspaces as a pixel art town in the browser
+  send            send a message to an agent, the way the hub's reply does
+  debug-sessions  show every Claude session and how it matches a tmux pane
   report          hook handler: read hook JSON from stdin
   statusline      status line command: store plan usage for the hub
   install-hooks   add claude-hub hooks and status line to ~/.claude/settings.json";
@@ -99,6 +104,11 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let first = args.first().map(String::as_str);
     match first {
+        Some("send") => messages::send(config::load(), &args[1..]),
+        Some("debug-sessions") => {
+            debug::run(config::load());
+            ExitCode::SUCCESS
+        }
         Some("report") => {
             hooks::report();
             ExitCode::SUCCESS

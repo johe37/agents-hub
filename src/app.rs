@@ -956,8 +956,8 @@ impl App {
         let pick = agents.iter().map(|&i| &self.snap.agents[i]).filter(|a| a.target.is_some() && a.status.alive()).min_by_key(|a| a.status != Status::Idle).cloned();
         match pick {
             Some(a) => {
-                let (Some((sock, pane)), Some(ws), Some(w)) = (&a.target, &a.workspace, &a.window_id) else { return };
-                match tmux::type_text(sock, pane, &prompt) {
+                let (Some(input), Some(ws), Some(w)) = (&a.target, &a.workspace, &a.window_id) else { return };
+                match input.type_text(&prompt) {
                     Ok(()) => self.finish(tmux::jump_to_window(ws, w)),
                     Err(e) => self.notify(e, true),
                 }

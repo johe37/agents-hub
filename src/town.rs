@@ -15,19 +15,25 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::app::Action;
 use crate::config::{Config, shorten, state_dir};
 use crate::git::{GitCache, GitStatus};
-use crate::snapshot::{Agent, Cmd, Snapshot, basename};
+use crate::messages::{Message, resolve_target};
+use crate::snapshot::{Agent, Cmd, Snapshot, Workspace, basename};
 use crate::state::{Status, now};
+use crate::theme::{colors, css, lerp};
+use crate::ui::{Side, agent_side, reply_placeholder, window_lines, workspace_side};
 
 const PAGE: &str = include_str!("town/town.html");
 const SCRIPT: &str = include_str!("town/town.js");
 const MAX_BODY: usize = 64 * 1024;
 const MAX_REPLY: usize = 4000;
-const MAX_CALL: usize = 4000;
-const MAX_FILES: usize = 40;
+/// Text columns in the panel body (46em wide in town.html), for the chat cards.
+const PANEL_COLUMNS: u16 = 72;
 /// Lots per row of the town grid.
-const COLUMNS: u64 = 5;
+const COLUMNS: u64 = 4;
+/// Messages younger than this are sent to the page; it plays each one once.
+const MESSAGE_WINDOW: u64 = 600;
 
 pub const USAGE: &str = "usage: claude-hub town [--port N] [--no-open] [--demo]
 
@@ -100,12 +106,15 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
     };
 
     let mut lots = Lots::load(!demo);
+    let started = std::time::Instant::now();
     let shared = if demo {
         let shared = Arc::new(Shared::new(token, port, None));
         let s = shared.clone();
         std::thread::spawn(move || {
+            let git = GitCache::default();
             loop {
-                s.publish(&demo_model(&mut lots), None);
+                let (snap, messages) = demo_snapshot();
+                s.publish(&model(&snap, &cfg, &mut lots, &git, &messages, true, started.elapsed().as_millis()), None);
                 std::thread::sleep(Duration::from_secs(2));
             }
         });
@@ -116,9 +125,25 @@ pub fn run(cfg: Config, args: &[String]) -> std::process::ExitCode {
         let s = shared.clone();
         std::thread::spawn(move || {
             let git = GitCache::default();
-            for snap in snaps {
-                let model = model(&snap, &cfg, &mut lots, &git);
-                s.publish(&model, Some(snap));
+            let mut last: Option<Snapshot> = None;
+            let mut seen = mtime(&crate::messages::dir());
+            loop {
+                // A new snapshot, or a new message between snapshots: rebuild the town.
+                match snaps.recv_timeout(Duration::from_millis(300)) {
+                    Ok(snap) => last = Some(snap),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        let m = mtime(&crate::messages::dir());
+                        if m == seen {
+                            continue;
+                        }
+                        seen = m;
+                    }
+                    Err(_) => return,
+                }
+                let Some(snap) = &last else { continue };
+                let messages = crate::messages::recent(MESSAGE_WINDOW);
+                let model = model(snap, &cfg, &mut lots, &git, &messages, false, started.elapsed().as_millis());
+                s.publish(&model, Some(snap.clone()));
             }
         });
         shared
@@ -153,6 +178,10 @@ impl Shared {
             cmd: cmd.map(Mutex::new),
         }
     }
+}
+
+fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 fn random_token() -> Option<String> {
@@ -297,8 +326,17 @@ fn act(shared: &Shared, body: &[u8]) -> (&'static str, Value) {
         l.snap.as_ref().and_then(|s| s.agents.iter().find(|a| req["key"] == a.key.as_str()).cloned())
     };
     let Some(a) = agent else { return err("404 Not Found", "This agent is gone.") };
+    // m in the hub: stop showing it as waiting. Needs no pane.
+    if req["op"] == "done" {
+        let Some(sess) = a.session.as_ref().filter(|s| s.status == Status::Waiting) else { return err("409 Conflict", "Nothing here is waiting for you.") };
+        let _ = cmd.lock().unwrap().send(Cmd::Refresh);
+        return match sess.mark_done() {
+            Ok(()) => ("200 OK", json!({"ok": format!("Marked done → {}", a.title())})),
+            Err(e) => err("500 Internal Server Error", &e.to_string()),
+        };
+    }
     if !a.status.alive() || a.target.is_none() {
-        return err("409 Conflict", "This agent does not take input.");
+        return err("409 Conflict", a.read_only.as_deref().unwrap_or("This agent does not take input."));
     }
     // The page shows one tool call; never answer a newer prompt the user has not seen.
     if a.needs_permission() && req["ts"].as_u64() != Some(a.timestamp()) {
@@ -404,15 +442,12 @@ impl Lots {
 // ---------------------------------------------------------------- Model
 
 /// What the character does in the town.
-fn state(a: &Agent, stale_minutes: f64) -> Option<&'static str> {
-    let old = a.timestamp() > 0 && now().saturating_sub(a.timestamp()) as f64 > stale_minutes * 60.0;
+fn state(a: &Agent) -> Option<&'static str> {
     Some(match a.status {
         _ if a.needs_permission() => "permission",
         Status::Waiting => "waiting",
         Status::Working => "working",
-        Status::Idle if old => "asleep",
-        Status::Idle => "idle",
-        Status::Unknown | Status::Stale => "asleep",
+        Status::Idle | Status::Unknown | Status::Stale => "asleep",
         Status::Ended => return None,
     })
 }
@@ -439,183 +474,280 @@ fn terminal_kind(command: &str) -> &'static str {
 }
 
 fn git_json(g: &GitStatus) -> Value {
+    json!({"branch": g.branch, "dirty": g.dirty, "ahead": g.ahead, "behind": g.behind, "added": g.added, "removed": g.removed})
+}
+
+// ---- The TUI's detail panel as JSON. The content comes from ui::agent_side / ui::workspace_side, the same
+// functions the hub draws, so the town panel shows exactly what the hub shows.
+
+fn color(c: Option<ratatui::style::Color>) -> Value {
+    match c {
+        Some(c @ ratatui::style::Color::Rgb(..)) => Value::String(css(c)),
+        _ => Value::Null,
+    }
+}
+
+fn line_json(l: &ratatui::text::Line) -> Value {
+    use ratatui::style::Modifier;
+    Value::Array(
+        l.spans
+            .iter()
+            .map(|sp| {
+                let st = l.style.patch(sp.style);
+                let m = st.add_modifier;
+                let flags = [Modifier::BOLD, Modifier::ITALIC, Modifier::UNDERLINED, Modifier::DIM].iter().enumerate().filter(|(_, f)| m.contains(**f)).map(|(i, _)| 1 << i).sum::<u8>();
+                json!([sp.content, color(st.fg), color(st.bg), flags])
+            })
+            .collect(),
+    )
+}
+
+fn lines_json(lines: &[ratatui::text::Line]) -> Value {
+    Value::Array(lines.iter().map(line_json).collect())
+}
+
+fn action_name(a: &Action) -> &'static str {
+    match a {
+        Action::Approve => "approve",
+        Action::Deny => "deny",
+        Action::Reply => "reply",
+        Action::MarkDone => "done",
+        Action::Open => "resume",
+        Action::Adopt => "adopt",
+        _ => "other",
+    }
+}
+
+/// The panel in all four tabs; `side(tab)` builds it, `windows` is the Windows tab when there is a workspace.
+fn panel_json(side: impl Fn(usize) -> Side, windows: Option<Vec<ratatui::text::Line<'static>>>, reply: Option<String>) -> Value {
+    let first = side(0);
+    let c = colors();
+    let bodies: Vec<Value> = (0..4)
+        .map(|tab| match (&windows, tab) {
+            (Some(w), 2) => lines_json(w),
+            (_, 0) => lines_json(&first.body),
+            _ => lines_json(&side(tab).body),
+        })
+        .collect();
     json!({
-        "branch": g.branch,
-        "dirty": g.dirty,
-        "ahead": g.ahead,
-        "behind": g.behind,
-        "added": g.added,
-        "removed": g.removed,
-        "files": g.files.iter().take(MAX_FILES).map(|(st, p)| json!([st, p])).collect::<Vec<_>>(),
-        "more_files": g.files.len().saturating_sub(MAX_FILES),
+        "title": first.title,
+        "meta": line_json(&first.meta),
+        "color": css(first.color),
+        "banner_bg": css(lerp(c.bg, first.color, 0.12)),
+        "banner": lines_json(&first.banner),
+        "buttons": first.buttons.iter().map(|(key, label, col, action)| json!({
+            "key": key, "label": label, "bg": css(*col),
+            "fg": css(if *col == c.input { c.fg } else { c.bg }),
+            "action": action_name(action),
+        })).collect::<Vec<_>>(),
+        "tabs": first.tabs.iter().map(|(l, n)| json!([l, n])).collect::<Vec<_>>(),
+        "bodies": bodies,
+        "reply": reply,
     })
 }
 
-fn clip(s: &str, n: usize) -> String {
-    if s.chars().count() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
-}
-
-/// The exact tool call behind a permission prompt.
-fn call_json(a: &Agent) -> Value {
-    let Some((name, input)) = a.transcript.as_ref().and_then(|t| t.last_tool_call.as_ref()) else { return Value::Null };
-    let text = match input["command"].as_str() {
-        Some(cmd) if name == "Bash" => cmd.to_string(),
-        _ => serde_json::to_string_pretty(input).unwrap_or_default(),
-    };
-    json!({"name": name, "input": clip(&text, MAX_CALL)})
-}
-
-fn agent_json(a: &Agent, state: &str, house: Option<&String>, camp: bool) -> Value {
-    let t = a.transcript.as_ref();
-    let s = a.session.as_ref();
-    let tool = if state == "working" { s.and_then(|s| s.tool.clone()).or_else(|| t.and_then(|t| t.last_tool.clone())) } else { None };
-    let (headline, detail) = crate::ui::headline(a);
+fn theme_json() -> Value {
+    let c = colors();
     json!({
-        "key": a.key,
-        "title": clip(&a.title(), 200),
-        "state": state,
-        "house": house,
-        "camp": camp,
-        "workspace": a.workspace,
-        "path": shorten(&a.path),
-        "tool": tool,
-        "tool_kind": tool.as_deref().map(tool_kind),
-        "headline": headline,
-        "detail": detail,
-        "message": s.and_then(|s| s.message.clone()),
-        "call": if a.needs_permission() { call_json(a) } else { Value::Null },
-        "ts": a.timestamp(),
-        "prompt": t.and_then(|t| t.last_prompt.as_deref()).map(|p| clip(p, 2000)),
-        "reply": t.and_then(|t| t.last_text.clone()),
-        "model": t.and_then(|t| t.model.clone()),
-        "cost": t.and_then(|t| t.cost_usd),
-        "turns": t.map_or(0, |t| t.turns),
-        "mode": s.and_then(|s| s.permission_mode.clone()),
-        "session": a.session_id().map(|id| id.chars().take(8).collect::<String>()),
-        "can_reply": a.status.alive() && a.target.is_some(),
-        "background": a.background,
+        "bg": css(c.bg), "bar": css(c.bar), "border": css(c.border), "fg": css(c.fg), "bright": css(c.bright),
+        "muted": css(c.muted), "dim": css(c.dim), "accent": css(c.accent), "panel": css(c.panel), "input": css(c.input),
+        "warning": css(c.warning), "error": css(c.error), "success": css(c.success),
     })
 }
 
-struct House {
+struct Shop {
     name: String,
     git: Option<GitStatus>,
-    hub: bool,
-    terminals: Vec<Value>,
+    /// The hub workspaces in this repo.
+    workspaces: Vec<usize>,
+    agents: Vec<usize>,
 }
 
-fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache) -> Value {
-    let mut houses: Vec<(String, House)> = vec![];
-    let mut by_name: HashMap<String, String> = HashMap::new();
-    for ws in &snap.workspaces {
-        by_name.insert(ws.name.clone(), ws.path.clone());
-        let terminals = ws
-            .windows
-            .iter()
-            .filter(|w| !w.is_claude())
-            .map(|w| json!({"name": w.name, "command": w.command, "kind": terminal_kind(&w.command)}))
-            .collect();
-        houses.push((ws.path.clone(), House { name: ws.name.clone(), git: ws.git.clone(), hub: true, terminals }));
-    }
-    // The house that holds a directory: the deepest one around it.
-    let holder = |houses: &[(String, House)], path: &str| {
-        houses.iter().map(|(p, _)| p).filter(|p| path == *p || path.starts_with(&format!("{p}/"))).max_by_key(|p| p.len()).cloned()
-    };
+/// The repo root (worktrees resolve to their main repo), or the directory itself when it is not in a repo.
+fn shop_of(git: &GitCache, path: &str) -> String {
+    git.repo_root(path).unwrap_or_else(|| path.to_string())
+}
 
-    let mut agents = vec![];
-    let mut placed: Vec<(&Agent, &'static str)> = snap.agents.iter().filter_map(|a| Some((a, state(a, cfg.stale_minutes)?))).collect();
-    // Live agents first: their repos get a house, closed ones only move into houses that exist.
-    placed.sort_by_key(|(a, _)| !a.status.alive());
-    for (a, st) in placed {
-        let outside = a.workspace.is_none();
-        let mut house = a.workspace.as_ref().and_then(|n| by_name.get(n).cloned()).or_else(|| holder(&houses, &a.path));
-        if house.is_none() && a.status.alive() && !a.path.is_empty() {
-            let root = git.repo_root(&a.path).unwrap_or_else(|| a.path.clone());
-            houses.push((root.clone(), House { name: basename(&root), git: a.git.clone(), hub: false, terminals: vec![] }));
-            house = Some(root);
+fn model(snap: &Snapshot, cfg: &Config, lots: &mut Lots, git: &GitCache, messages: &[Message], demo: bool, t: u128) -> Value {
+    let _ = cfg;
+    let mut shops: Vec<(String, Shop)> = vec![];
+    fn shop<'a>(shops: &'a mut Vec<(String, Shop)>, root: &str, git: Option<&GitStatus>) -> &'a mut Shop {
+        let i = match shops.iter().position(|(r, _)| r == root) {
+            Some(i) => i,
+            None => {
+                shops.push((root.to_string(), Shop { name: basename(root), git: git.cloned(), workspaces: vec![], agents: vec![] }));
+                shops.len() - 1
+            }
+        };
+        &mut shops[i].1
+    }
+    for (wi, ws) in snap.workspaces.iter().enumerate() {
+        let root = shop_of(git, &ws.path);
+        shop(&mut shops, &root, ws.git.as_ref()).workspaces.push(wi);
+    }
+    // Every running agent works in the shop of its repo, wherever its session runs.
+    let mut placed: Vec<(usize, &'static str, String)> = vec![];
+    for (i, a) in snap.agents.iter().enumerate() {
+        let Some(st) = state(a) else { continue };
+        let ws = a.workspace.as_ref().and_then(|n| snap.workspaces.iter().find(|w| &w.name == n));
+        let root = ws.map_or_else(|| shop_of(git, &a.path), |w| shop_of(git, &w.path));
+        if a.path.is_empty() && ws.is_none() {
+            continue;
         }
-        // Agents outside the hub camp at the edge of town; so do closed ones without a house.
-        let camp = (outside && a.status.alive()) || house.is_none();
-        agents.push(agent_json(a, st, house.as_ref(), camp));
+        // Closed sessions only doze in shops that are open anyway.
+        if !a.status.alive() && !shops.iter().any(|(r, _)| *r == root) {
+            continue;
+        }
+        if a.status.alive() {
+            shop(&mut shops, &root, a.git.as_ref()).agents.push(i);
+        } else if let Some((_, s)) = shops.iter_mut().find(|(r, _)| *r == root) {
+            s.agents.push(i);
+        }
+        placed.push((i, st, root));
     }
 
-    let paths: Vec<String> = houses.iter().map(|(p, _)| p.clone()).collect();
+    let paths: Vec<String> = shops.iter().map(|(p, _)| p.clone()).collect();
     let lot = lots.assign(&paths);
-    let houses: Vec<Value> = houses
-        .into_iter()
-        .map(|(path, h)| {
+    let shops_json: Vec<Value> = shops
+        .iter()
+        .map(|(root, sh)| {
+            let wss: Vec<&Workspace> = sh.workspaces.iter().map(|&i| &snap.workspaces[i]).collect();
+            // One hub workspace: the panel is exactly the hub's. Several in one repo: their windows together.
+            let ws = match wss.as_slice() {
+                [one] => (*one).clone(),
+                _ => Workspace { name: sh.name.clone(), path: root.clone(), windows: wss.iter().flat_map(|w| w.windows.clone()).collect(), git: sh.git.clone(), mr: wss.iter().find_map(|w| w.mr.clone()) },
+            };
+            let agents: Vec<&Agent> = sh.agents.iter().map(|&i| &snap.agents[i]).collect();
+            let terminals: Vec<Value> = ws
+                .windows
+                .iter()
+                .filter(|w| !w.is_claude())
+                .map(|w| json!({"name": w.name, "command": w.command, "kind": terminal_kind(&w.command)}))
+                .collect();
             json!({
-                "id": path,
-                "name": h.name,
-                "path": shorten(&path),
-                "lot": lot.get(&path),
-                "hub": h.hub,
-                "git": h.git.as_ref().map(git_json),
-                "terminals": h.terminals,
+                "id": root,
+                "name": sh.name,
+                "path": shorten(root),
+                "lot": lot.get(root),
+                "git": sh.git.as_ref().map(git_json),
+                "terminals": terminals,
+                "panel": panel_json(|tab| workspace_side(&agents, &ws, tab, t, PANEL_COLUMNS), Some(window_lines(&ws, None)), None),
             })
         })
         .collect();
-    json!({"columns": COLUMNS, "demo": false, "houses": houses, "agents": agents, "time": now()})
+
+    let agents_json: Vec<Value> = placed
+        .iter()
+        .map(|(i, st, root)| {
+            let a = &snap.agents[*i];
+            let ws = a.workspace.as_ref().and_then(|n| snap.workspaces.iter().find(|w| &w.name == n));
+            let tool = (*st == "working").then(|| a.session.as_ref().and_then(|s| s.tool.clone()).or_else(|| a.transcript.as_ref().and_then(|t| t.last_tool.clone()))).flatten();
+            let reply = a.target.as_ref().map(|_| reply_placeholder(a));
+            json!({
+                "key": a.key,
+                "shop": root,
+                "state": st,
+                "title": a.title(),
+                "tool_kind": tool.as_deref().map(tool_kind),
+                "ts": a.timestamp(),
+                "panel": panel_json(|tab| agent_side(a, ws, tab, t, None, PANEL_COLUMNS), ws.map(|w| window_lines(w, a.window_id.as_deref())), reply),
+            })
+        })
+        .collect();
+
+    // Messages between agents that are both in town; a tmux send-keys target is resolved to its agent here.
+    let in_town = |key: &str| placed.iter().any(|(i, _, _)| snap.agents[*i].key == key);
+    let messages_json: Vec<Value> = messages
+        .iter()
+        .filter_map(|m| {
+            let from = m.from.as_deref().filter(|k| in_town(k))?;
+            let to = match &m.to {
+                Some(to) => to.clone(),
+                None => {
+                    let sender = snap.agents.iter().find(|a| a.key == from);
+                    resolve_target(snap, sender, m.target.as_deref()?, m.socket.as_deref())?.key.clone()
+                }
+            };
+            (to != from && in_town(&to)).then(|| json!({"id": m.id, "time": m.time, "from": from, "to": to, "preview": m.preview, "via": m.via}))
+        })
+        .collect();
+
+    json!({
+        "columns": COLUMNS,
+        "demo": demo,
+        "theme": theme_json(),
+        "shops": shops_json,
+        "agents": agents_json,
+        "messages": messages_json,
+        "time": now(),
+    })
 }
 
 // ---------------------------------------------------------------- Demo
 
-/// A made-up town whose agents change state now and then, for trying the page without real sessions.
-fn demo_model(lots: &mut Lots) -> Value {
-    let phase = (now() / 8) % 4;
-    let pick = |states: [&'static str; 4]| states[phase as usize];
-    let git = |branch: &str, dirty: usize, ahead: u32, behind: u32| {
-        let files: Vec<(String, String)> = (0..dirty).map(|i| (if i % 3 == 0 { "??" } else { ".M" }.into(), format!("src/file_{i}.rs"))).collect();
-        git_json(&GitStatus { branch: Some(branch.into()), dirty, ahead, behind, added: dirty as u32 * 7, removed: dirty as u32 * 2, files })
+/// A made-up snapshot whose agents change state now and then, and talk to each other every half minute.
+fn demo_snapshot() -> (Snapshot, Vec<Message>) {
+    use crate::snapshot::Window;
+    use crate::state::Session;
+    use crate::transcript::Transcript;
+    let now = now();
+    let phase = ((now / 8) % 4) as usize;
+    let gitst = |branch: &str, dirty: usize, ahead: u32, behind: u32| {
+        let files = (0..dirty).map(|i| (if i % 3 == 0 { "??" } else { ".M" }.to_string(), format!("src/file_{i}.rs"))).collect();
+        Some(GitStatus { branch: Some(branch.into()), dirty, ahead, behind, added: dirty as u32 * 7, removed: dirty as u32 * 2, files })
     };
-    let term = |name: &str, command: &str| json!({"name": name, "command": command, "kind": terminal_kind(command)});
-    let houses = [
-        ("/home/demo/repos/agents-hub", "agents-hub", Some(git("osbo/town", 3, 2, 0)), vec![term("zsh", "zsh"), term("nvim", "nvim")]),
-        ("/home/demo/repos/webshop", "webshop", Some(git("main", 0, 0, 1)), vec![term("server", "cargo"), term("nvim", "nvim")]),
-        ("/home/demo/notes", "notes", None, vec![]),
-        ("/home/demo/repos/infra", "infra", Some(git("fix/dns", 12, 0, 0)), vec![term("zsh", "zsh")]),
-        ("/home/demo/repos/website", "website", Some(git("main", 0, 1, 2)), vec![]),
+    let win = |i: u32, name: &str, cmd: &str| Window { index: i, name: name.into(), window_id: format!("@{i}{name}"), pane_id: format!("%{i}"), command: cmd.into(), claude: None, width: 80, height: 24, screen: None };
+    let ws = |name: &str, path: &str, git: Option<GitStatus>, windows: Vec<Window>| Workspace { name: name.into(), path: path.into(), windows, git, mr: None };
+    let workspaces = vec![
+        ws("agents-hub", "/home/demo/repos/agents-hub", gitst("osbo/town", 3, 2, 0), vec![win(1, "claude", "claude"), win(2, "zsh", "zsh"), win(3, "nvim", "nvim")]),
+        ws("webshop", "/home/demo/repos/webshop", gitst("main", 0, 0, 1), vec![win(1, "server", "cargo"), win(2, "nvim", "nvim")]),
+        ws("infra", "/home/demo/repos/infra", gitst("fix/dns", 12, 0, 0), vec![win(1, "zsh", "zsh")]),
     ];
-    let paths: Vec<String> = houses.iter().map(|h| h.0.to_string()).collect();
-    let lot = lots.assign(&paths);
-    let houses: Vec<Value> = houses
-        .into_iter()
-        .map(|(path, name, git, terminals)| {
-            json!({"id": path, "name": name, "path": path.replace("/home/demo", "~"), "lot": lot.get(path), "hub": true, "git": git, "terminals": terminals})
-        })
-        .collect();
-    let agent = |key: &str, title: &str, house: Option<&str>, camp: bool, state: &str, tool: Option<&str>| {
-        let (headline, detail) = match state {
-            "permission" => ("Needs your permission", tool),
-            "waiting" => ("Waiting for your input", None),
-            "working" => ("Working", tool),
-            "idle" => ("Done with its turn", Some("Enter opens it to continue.")),
-            _ => ("Closed", None),
+    let agent = |id: &str, title: &str, ws: Option<&str>, path: &str, states: [(&str, Option<&str>); 4], git: Option<GitStatus>| {
+        let (st, tool) = states[phase];
+        let status = match st {
+            "permission" | "waiting" => Status::Waiting,
+            "working" => Status::Working,
+            _ => Status::Idle,
         };
-        let call = (state == "permission").then(|| json!({"name": "Bash", "input": "cargo test --all -- --nocapture"}));
-        json!({
-            "key": key, "title": title, "state": state, "house": house, "camp": camp, "workspace": house.map(basename),
-            "path": house.unwrap_or("~/scratch").replace("/home/demo", "~"),
-            "tool": if state == "working" { tool } else { None }, "tool_kind": tool.filter(|_| state == "working").map(tool_kind),
-            "headline": headline, "detail": detail, "message": (state == "permission").then_some("Claude needs your permission to use Bash"),
-            "call": call, "ts": now(), "prompt": format!("Please {}.", title.to_lowercase()),
-            "reply": "I looked at the code and made the change. The tests pass.\n\nWant me to **commit** it?",
-            "model": "claude-opus-5-5", "cost": 1.23, "turns": 4, "mode": "default", "session": key.get(6..14),
-            "can_reply": false, "background": false,
-        })
+        let kind = match st {
+            "permission" => Some("permission_prompt"),
+            "waiting" => Some("idle_prompt"),
+            _ => None,
+        };
+        let msg = (st == "permission").then_some("Claude needs your permission to use Bash");
+        let session = Session::demo(id, path, status, now - 40, tool, kind, msg);
+        let mut t = Transcript::default();
+        t.title = Some(title.into());
+        t.last_prompt = Some(format!("Please {}.", title.to_lowercase()));
+        t.last_text = Some("I looked at the code and made the change. The tests pass.\n\nWant me to **commit** it?".into());
+        t.model = Some("claude-opus-5-5".into());
+        t.cost_usd = Some(1.23);
+        t.turns = 4;
+        t.last_tool = Some("Bash: cargo test --all".into());
+        t.last_tool_call = Some(("Bash".into(), json!({"command": "cargo test --all -- --nocapture"})));
+        Agent::demo(&format!("agent:{id}"), status, Some(session), ws, path, t, git)
     };
     let hub = "/home/demo/repos/agents-hub";
-    let shop = "/home/demo/repos/webshop";
     let agents = vec![
-        agent("agent:aaaaaaaa-1", "Add the town view", Some(hub), false, pick(["working", "working", "permission", "idle"]), Some("Edit: src/town.rs")),
-        agent("agent:bbbbbbbb-2", "Run the test suite", Some(hub), false, pick(["permission", "working", "working", "working"]), Some("Bash: cargo test")),
-        agent("agent:cccccccc-3", "Find the slow query", Some(shop), false, pick(["waiting", "waiting", "working", "idle"]), Some("Grep: SELECT")),
-        agent("agent:dddddddd-4", "Write release notes", Some("/home/demo/notes"), false, "asleep", None),
-        agent("agent:eeeeeeee-5", "Bump the DNS records", Some("/home/demo/repos/infra"), false, pick(["idle", "working", "working", "waiting"]), Some("WebFetch: https://example.com")),
-        agent("agent:ffffffff-6", "Read the website copy", Some("/home/demo/repos/website"), true, pick(["working", "idle", "permission", "working"]), Some("Read: index.md")),
-        agent("agent:99999999-7", "Old experiment", None, true, "asleep", None),
+        agent("aaaaaaaa-1", "Add the town view", Some("agents-hub"), hub, [("working", Some("Edit: src/town.rs")), ("working", Some("Grep: walk")), ("permission", None), ("idle", None)], gitst("osbo/town", 3, 2, 0)),
+        agent("bbbbbbbb-2", "Run the test suite", None, hub, [("permission", None), ("working", Some("Bash: cargo test")), ("working", Some("Read: Cargo.toml")), ("working", Some("Bash: cargo build"))], gitst("osbo/town", 3, 2, 0)),
+        agent("cccccccc-3", "Find the slow query", Some("webshop"), "/home/demo/repos/webshop", [("waiting", None), ("waiting", None), ("working", Some("Grep: SELECT")), ("idle", None)], gitst("main", 0, 0, 1)),
+        agent("dddddddd-4", "Write release notes", None, "/home/demo/notes", [("idle", None); 4], None),
+        agent("eeeeeeee-5", "Bump the DNS records", Some("infra"), "/home/demo/repos/infra", [("idle", None), ("working", Some("WebFetch: https://example.com")), ("working", Some("Task: check zones")), ("waiting", None)], gitst("fix/dns", 12, 0, 0)),
     ];
-    json!({"columns": COLUMNS, "demo": true, "houses": houses, "agents": agents, "time": now()})
+    // Every 30 s the town-view agent asks the webshop agent something, and gets an answer 12 s later.
+    let round = now / 30;
+    let mut messages = vec![];
+    for r in [round.saturating_sub(1), round] {
+        let at = r * 30;
+        messages.push(Message { id: format!("demo-q{r}"), time: at, from: Some("agent:aaaaaaaa-1".into()), to: Some("agent:cccccccc-3".into()), preview: "Which endpoint is slow on your side?".into(), via: "send".into(), target: None, socket: None });
+        if now >= at + 12 {
+            messages.push(Message { id: format!("demo-a{r}"), time: at + 12, from: Some("agent:cccccccc-3".into()), to: Some("agent:aaaaaaaa-1".into()), preview: "GET /orders, it scans the whole table.".into(), via: "send".into(), target: None, socket: None });
+        }
+    }
+    let messages = messages.into_iter().filter(|m| m.time <= now).collect();
+    (Snapshot { workspaces, agents, ..Default::default() }, messages)
 }
 
 #[cfg(test)]
@@ -623,7 +755,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lots_stay_put_when_houses_come_and_go() {
+    fn lots_stay_put_when_shops_come_and_go() {
         let mut lots = Lots { lots: HashMap::new(), save: false };
         let a = lots.assign(&["/a".into(), "/b".into()]);
         let b = lots.assign(&["/a".into(), "/b".into(), "/c".into(), "/0".into()]);
@@ -631,9 +763,26 @@ mod tests {
         assert_eq!(a["/b"], b["/b"]);
         let distinct: HashSet<u64> = b.values().copied().collect();
         assert_eq!(distinct.len(), 4);
-        // /b leaves and comes back to its lot.
         lots.assign(&["/a".into(), "/c".into()]);
         assert_eq!(lots.assign(&["/a".into(), "/b".into(), "/c".into()])["/b"], a["/b"]);
+    }
+
+    #[test]
+    fn subdirectories_and_worktrees_share_the_repo_shop() {
+        let dir = std::env::temp_dir().join(format!("claude-hub-shop-{}", std::process::id()));
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap().status.success(), "{args:?}");
+        git(&["init", "-q"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&["worktree", "add", "-q", dir.join("wt").to_str().unwrap()]);
+        let cache = GitCache::default();
+        let root = shop_of(&cache, repo.to_str().unwrap());
+        assert_eq!(shop_of(&cache, repo.join("src").to_str().unwrap()), root);
+        assert_eq!(shop_of(&cache, dir.join("wt").to_str().unwrap()), root);
+        // Not a repo: the directory is its own shop.
+        assert_eq!(shop_of(&cache, dir.to_str().unwrap()), dir.to_str().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -641,5 +790,22 @@ mod tests {
         assert!(same("abc", "abc"));
         assert!(!same("abc", "abd"));
         assert!(!same("abc", "ab"));
+    }
+
+    #[test]
+    fn demo_town_groups_by_repo_and_carries_the_hub_panel() {
+        crate::theme::select("dark-modern").ok();
+        let (snap, messages) = demo_snapshot();
+        let mut lots = Lots { lots: HashMap::new(), save: false };
+        let m = model(&snap, &Config::default(), &mut lots, &GitCache::default(), &messages, true, 0);
+        let shops = m["shops"].as_array().unwrap();
+        // agents-hub, webshop, infra, and notes, which has an agent but no hub workspace.
+        assert_eq!(shops.len(), 4);
+        let a2 = m["agents"].as_array().unwrap().iter().find(|a| a["key"] == "agent:bbbbbbbb-2").unwrap();
+        assert_eq!(a2["shop"], "/home/demo/repos/agents-hub", "an agent outside the hub shares the shop of its repo");
+        let agent = &m["agents"][0];
+        let text: String = agent["panel"]["bodies"][0].as_array().unwrap().iter().flat_map(|l| l.as_array().unwrap().iter().map(|s| s[0].as_str().unwrap().to_string())).collect();
+        assert!(text.contains("Please add the town view."), "{text}");
+        assert!(!messages.is_empty() || now() % 30 < 1);
     }
 }

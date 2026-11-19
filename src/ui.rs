@@ -605,8 +605,7 @@ fn draw_selection(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
-    let sent = app.sent.get(&a.key).map(|(text, _)| text);
+fn chat_lines(a: &Agent, sent: Option<&String>, width: u16) -> Vec<Line<'static>> {
     let empty = Transcript::default();
     let t = match (&a.transcript, sent) {
         (Some(t), _) => t,
@@ -695,23 +694,27 @@ fn change_lines(g: Option<&GitStatus>) -> Vec<Line<'static>> {
 }
 
 /// What the panel shows for an agent or workspace: a banner for what needs you, then tabs.
-struct Side {
-    title: String,
-    meta: Line<'static>,
-    color: Color,
-    banner: Vec<Line<'static>>,
-    buttons: Vec<(&'static str, &'static str, Color, Action)>,
-    tabs: [(&'static str, usize); 4],
-    body: Vec<Line<'static>>,
+/// Built here for both the hub and the town (town.rs renders it as HTML), so they always show the same.
+pub(crate) struct Side {
+    pub title: String,
+    pub meta: Line<'static>,
+    pub color: Color,
+    pub banner: Vec<Line<'static>>,
+    pub buttons: Vec<(&'static str, &'static str, Color, Action)>,
+    pub tabs: [(&'static str, usize); 4],
+    /// The open tab. The Windows tab (2) of a workspace is drawn from `window_lines`.
+    pub body: Vec<Line<'static>>,
     /// A banner line, by index, that Ctrl+click opens in the browser.
-    link: Option<(usize, String)>,
+    pub link: Option<(usize, String)>,
     /// Clickable parts of the body: (line, column, width, url).
-    body_links: Vec<BodyLink>,
+    pub body_links: Vec<BodyLink>,
 }
 
-type BodyLink = (usize, u16, u16, String);
+pub(crate) type BodyLink = (usize, u16, u16, String);
 
-fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
+/// The panel of an agent with tab open; ws is its workspace, if it has one.
+/// sent is a prompt sent from the hub that the transcript has not got yet; width is the body's width.
+pub(crate) fn agent_side(a: &Agent, ws: Option<&Workspace>, tab: usize, t: u128, sent: Option<&String>, width: u16) -> Side {
     let color = status_color(a.status);
     let (head, detail) = headline(a);
     let when = a.session.as_ref().map_or(String::new(), |s| format!("  · {}", age(s.timestamp)));
@@ -719,6 +722,9 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     if let Some(d) = detail {
         let style = if a.needs_permission() { fg(colors().bright).bg(colors().panel) } else { fg(colors().fg) };
         banner.push(Line::from(s(d.lines().next().unwrap_or_default().to_string(), style)));
+    }
+    if let Some(why) = a.read_only.as_ref().filter(|_| a.status.alive() && a.tmux.is_some()) {
+        banner.push(Line::from(s(format!("Read-only: {why}"), fg(colors().muted).italic())));
     }
     if a.workspace.is_none() && a.status.alive() {
         let where_ = a.session.as_ref().and_then(|s| s.tmux_session.clone()).map_or("its own terminal".into(), |s| format!("tmux session {s}"));
@@ -743,11 +749,11 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     }
     let git = a.git.as_ref();
     let mut body_links = vec![];
-    let body = match app.tab {
-        0 => chat_lines(app, a, app.hits.detail.width),
+    let body = match tab {
+        0 => chat_lines(a, sent, width),
         1 => change_lines(git),
         3 => {
-            let (lines, links) = pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t, app.hits.detail.width);
+            let (lines, links) = pipeline_lines(ws.and_then(|w| w.mr.as_ref()), t, width);
             body_links = links;
             lines
         }
@@ -767,10 +773,12 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     }
 }
 
-fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
-    let agents = app.agents_of(ws);
-    let count = |st: Status| agents.iter().filter(|&&i| app.snap.agents[i].status == st).count();
-    let (color, symbol, head, detail) = match app.worst(&agents) {
+/// The panel of a workspace with tab open, given the agents that belong to it.
+/// width is the body's width.
+pub(crate) fn workspace_side(agents: &[&Agent], ws: &Workspace, tab: usize, t: u128, width: u16) -> Side {
+    let count = |st: Status| agents.iter().filter(|a| a.status == st).count();
+    let worst = agents.iter().map(|a| a.status).filter(|s| s.alive()).min();
+    let (color, symbol, head, detail) = match worst {
         Some(st @ Status::Waiting) => {
             let n = count(st);
             (colors().warning, status_symbol(st, t), format!("{n} agent{} need{} you", plural(n), if n == 1 { "s" } else { "" }), None)
@@ -799,12 +807,11 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         }
     }
     let mut body_links = vec![];
-    let body = match app.tab {
+    let body = match tab {
         0 if agents.is_empty() => vec![Line::from(s("No agents yet. c starts Claude here.", fg(colors().muted)))],
         0 => agents
             .iter()
-            .flat_map(|&i| {
-                let a = &app.snap.agents[i];
+            .flat_map(|a| {
                 let (head, detail) = headline(a);
                 let style = if a.status == Status::Waiting { fg(colors().bright).bold() } else { fg(colors().fg) };
                 let detail = detail.map_or(String::new(), |d| format!(" · {}", d.lines().next().unwrap_or_default()));
@@ -817,7 +824,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
             .collect(),
         1 => change_lines(ws.git.as_ref()),
         3 => {
-            let (lines, links) = pipeline_lines(ws.mr.as_ref(), t, app.hits.detail.width);
+            let (lines, links) = pipeline_lines(ws.mr.as_ref(), t, width);
             body_links = links;
             lines
         }
@@ -888,9 +895,13 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         Some(Row::Agent(i)) => {
             let a = &app.snap.agents[i];
             let wi = a.workspace.as_ref().and_then(|n| app.snap.workspaces.iter().position(|w| &w.name == n));
-            (wi, agent_side(app, a, wi.map(|w| &app.snap.workspaces[w]), t))
+            (wi, agent_side(a, wi.map(|w| &app.snap.workspaces[w]), app.tab, t, app.sent.get(&a.key).map(|(text, _)| text), app.hits.detail.width))
         }
-        Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
+        Some(Row::Workspace(wi)) => {
+            let ws = &app.snap.workspaces[wi];
+            let agents: Vec<&Agent> = app.agents_of(ws).into_iter().map(|i| &app.snap.agents[i]).collect();
+            (Some(wi), workspace_side(&agents, ws, app.tab, t, app.hits.detail.width))
+        }
         Some(Row::Review(i)) => (None, review_side(app, &app.snap.reviews[i], t)),
         Some(Row::Header(title, n)) => {
             let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
@@ -993,28 +1004,49 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+/// The Windows tab: one line per window of the workspace, in window order. own marks the agent's window.
+pub(crate) fn window_lines(ws: &Workspace, own: Option<&str>) -> Vec<Line<'static>> {
+    if ws.windows.is_empty() {
+        return vec![Line::from(s("No windows. c starts Claude, t a terminal.", fg(colors().muted)))];
+    }
+    ws.windows
+        .iter()
+        .map(|w| {
+            let kind = if w.is_claude() { s("✻ ", fg(colors().claude)) } else { s("❯ ", fg(colors().muted)) };
+            let mut spans = vec![s(format!("{} ", w.index), fg(colors().dim)), kind, s(w.name.clone(), fg(colors().info).underlined())];
+            if w.command != w.name && w.command != "claude" {
+                spans.push(s(format!("  {}", w.command), fg(colors().dim)));
+            }
+            if own == Some(w.window_id.as_str()) {
+                spans.push(s("  ◂ this agent", fg(colors().dim)));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
 /// The workspace's windows, each clickable.
 fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option<&str>) {
     let ws = app.snap.workspaces[wi].clone();
-    if ws.windows.is_empty() {
-        f.render_widget(Paragraph::new(s("No windows. c starts Claude, t a terminal.", fg(colors().muted))), area);
-    }
-    for (n, w) in ws.windows.iter().enumerate() {
+    for (n, line) in window_lines(&ws, own).into_iter().enumerate() {
         let y = area.y + n as u16;
         if y >= area.bottom() {
             break;
         }
-        let kind = if w.is_claude() { s("✻ ", fg(colors().claude)) } else { s("❯ ", fg(colors().muted)) };
-        let mut spans = vec![s(format!("{} ", w.index), fg(colors().dim)), kind, s(w.name.clone(), fg(colors().info).underlined())];
-        if w.command != w.name && w.command != "claude" {
-            spans.push(s(format!("  {}", w.command), fg(colors().dim)));
-        }
-        if own == Some(w.window_id.as_str()) {
-            spans.push(s("  ◂ this agent", fg(colors().dim)));
-        }
         let rect = Rect { y, height: 1, ..area };
-        f.render_widget(Paragraph::new(Line::from(spans)), rect);
-        app.hits.buttons.push((rect, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
+        f.render_widget(Paragraph::new(line), rect);
+        if let Some(w) = ws.windows.get(n) {
+            app.hits.buttons.push((rect, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
+        }
+    }
+}
+
+/// The hint in an agent's empty reply box.
+pub(crate) fn reply_placeholder(a: &Agent) -> String {
+    if a.needs_permission() {
+        format!("Answer {}: y approves, d denies, or write what to do instead", a.name())
+    } else {
+        format!("Message to {} · r to type, Enter sends", a.name())
     }
 }
 
@@ -1024,11 +1056,8 @@ fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
         "Enter resolves the thread; write something first to post it as a reply".to_string()
     } else if let Some((_, mr, _)) = app.current_thread() {
         format!("Reply on !{} in GitLab · r to type, v to resolve, Enter posts", mr.iid)
-    } else if app.current_agent().unwrap().needs_permission() {
-        let a = app.current_agent().unwrap();
-        format!("Answer {}: y approves, d denies, or write what to do instead", a.name())
     } else {
-        format!("Message to {} · r to type, Enter sends", app.current_agent().unwrap().name())
+        reply_placeholder(app.current_agent().unwrap())
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)

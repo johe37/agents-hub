@@ -1,5 +1,6 @@
 //! Gathers tmux, hook, git and transcript data into a Snapshot, on a background thread.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -13,7 +14,7 @@ use crate::hooks::events_dir;
 use crate::screens::{ScreenCache, log_path, screens_dir};
 use crate::state::{Live, Session, Status, live_claudes, load_sessions, transcript_for};
 use crate::theme::{colors, css};
-use crate::tmux::{self, Pane};
+use crate::tmux::{self, Pane, PaneTty};
 use crate::transcript::{Transcript, TranscriptCache};
 
 /// Window name prefix for `claude attach` windows.
@@ -61,14 +62,62 @@ pub struct Agent {
     pub path: String,
     pub transcript: Option<Transcript>,
     pub git: Option<GitStatus>,
-    /// (tmux socket, pane id) where the agent reads its input.
-    pub target: Option<(String, String)>,
+    /// Where the agent reads its input, when the hub can type into it.
+    pub target: Option<Input>,
+    /// Why a running agent cannot be sent input, when it cannot.
+    pub read_only: Option<String>,
+    /// (tmux socket, pane) the agent reported, verified or not.
+    pub tmux: Option<(String, String)>,
     /// The Claude process, from Claude Code's registry; needed to adopt it.
     pub pid: Option<u32>,
     /// For agents without hook data, found through the registry.
     transcript_path: Option<String>,
     /// Lives in Claude Code's background daemon; reached with `claude attach`.
     pub background: bool,
+}
+
+/// Where an agent reads its input.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Input {
+    /// A tmux pane that is Claude's own terminal: keys go in with send-keys.
+    Tmux { socket: String, pane: String },
+    /// An nvim :terminal: text goes to the terminal over nvim's RPC socket, whatever nvim shows.
+    Nvim { socket: String, pid: u32 },
+}
+
+impl Input {
+    /// Type text without pressing Enter.
+    pub fn type_text(&self, text: &str) -> Result<(), String> {
+        match self {
+            Input::Tmux { socket, pane } => tmux::type_text(socket, pane, text),
+            Input::Nvim { socket, pid } => crate::nvim::send(socket, *pid, text),
+        }
+    }
+
+    /// Type text and press Enter, as if the user wrote it.
+    pub fn send_text(&self, text: &str) -> Result<(), String> {
+        self.type_text(text)?;
+        // Claude Code reads a burst of text as a paste and turns an Enter inside it into a newline; let the paste end first.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        self.send_key("Enter")
+    }
+
+    /// Press Enter or Escape.
+    pub fn send_key(&self, key: &str) -> Result<(), String> {
+        match self {
+            Input::Tmux { socket, pane } => tmux::send_key(socket, pane, key),
+            Input::Nvim { socket, pid } => crate::nvim::send(socket, *pid, if key == "Escape" { "\x1b" } else { "\r" }),
+        }
+    }
+}
+
+impl std::fmt::Display for Input {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Input::Tmux { socket, pane } => write!(f, "pane {pane} on {socket}"),
+            Input::Nvim { socket, .. } => write!(f, "its nvim terminal, through {socket}"),
+        }
+    }
 }
 
 impl Agent {
@@ -105,8 +154,10 @@ impl Agent {
             && self.session.as_ref().is_some_and(|s| s.notification_type.as_deref() == Some("permission_prompt"))
     }
 
-    fn input_pane(&self) -> Result<(&str, &str), String> {
-        self.target.as_ref().map(|(s, p)| (s.as_str(), p.as_str())).ok_or_else(|| "The hub does not know where this agent reads its input.".into())
+    fn input(&self) -> Result<&Input, String> {
+        self.target
+            .as_ref()
+            .ok_or_else(|| self.read_only.clone().unwrap_or_else(|| "The hub does not know where this agent reads its input.".into()))
     }
 
     /// Answer Claude Code's permission dialog: Enter takes the highlighted "Yes", Escape declines.
@@ -115,9 +166,37 @@ impl Agent {
         if !self.needs_permission() {
             return Err("This agent does not ask for permission now.".into());
         }
-        let (sock, pane) = self.input_pane()?;
         let (what, key) = if approve { ("Approved", "Enter") } else { ("Denied", "Escape") };
-        tmux::send_key(sock, pane, key).map(|_| what)
+        self.input()?.send_key(key).map(|_| what)
+    }
+
+    /// Type a message to the agent and send it, never as an answer to a permission prompt.
+    pub fn send_message(&self, text: &str) -> Result<(), String> {
+        if self.needs_permission() {
+            return Err(format!("{} is waiting for a permission answer; answer that first.", self.title()));
+        }
+        self.input()?.send_text(text)
+    }
+
+    /// A made-up agent, for the demo town.
+    pub fn demo(key: &str, status: Status, session: Option<Session>, workspace: Option<&str>, path: &str, transcript: Transcript, git: Option<GitStatus>) -> Agent {
+        Agent {
+            key: key.into(),
+            status,
+            session,
+            workspace: workspace.map(String::from),
+            window_id: None,
+            window_name: None,
+            path: path.into(),
+            transcript: Some(transcript),
+            git,
+            target: None,
+            read_only: Some("This is the demo town.".into()),
+            tmux: None,
+            pid: None,
+            transcript_path: None,
+            background: false,
+        }
     }
 
     /// y/n answers a permission prompt; anything else is typed to the agent and sent.
@@ -128,8 +207,7 @@ impl Agent {
         } else if self.needs_permission() && matches!(lower.as_str(), "n" | "no" | "d") {
             self.answer(false)
         } else {
-            let (sock, pane) = self.input_pane()?;
-            tmux::send_text(sock, pane, text).map(|_| "Sent")
+            self.input()?.send_text(text).map(|_| "Sent")
         }
     }
 }
@@ -215,14 +293,63 @@ struct Collector {
     tui: bool,
 }
 
+/// The panes of every tmux server asked so far in one collection round.
+struct Servers {
+    hub: String,
+    panes: RefCell<HashMap<String, Result<Vec<PaneTty>, String>>>,
+}
+
+impl Servers {
+    fn new(hub: &str, hub_panes: &[Pane]) -> Self {
+        let panes = HashMap::from([(hub.to_string(), Ok(hub_panes.iter().map(PaneTty::from).collect()))]);
+        Servers { hub: hub.to_string(), panes: RefCell::new(panes) }
+    }
+
+    /// Where keys reach this Claude, or why they cannot.
+    fn target(&self, pid: Option<u32>, tmux: Option<(String, String)>) -> Result<(String, String), String> {
+        let Some((socket, pane)) = tmux else { return Err("It runs in a terminal outside tmux, so the hub cannot type into it.".into()) };
+        let key = tmux::canonical(&socket);
+        let mut panes = self.panes.borrow_mut();
+        let list = panes.entry(key).or_insert_with(|| tmux::pane_ttys(&socket));
+        tmux::verify_pane(pid, &pane, list).map(|_| (socket, pane))
+    }
+
+    /// Where the hub can type to this Claude: its own tmux pane, else the nvim terminal it runs in.
+    fn input(&self, pid: Option<u32>, tmux: Option<(String, String)>) -> Result<Input, String> {
+        let pane = self.target(pid, tmux).map(|(socket, pane)| Input::Tmux { socket, pane });
+        match (pane, pid.and_then(|p| crate::nvim::socket_of(p).map(|s| (s, p)))) {
+            (Err(_), Some((socket, pid))) => Ok(Input::Nvim { socket, pid }),
+            (pane, _) => pane,
+        }
+    }
+
+    fn on_hub(&self, socket: &str) -> bool {
+        tmux::canonical(socket) == self.hub
+    }
+}
+
 /// Start the collector thread. It sends a Snapshot whenever data may have changed.
 /// With `tui` false (the town) it skips terminal previews, merge requests and pooled shells.
 pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>, tui: bool) -> (Sender<Cmd>, Receiver<Snapshot>) {
     let (cmd_tx, cmd_rx) = channel();
     let (snap_tx, snap_rx) = channel();
-    std::thread::spawn(move || {
+    std::thread::spawn(move || Collector::new(cfg, screens, tui).run(cmd_rx, snap_tx));
+    (cmd_tx, snap_rx)
+}
+
+/// One snapshot, collected the way the town does it.
+pub fn collect_once(cfg: Config) -> Snapshot {
+    Collector::new(cfg, Default::default(), false).collect()
+}
+
+fn mtime(path: &std::path::Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+impl Collector {
+    fn new(cfg: Config, screens: Arc<Mutex<ScreenCache>>, tui: bool) -> Self {
         let cached = load_dir_cache();
-        let mut c = Collector {
+        Collector {
             hub_socket: tmux::socket_path(),
             need_scan: cached.is_none(),
             watched: vec![],
@@ -240,17 +367,9 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>, tui: bool) -> (Sende
             screens,
             cfg,
             tui,
-        };
-        c.run(cmd_rx, snap_tx);
-    });
-    (cmd_tx, snap_rx)
-}
+        }
+    }
 
-fn mtime(path: &std::path::Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
-}
-
-impl Collector {
     fn run(&mut self, rx: Receiver<Cmd>, tx: Sender<Snapshot>) {
         let interval = Duration::from_secs_f64(self.cfg.refresh_seconds);
         let events = events_dir();
@@ -329,23 +448,25 @@ impl Collector {
         let panes: Vec<&Pane> = all_panes.iter().filter(|p| !p.session.starts_with('_')).collect();
         let hub_panes: Vec<(String, String)> = all_panes.iter().map(|p| (p.pane_id.clone(), p.session.clone())).collect();
         let hub_socket = self.hub_socket.clone();
-        let live = |socket: &str| if tmux::canonical(socket) == hub_socket { hub_panes.clone() } else { tmux::live_panes(socket) };
-        let sessions = load_sessions(live, self.cfg.stale_minutes);
+        let live_panes = |socket: &str| if tmux::canonical(socket) == hub_socket { hub_panes.clone() } else { tmux::live_panes(socket) };
+        let live = live_claudes();
+        let registry: HashMap<String, u32> = live.iter().map(|l| (l.session_id.clone(), l.pid)).collect();
+        let sessions = load_sessions(live_panes, self.cfg.stale_minutes, &registry);
+        let servers = Servers::new(&hub_socket, &all_panes);
 
-        let on_hub = |s: &Session| s.tmux_socket.as_deref().is_some_and(|sock| tmux::canonical(sock) == hub_socket);
+        let on_hub = |s: &Session| s.tmux_socket.as_deref().is_some_and(|sock| servers.on_hub(sock));
+        // Only sessions whose pane is Claude's own terminal belong to that hub window.
         let in_hub: HashMap<String, Session> = sessions
             .iter()
             .filter(|s| s.status.alive() && on_hub(s))
+            .filter(|s| servers.target(s.pid, s.tmux_socket.clone().zip(s.tmux_pane.clone())).is_ok())
             .filter_map(|s| Some((s.tmux_pane.clone()?, s.clone())))
             .collect();
         let mut closed: Vec<Session> = sessions.iter().filter(|s| !s.status.alive() && !s.cwd.is_empty()).cloned().collect();
         closed.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
         // Pane ids are only unique per tmux server, so check the socket too.
-        let elsewhere: Vec<Session> = sessions
-            .iter()
-            .filter(|s| s.status.alive() && !(on_hub(s) && s.tmux_pane.as_ref().is_some_and(|p| in_hub.contains_key(p))))
-            .cloned()
-            .collect();
+        let elsewhere: Vec<Session> =
+            sessions.iter().filter(|s| s.status.alive() && !in_hub.values().any(|h| h.session_id == s.session_id)).cloned().collect();
 
         let mut workspaces = self.workspaces(&panes, &in_hub);
         if self.tui {
@@ -361,7 +482,7 @@ impl Collector {
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
-        let agents = self.agents(&workspaces, elsewhere, live_claudes(), closed);
+        let agents = self.agents(&workspaces, elsewhere, live, closed, &servers);
         self.watched = agents.iter().filter(|a| a.status.alive()).filter_map(|a| a.transcript_file().map(String::from)).collect();
         write_summary(&sessions);
 
@@ -453,7 +574,7 @@ impl Collector {
         screens.forget(&all_panes.iter().map(|p| p.pane_id.clone()).collect());
     }
 
-    fn agents(&self, workspaces: &[Workspace], elsewhere: Vec<Session>, mut live: Vec<Live>, closed: Vec<Session>) -> Vec<Agent> {
+    fn agents(&self, workspaces: &[Workspace], elsewhere: Vec<Session>, mut live: Vec<Live>, closed: Vec<Session>, servers: &Servers) -> Vec<Agent> {
         let hub = tmux::socket_path();
         let in_pane = |l: &Live, socket: &str, pane: &str| l.tmux.as_ref().is_some_and(|(s, p)| p == pane && tmux::canonical(s) == tmux::canonical(socket));
         let mut agents = vec![];
@@ -474,7 +595,9 @@ impl Collector {
                     transcript: None,
                     background: false,
                     git: ws.git.clone(),
-                    target: Some((hub.clone(), w.pane_id.clone())),
+                    target: Some(Input::Tmux { socket: hub.clone(), pane: w.pane_id.clone() }),
+                    read_only: None,
+                    tmux: Some((hub.clone(), w.pane_id.clone())),
                 });
             }
         }
@@ -482,17 +605,27 @@ impl Collector {
         let statuses = par_map(&elsewhere, |s| (!s.cwd.is_empty()).then(|| git.repo_root(&s.cwd)).flatten().map(|r| git.status(&r)));
         for (s, st) in elsewhere.into_iter().zip(statuses) {
             // Same session, or the same pane when the registry lags behind a /clear.
-            let l = live.iter().position(|l| l.session_id == s.session_id || s.tmux_socket.as_deref().zip(s.tmux_pane.as_deref()).is_some_and(|(sock, p)| in_pane(l, sock, p))).map(|i| live.swap_remove(i));
+            // The same session; without a known pid, the same pane when the registry lags behind a /clear.
+            let l = live
+                .iter()
+                .position(|l| l.session_id == s.session_id || (s.pid.is_none() && s.tmux_socket.as_deref().zip(s.tmux_pane.as_deref()).is_some_and(|(sock, p)| in_pane(l, sock, p))))
+                .map(|i| live.swap_remove(i));
+            let pid = s.pid.or(l.as_ref().map(|l| l.pid));
+            let target = servers.input(pid, s.tmux_socket.clone().zip(s.tmux_pane.clone()));
+            // Nested in a hub window (say, an nvim terminal): it still belongs to that workspace.
+            let workspace = s.tmux_socket.as_deref().filter(|sock| servers.on_hub(sock)).and(s.tmux_session.clone()).filter(|n| !n.starts_with('_'));
             agents.push(Agent {
                 background: l.as_ref().is_some_and(|l| l.background),
-                pid: l.map(|l| l.pid),
+                pid,
                 transcript_path: None,
                 key: format!("agent:{}", s.session_id),
                 status: s.status,
-                target: s.tmux_socket.clone().zip(s.tmux_pane.clone()),
+                read_only: target.as_ref().err().cloned(),
+                target: target.ok(),
+                tmux: s.tmux_socket.clone().zip(s.tmux_pane.clone()),
                 path: s.cwd.clone(),
                 session: Some(s),
-                workspace: None,
+                workspace,
                 window_id: None,
                 window_name: None,
                 transcript: None,
@@ -501,7 +634,10 @@ impl Collector {
         }
         // Running Claudes that never reported through the hooks.
         for l in live.into_iter().filter(|l| !l.tmux.as_ref().is_some_and(|(s, _)| tmux::canonical(s) == hub)) {
+            let target = servers.input(Some(l.pid), l.tmux.clone());
             agents.push(Agent {
+                tmux: l.tmux.clone(),
+                read_only: target.as_ref().err().cloned(),
                 key: format!("agent:{}", l.session_id),
                 status: l.status,
                 session: None,
@@ -510,7 +646,7 @@ impl Collector {
                 window_name: None,
                 git: (!l.cwd.is_empty()).then(|| git.repo_root(&l.cwd)).flatten().map(|r| git.status(&r)),
                 transcript_path: transcript_for(&l.cwd, &l.session_id),
-                target: l.tmux,
+                target: target.ok(),
                 pid: Some(l.pid),
                 background: l.background,
                 path: l.cwd,
@@ -536,6 +672,8 @@ impl Collector {
                 status: s.status,
                 // The pane is gone or runs something else now, so never send it input.
                 target: None,
+                read_only: None,
+                tmux: None,
                 pid: None,
                 transcript_path: None,
                 path: s.cwd.clone(),
