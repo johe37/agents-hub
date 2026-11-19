@@ -55,3 +55,4 @@ echo "$notes"
 echo
 echo "Tagged $version with the notes above. Push with:"
 echo "  git push origin master $version"
+echo "The tag push creates the GitHub release with these notes."

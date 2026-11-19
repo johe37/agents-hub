@@ -206,5 +206,7 @@ touched. Run it outside tmux and it attaches at once. `scripts/demo.sh stop` rem
 
 ## Release
 
-`scripts/release.sh 0.6.0` sets the version in `Cargo.toml`, commits and tags.
-Then push with `git push origin master 0.6.0`.
+`scripts/release.sh 0.6.0` sets the version in `Cargo.toml`, commits and tags. Claude writes
+release notes from the commits since the last tag and the tag keeps them.
+Then push with `git push origin master 0.6.0`. The push of the tag starts a GitHub workflow
+that creates the GitHub release with these notes.
