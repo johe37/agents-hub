@@ -343,11 +343,15 @@ fn run_and_switch(session: &str, commands: Vec<Cmd>) -> Res {
         commands.push(cmd(&["switch-client", "-t", &format!("={session}")]));
     }
     if !commands.is_empty() {
-        let args = chain(&commands);
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        simple(&refs)?;
+        run_chain(&commands).map_err(Fail::Error)?;
     }
     if inside { Ok(()) } else { Err(Fail::Attach(session.to_string())) }
+}
+
+fn run_chain(commands: &[Cmd]) -> Result<(), String> {
+    let args = chain(commands);
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    check(run(&refs))
 }
 
 pub fn switch_client(session: &str) -> Res {
@@ -365,15 +369,15 @@ fn create_commands(name: &str, path: &str, window: &str, command: Option<&str>, 
         cmd(&["set-option", "-t", &target, "@workspace_path", path]),
         cmd(&["set-option", "-t", &target, "@workspace_label", &shorten(path)]),
     ];
-    let mut out = match (spare, command) {
-        // A session always starts with a window, so start with a cheap placeholder and swap in the spare shell.
-        (Some(spare), None) => vec![
+    let mut out = match spare {
+        // A session always starts with a window, so start with a cheap placeholder and swap in the spare.
+        Some(spare) => vec![
             cmd(&["new-session", "-d", "-s", name, "-c", path, "-n", "_placeholder", "cat"]),
             cmd(&["move-window", "-s", spare, "-t", &target]),
             cmd(&["kill-window", "-t", &format!("={name}:_placeholder")]),
             cmd(&["rename-window", "-t", spare, window]),
         ],
-        _ => {
+        None => {
             let mut c = cmd(&["new-session", "-d", "-s", name, "-c", path, "-n", window]);
             c.extend(command.map(String::from));
             vec![c]
@@ -384,10 +388,11 @@ fn create_commands(name: &str, path: &str, window: &str, command: Option<&str>, 
 }
 
 pub fn create_workspace(name: &str, path: &str, window: &str, command: Option<&str>, spare: Option<&str>) -> Res {
-    match run_and_switch(name, create_commands(name, path, window, command, spare)) {
-        Err(Fail::Error(_)) if spare.is_some() => run_and_switch(name, create_commands(name, path, window, command, None)),
-        r => r,
+    // Switch only after the spare is in, so a failing switch never makes a second session.
+    if spare.is_some() && run_chain(&create_commands(name, path, window, command, spare)).is_ok() {
+        return run_and_switch(name, vec![]);
     }
+    run_and_switch(name, create_commands(name, path, window, command, None))
 }
 
 /// The workspace for path, created (without switching) if needed.
@@ -454,16 +459,14 @@ pub fn canonical(path: &str) -> String {
 /// Open a window, taken from the pool when spare is a pre-started window that runs command.
 pub fn new_window(session: &str, cwd: &str, name: &str, command: Option<&str>, spare: Option<&str>) -> Res {
     if let Some(spare) = spare {
-        let r = run_and_switch(
-            session,
-            vec![
-                cmd(&["move-window", "-s", spare, "-t", &format!("={session}:")]),
-                cmd(&["rename-window", "-t", spare, name]),
-                cmd(&["select-window", "-t", spare]),
-            ],
-        );
-        if !matches!(r, Err(Fail::Error(_))) {
-            return r;
+        // Switch only after the spare is in, so a failing switch never starts a second window.
+        let moved = run_chain(&[
+            cmd(&["move-window", "-s", spare, "-t", &format!("={session}:")]),
+            cmd(&["rename-window", "-t", spare, name]),
+            cmd(&["select-window", "-t", spare]),
+        ]);
+        if moved.is_ok() {
+            return run_and_switch(session, vec![]);
         }
     }
     let mut c = cmd(&["new-window", "-t", &format!("={session}:"), "-c", cwd, "-n", name]);
