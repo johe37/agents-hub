@@ -68,9 +68,10 @@ fn run_ui(cfg: config::Config) -> ExitCode {
     if tmux::inside_hub_server() {
         tmux::hide_hub_status();
     }
-    let (cmd, snaps) = snapshot::spawn(cfg.clone());
+    let screens = std::sync::Arc::default();
+    let (cmd, snaps) = snapshot::spawn(cfg.clone(), std::sync::Arc::clone(&screens));
     let mouse = cfg.mouse;
-    let mut app = app::App::new(cfg.clone(), cmd);
+    let mut app = app::App::new(cfg.clone(), cmd, screens);
     let mut term = ratatui::init();
     if mouse {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
