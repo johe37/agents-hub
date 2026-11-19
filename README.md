@@ -114,8 +114,8 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
-| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** starts open; **To review** and **Recently closed** start folded |
-| Hub | `z` | Fold every workspace, **To review** and **Recently closed**, or unfold them all when all are folded |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Local workspaces** starts open; **Merge requests to review** and **Recently closed Claude sessions** start folded |
+| Hub | `z` | Fold every workspace, **Merge requests to review** and **Recently closed Claude sessions**, or unfold them all when all are folded |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
@@ -154,7 +154,7 @@ first time), `v` resolves the thread with a "Fixed in <commit>" reply you can ed
 with its status and duration.
 
 **Reviewing others' merge requests.** MRs where you are a requested reviewer are listed under
-**TO REVIEW**, newest activity first, with author, pipeline and open threads. The panel shows the
+**MERGE REQUESTS TO REVIEW**, newest activity first, with author, pipeline and open threads. The panel shows the
 description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
 code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
