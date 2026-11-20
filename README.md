@@ -198,7 +198,15 @@ cost come from the same file.
   for 15 minutes.
   Turn it off with `prewarm_claude = false`.
 - `claude-hub ui` runs only the hub UI in the current terminal, without the tmux engine.
-- To stop everything: `tmux -L claude-hub kill-server`.
+
+### Restart or stop
+
+- `claude-hub restart` restarts the hub UI, for example when it froze. Workspaces and
+  agents keep running.
+- `claude-hub stop` stops the tmux engine. This closes all workspaces with their agents
+  and terminals, so it asks first. Add `-y` to skip the question.
+- To stop the status reports, remove the `claude-hub report` hooks from
+  `~/.claude/settings.json`.
 
 ## Screenshot demo
 

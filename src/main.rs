@@ -15,17 +15,20 @@ mod transcript;
 mod ui;
 mod usage;
 
+use std::io::Write;
 use std::process::ExitCode;
 
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | restart | stop [-y] | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
+  restart         restart a frozen hub UI; workspaces and agents keep running
+  stop            stop the tmux engine and close all workspaces and agents
   report          hook handler: read hook JSON from stdin
   statusline      status line command: store plan usage for the hub
   install-hooks   add claude-hub hooks and status line to ~/.claude/settings.json";
@@ -62,6 +65,44 @@ fn open_hub(cfg: &config::Config, target: Option<String>) -> ExitCode {
     }
     eprintln!("claude-hub: {}", tmux::exec_attach(&conf, &session));
     ExitCode::FAILURE
+}
+
+fn restart() -> ExitCode {
+    if !tmux::server_running() {
+        eprintln!("claude-hub: the hub is not running");
+        return ExitCode::FAILURE;
+    }
+    // Without a hub session, open_hub starts a new one.
+    if tmux::list_sessions().iter().any(|s| s == tmux::HUB_SESSION) {
+        if let Err(e) = tmux::restart_hub(&exe()) {
+            eprintln!("claude-hub: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    open_hub(&config::load(), None)
+}
+
+fn stop(yes: bool) -> ExitCode {
+    if !tmux::server_running() {
+        println!("The hub is not running.");
+        return ExitCode::SUCCESS;
+    }
+    if !yes {
+        let workspaces = tmux::list_sessions().iter().filter(|s| !s.starts_with('_')).count();
+        print!("Stop the hub and close {workspaces} workspace(s) with all their agents and terminals? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        let _ = std::io::stdin().read_line(&mut answer);
+        if answer.trim().to_lowercase() != "y" {
+            println!("Aborted.");
+            return ExitCode::FAILURE;
+        }
+    }
+    if let Err(e) = tmux::kill_server() {
+        eprintln!("claude-hub: {e}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_ui(cfg: config::Config) -> ExitCode {
@@ -110,6 +151,8 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             ExitCode::SUCCESS
         }
+        Some("restart") => restart(),
+        Some("stop") => stop(args.iter().any(|a| a == "-y" || a == "--yes")),
         Some("ui") => {
             let mut cfg = config::load();
             cfg.mouse &= !args.iter().any(|a| a == "--no-mouse");

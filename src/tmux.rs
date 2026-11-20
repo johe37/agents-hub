@@ -188,10 +188,19 @@ pub fn ensure_hub(exe: &str, config: &str) {
     } else {
         let current = run(&["show-options", "-gqv", "@hub_version"]).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
         if current.as_deref() != Some(version.as_str()) {
-            run(&["respawn-pane", "-k", "-t", &format!("={HUB_SESSION}:"), &hub_cmd]);
+            let _ = restart_hub(exe);
         }
     }
     run(&["set-option", "-g", "@hub_version", &version]);
+}
+
+/// Kill the hub UI and start a new one. Workspaces and agents keep running.
+pub fn restart_hub(exe: &str) -> Result<(), String> {
+    check(run(&["respawn-pane", "-k", "-t", &format!("={HUB_SESSION}:"), &format!("{exe} ui")]))
+}
+
+pub fn kill_server() -> Result<(), String> {
+    check(run(&["kill-server"]))
 }
 
 pub fn server_running() -> bool {
