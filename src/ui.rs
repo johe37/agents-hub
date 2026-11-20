@@ -59,21 +59,6 @@ fn status_color(status: Status) -> Color {
     }
 }
 
-/// Share of the context window in use.
-fn context_fill(tokens: u64) -> f32 {
-    // shortcut: transcripts don't name the window size; assume 200k until usage proves it is a 1M window.
-    let window = if tokens > 200_000 { 1_000_000 } else { 200_000 };
-    (tokens as f32 / window as f32).min(1.0)
-}
-
-fn context_gauge(tokens: u64) -> Vec<Span<'static>> {
-    let c = colors();
-    let fill = context_fill(tokens);
-    let color = if fill < 0.5 { lerp(c.success, c.warning, fill * 2.0) } else { lerp(c.warning, c.error, (fill - 0.5) * 2.0) };
-    let n = (fill * 8.0).round() as usize;
-    vec![s("▰".repeat(n), fg(color)), s("▱".repeat(8 - n), fg(c.border)), s(format!(" {:>3}%", (fill * 100.0).round()), fg(c.dim))]
-}
-
 /// How long the agent has waited for you, warming from yellow to red over 15 minutes.
 fn waiting_timer(since: u64) -> Span<'static> {
     let mins = crate::state::now().saturating_sub(since) as f32 / 60.0;
@@ -370,13 +355,8 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             let mut right = vec![];
             if a.status == Status::Waiting && a.session.is_some() {
                 right.push(waiting_timer(a.timestamp()));
-            } else {
-                if let Some(tokens) = a.transcript.as_ref().and_then(|t| t.context_tokens).filter(|_| a.status.alive()) {
-                    right.extend(context_gauge(tokens));
-                }
-                if a.session.is_some() {
-                    right.push(s(format!(" {:>3}", age(a.timestamp())), fg(colors().dim)));
-                }
+            } else if a.session.is_some() {
+                right.push(s(format!("{:>3}", age(a.timestamp())), fg(colors().dim)));
             }
             if !detail.is_empty() {
                 // The title keeps at least half the room; the detail gets the rest.
@@ -1568,6 +1548,8 @@ fn draw_picker(f: &mut Frame, p: &mut Picker, area: Rect, hit: &mut Rect) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn pipeline_boxes_line_up_and_wrap() {
         let job = |id, stage: &str, name: &str, status: &str| gitlab::Job { id, name: name.into(), stage: stage.into(), status: status.into(), duration: None, url: format!("https://x/jobs/{id}") };
@@ -1609,14 +1591,5 @@ mod tests {
         assert!(buf[(2, 0)].symbol().contains(' '), "the space inside the link is linked too");
         assert_eq!(buf[(4, 0)].symbol(), " ", "nothing after the text is linked");
         assert_eq!(buf[(0, 0)].diff_option, CellDiffOption::ForcedWidth(std::num::NonZeroU16::MIN));
-    }
-
-    use super::*;
-
-    #[test]
-    fn context_fill_picks_window() {
-        assert_eq!(context_fill(100_000), 0.5);
-        assert_eq!(context_fill(500_000), 0.5);
-        assert_eq!(context_fill(5_000_000), 1.0);
     }
 }
