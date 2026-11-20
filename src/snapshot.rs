@@ -219,6 +219,9 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
     (cmd_tx, snap_rx)
 }
 
+/// How often transcript writes alone may start a round.
+const REPLY_EVERY: Duration = Duration::from_millis(500);
+
 fn mtime(path: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
@@ -233,7 +236,8 @@ impl Collector {
         loop {
             let mut due = last.elapsed() >= interval;
             let r: Vec<_> = self.watched.iter().map(|p| mtime(p.as_ref())).collect();
-            if r != replies {
+            // A working agent writes its transcript many times a second; a full round for each would keep the collector busy.
+            if r != replies && last.elapsed() >= REPLY_EVERY {
                 replies = r;
                 due = true;
             }
