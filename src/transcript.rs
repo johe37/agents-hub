@@ -7,7 +7,14 @@ use std::sync::Mutex;
 use serde_json::Value;
 
 const TEXT_LIMIT: usize = 3000;
+const EARLIER_TURNS: usize = 4;
 const INPUT_KEYS: [&str; 8] = ["command", "file_path", "pattern", "query", "url", "skill", "description", "prompt"];
+
+#[derive(Clone, Debug)]
+pub struct Turn {
+    pub prompt: String,
+    pub reply: Option<String>,
+}
 
 #[derive(Clone, Default, Debug)]
 pub struct Transcript {
@@ -15,6 +22,8 @@ pub struct Transcript {
     pub first_prompt: Option<String>,
     pub last_prompt: Option<String>,
     pub last_text: Option<String>,
+    /// The turns before the last prompt, oldest first.
+    pub earlier: Vec<Turn>,
     pub last_tool: Option<String>,
     pub model: Option<String>,
     pub turns: u32,
@@ -74,7 +83,12 @@ fn apply(t: &mut Transcript, r: &Value) {
         Some("user") => {
             if let Some(text) = prompt_text(r) {
                 t.first_prompt.get_or_insert_with(|| text.clone());
-                t.last_prompt = Some(text);
+                if let Some(prompt) = t.last_prompt.replace(text) {
+                    t.earlier.push(Turn { prompt, reply: t.last_text.clone() });
+                    if t.earlier.len() > EARLIER_TURNS {
+                        t.earlier.remove(0);
+                    }
+                }
                 t.turns += 1;
                 // A new turn: the previous reply no longer answers the prompt on show.
                 t.last_text = None;
@@ -186,6 +200,9 @@ mod tests {
         assert_eq!(t.last_tool.as_deref(), Some("Bash: ls"));
         apply(&mut t, &json!({"type": "user", "message": {"content": "next"}}));
         assert_eq!(t.last_text, None);
+        assert_eq!(t.earlier.len(), 1);
+        assert_eq!(t.earlier[0].prompt, "fix the bug");
+        assert_eq!(t.earlier[0].reply.as_deref(), Some("done"));
     }
 
     #[test]

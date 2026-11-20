@@ -441,6 +441,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
 // ---- detail panel ----
 
 const MAX_PROMPT_LINES: usize = 6;
+const EARLIER_REPLY_LINES: usize = 4;
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
@@ -592,6 +593,28 @@ fn draw_selection(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+fn you_card(prompt: &str, width: u16) -> Vec<Line<'static>> {
+    let mut you = vec![Line::from(s("❯ You", fg(colors().accent).bold()))];
+    let lines: Vec<&str> = prompt.lines().collect();
+    for l in lines.iter().take(MAX_PROMPT_LINES) {
+        you.push(Line::from(s(l.chars().take(300).collect::<String>(), fg(colors().bright))));
+    }
+    if lines.len() > MAX_PROMPT_LINES {
+        you.push(Line::from(s("…", fg(colors().dim))));
+    }
+    card(you, width, tint(colors().accent, colors().bg, 0.18))
+}
+
+fn claude_card(text: &str, max_lines: usize, width: u16) -> Vec<Line<'static>> {
+    let all: Vec<&str> = text.lines().collect();
+    let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold()))];
+    if all.len() > max_lines {
+        claude.push(Line::from(s("…", fg(colors().dim))));
+    }
+    claude.extend(markdown(&all[all.len().saturating_sub(max_lines)..].join("\n")));
+    card(claude, width, tint(colors().claude, colors().bg, 0.10))
+}
+
 fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
     let sent = app.sent.get(&a.key).map(|(text, _)| text);
     let empty = Transcript::default();
@@ -603,15 +626,7 @@ fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
     let mut out = vec![];
     // Show a prompt sent from here at once; the transcript gets it only when Claude takes it.
     if let Some(p) = sent.or(t.last_prompt.as_ref()) {
-        let mut you = vec![Line::from(s("❯ You", fg(colors().accent).bold()))];
-        let lines: Vec<&str> = p.lines().collect();
-        for l in lines.iter().take(MAX_PROMPT_LINES) {
-            you.push(Line::from(s(l.chars().take(300).collect::<String>(), fg(colors().bright))));
-        }
-        if lines.len() > MAX_PROMPT_LINES {
-            you.push(Line::from(s("…", fg(colors().dim))));
-        }
-        out.extend(card(you, width, tint(colors().accent, colors().bg, 0.18)));
+        out.extend(you_card(p, width));
         out.push(Line::default());
     }
     let reply = if sent.is_some() { None } else { t.last_text.as_ref() };
@@ -623,13 +638,10 @@ fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
         out.extend(card(claude, width, tint(colors().claude, colors().bg, 0.10)));
     }
     if let Some(text) = reply {
-        let all: Vec<&str> = text.lines().collect();
-        if all.len() > MAX_MESSAGE_LINES {
+        if text.lines().count() > MAX_MESSAGE_LINES {
             out.push(Line::from(s("… earlier lines hidden, Enter opens the full conversation", fg(colors().dim).italic())));
         }
-        let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold()))];
-        claude.extend(markdown(&all[all.len().saturating_sub(MAX_MESSAGE_LINES)..].join("\n")));
-        out.extend(card(claude, width, tint(colors().claude, colors().bg, 0.10)));
+        out.extend(claude_card(text, MAX_MESSAGE_LINES, width));
     }
     let mut parts: Vec<String> = t.model.iter().cloned().collect();
     if t.turns > 0 {
@@ -646,7 +658,28 @@ fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
         out.push(Line::default());
         out.push(Line::from(s(parts.join(" · "), fg(colors().dim))));
     }
-    out
+    let mut turns: Vec<(&String, Option<&String>)> = t.earlier.iter().map(|e| (&e.prompt, e.reply.as_ref())).collect();
+    if let (Some(_), Some(p)) = (sent, &t.last_prompt) {
+        turns.push((p, t.last_text.as_ref()));
+    }
+    // Earlier turns go above the last one, only as many as fit, so the last one never scrolls away.
+    let room = (app.hits.detail.height as usize).saturating_sub(1);
+    let mut earlier = vec![];
+    for (prompt, reply) in turns.into_iter().rev() {
+        let mut lines = you_card(prompt, width);
+        if let Some(r) = reply {
+            lines.push(Line::default());
+            lines.extend(claude_card(r, EARLIER_REPLY_LINES, width));
+        }
+        lines.push(Line::default());
+        if lines.len() + earlier.len() + out.len() > room {
+            break;
+        }
+        lines.append(&mut earlier);
+        earlier = lines;
+    }
+    earlier.append(&mut out);
+    earlier
 }
 
 fn change_lines(g: Option<&GitStatus>) -> Vec<Line<'static>> {
