@@ -31,6 +31,8 @@ pub enum Row {
     Thread(usize, usize),
     /// An open MR where you are a requested reviewer, by index into the snapshot's reviews.
     Review(usize),
+    /// An open issue assigned to you, by index into the snapshot's issues.
+    Issue(usize),
     /// Stands in for the workspaces until there are any, so a new user sees how to open one.
     NewWorkspace,
 }
@@ -194,7 +196,7 @@ impl App {
             hits: Hits::default(),
             changed: HashMap::new(),
             folded: HashSet::new(),
-            open_sections: HashSet::from([WORKSPACES]),
+            open_sections: HashSet::from([WORKSPACES, OTHER]),
             last_click: None,
             prewarm_pending: None,
             claude_target: None,
@@ -382,9 +384,10 @@ impl App {
     fn owner(&self) -> Option<String> {
         match self.current() {
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
+            Some(Row::Issue(_)) => Some(section_key(ISSUES)),
             Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_some() && !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
-            Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() && !self.snap.agents[i].status.alive() => Some(section_key(CLOSED)),
+            Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() => Some(section_key(if self.snap.agents[i].status.alive() { OTHER } else { CLOSED })),
             _ => self.current_workspace().map(|w| format!("ws:{}", w.name)),
         }
     }
@@ -476,13 +479,30 @@ impl App {
                 rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
             }
         }
+        let issues: Vec<usize> = (0..self.snap.issues.len())
+            .filter(|&i| {
+                let is = &self.snap.issues[i];
+                self.matches(&[Some(&is.title), Some(&is.project), Some(&is.labels.join(" "))])
+            })
+            .collect();
+        if !issues.is_empty() {
+            if !rows.is_empty() {
+                rows.push((String::new(), Row::Gap));
+            }
+            rows.push((section_key(ISSUES), Row::Header(ISSUES, issues.len())));
+            if self.section_open(ISSUES) {
+                rows.extend(issues.into_iter().map(|i| (format!("issue:{}#{}", self.snap.issues[i].project, self.snap.issues[i].iid), Row::Issue(i))));
+            }
+        }
         let (outside, closed) = (section(true), section(false));
         if !outside.is_empty() {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((String::new(), Row::Header("CLAUDE SESSIONS OUTSIDE THE HUB", outside.len())));
-            rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+            rows.push((section_key(OTHER), Row::Header(OTHER, outside.len())));
+            if self.section_open(OTHER) {
+                rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+            }
         }
         if !closed.is_empty() {
             if !rows.is_empty() {
@@ -538,6 +558,22 @@ impl App {
         let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo });
     }
 
+    pub fn current_issue(&self) -> Option<&crate::gitlab::Issue> {
+        let Some(Row::Issue(i)) = self.current() else { return None };
+        self.snap.issues.get(i)
+    }
+
+    /// Open Claude in the workspace of the issue's local clone, with the issue typed into its prompt.
+    fn start_issue(&mut self) {
+        let Some(issue) = self.current_issue().cloned() else { return };
+        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &issue.project) else {
+            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
+            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", issue.project), true);
+        };
+        self.notify(format!("Opening #{} in {}…", issue.iid, shorten(&repo)), false);
+        let _ = self.cmd.send(Cmd::StartIssue { issue: Box::new(issue), repo });
+    }
+
     pub fn current_terminal(&self) -> Option<(&Workspace, &crate::snapshot::Window)> {
         let Some(Row::Terminal(wi, ti)) = self.current() else { return None };
         let ws = self.snap.workspaces.get(wi)?;
@@ -582,6 +618,10 @@ impl App {
             v.push(("↵", "open in GitLab", Action::Open));
             v.push(("c", "review with Claude", Action::NewWindow("claude")));
         }
+        if !side_visible && self.current_issue().is_some() {
+            v.push(("↵", "open in GitLab", Action::Open));
+            v.push(("c", "work on it with Claude", Action::NewWindow("claude")));
+        }
         if !side_visible && self.current_thread().is_some() {
             v.push(("r", "reply", Action::Reply));
             v.push(("v", "resolve", Action::Resolve));
@@ -618,6 +658,7 @@ impl App {
             Action::Open => self.open(),
             Action::NewWorkspace => self.open_picker(""),
             Action::NewWindow("claude") if self.current_review().is_some() => self.start_review(),
+            Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
             Action::NewWindow(kind) => self.new_window(kind),
             Action::Close => self.close(),
             Action::Rename => {
@@ -729,6 +770,10 @@ impl App {
                 let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
                 return self.open_url(&url);
             }
+            Some(Row::Issue(_)) => {
+                let Some(url) = self.current_issue().map(|is| is.url.clone()) else { return };
+                return self.open_url(&url);
+            }
             Some(Row::Thread(..)) => {
                 let Some((_, mr, th)) = self.current_thread() else { return };
                 let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
@@ -793,7 +838,7 @@ impl App {
     fn toggle_fold_all(&mut self) {
         let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         // The workspaces section stays open so that the folded workspaces still show.
-        let sections = [REVIEWS, CLOSED];
+        let sections = [REVIEWS, ISSUES, OTHER, CLOSED];
         if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
             self.folded.clear();
             self.open_sections.extend(sections);
@@ -957,9 +1002,9 @@ impl App {
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
     fn refresh_mr(&mut self) {
-        if self.current_review().is_some() {
-            let _ = self.cmd.send(Cmd::ForgetReviews);
-            return self.notify("Refreshing the merge requests to review…", false);
+        if self.current_review().is_some() || self.current_issue().is_some() {
+            let _ = self.cmd.send(Cmd::ForgetInbox);
+            return self.notify("Refreshing the reviews and issues…", false);
         }
         let Some(ws) = self.current_workspace() else { return };
         let (path, text) = (ws.path.clone(), format!("Refreshing the merge request of {}…", ws.name));
@@ -1313,10 +1358,12 @@ impl App {
     }
 }
 
-const WORKSPACES: &str = "LOCAL WORKSPACES";
-const REVIEWS: &str = "MERGE REQUESTS TO REVIEW";
-const CLOSED: &str = "RECENTLY CLOSED CLAUDE SESSIONS";
-const FOLDABLE: [&str; 3] = [WORKSPACES, REVIEWS, CLOSED];
+const WORKSPACES: &str = "WORKSPACES";
+const REVIEWS: &str = "REVIEWS";
+const ISSUES: &str = "MY ISSUES";
+const OTHER: &str = "OTHER SESSIONS";
+const CLOSED: &str = "CLOSED SESSIONS";
+const FOLDABLE: [&str; 5] = [WORKSPACES, REVIEWS, ISSUES, OTHER, CLOSED];
 
 fn section_key(title: &str) -> String {
     format!("section:{title}")

@@ -389,6 +389,13 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             r.push(s(format!(" {:>3}", age(m.updated)), fg(colors().dim)));
             (l, r)
         }
+        Row::Issue(i) => {
+            let is = &app.snap.issues[i];
+            let l = vec![s(format!("#{} ", is.iid), fg(colors().muted)), s(is.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", is.title), fg(colors().fg))];
+            let mut r = vec![s(is.labels.join(" "), fg(colors().dim))];
+            r.push(s(format!(" {:>3}", age(is.updated)), fg(colors().dim)));
+            (l, r)
+        }
         Row::Thread(wi, ti) => {
             let th = &app.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti];
             let mut l = vec![s(branch, fg(colors().border).bold()), s(format!("{COMMENT} "), fg(colors().warning))];
@@ -681,7 +688,7 @@ struct Side {
     color: Color,
     banner: Vec<Line<'static>>,
     buttons: Vec<(&'static str, &'static str, Color, Action)>,
-    tabs: [(&'static str, usize); 4],
+    tabs: Vec<(&'static str, usize)>,
     body: Vec<Line<'static>>,
     /// A banner line, by index, that Ctrl+click opens in the browser.
     link: Option<(usize, String)>,
@@ -740,7 +747,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
         color,
         banner,
         buttons,
-        tabs: [("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len())), ("Pipeline", ws.and_then(|w| w.mr.as_ref()).map_or(0, |m| m.jobs.len()))],
+        tabs: vec![("Chat", 0), ("Changes", git.map_or(0, |g| g.files.len())), ("Windows", ws.map_or(0, |w| w.windows.len())), ("Pipeline", ws.and_then(|w| w.mr.as_ref()).map_or(0, |m| m.jobs.len()))],
         body,
         link: None,
         body_links,
@@ -809,7 +816,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         color,
         banner,
         buttons: vec![],
-        tabs: [("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
+        tabs: vec![("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
         body,
         link,
         body_links,
@@ -853,10 +860,36 @@ fn review_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
         color: if m.threads.is_empty() { colors().info } else { colors().warning },
         banner,
         buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude"))],
-        tabs: [("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())],
+        tabs: vec![("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())],
         body,
         link: Some((0, m.url.clone())),
         body_links,
+    }
+}
+
+fn issue_side(is: &gitlab::Issue) -> Side {
+    let mut status = vec![format!("by {}", is.author)];
+    status.extend(is.milestone.as_ref().map(|m| format!("milestone {m}")));
+    status.extend((!is.labels.is_empty()).then(|| is.labels.join(", ")));
+    let banner = vec![
+        Line::from(vec![s(format!("#{} ", is.iid), fg(colors().accent).bold()), s(status.join(" · "), fg(colors().fg)), s(format!("  ·  updated {} ago", age(is.updated)), fg(colors().dim))]),
+        Line::from(s("c opens Claude in the repo's workspace with the issue in its prompt; nothing is sent until you press Enter.", fg(colors().dim))),
+    ];
+    let body = if is.description.trim().is_empty() {
+        vec![Line::from(s("No description.", fg(colors().muted)))]
+    } else {
+        is.description.lines().map(|l| Line::from(s(l.to_string(), fg(colors().fg)))).collect()
+    };
+    Side {
+        title: is.title.clone(),
+        meta: Line::from(s(format!(" {} ", is.project), fg(colors().dim))),
+        color: colors().info,
+        banner,
+        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "work on it with Claude", colors().accent, Action::NewWindow("claude"))],
+        tabs: vec![("Description", 0)],
+        body,
+        link: Some((0, is.url.clone())),
+        body_links: vec![],
     }
 }
 
@@ -872,6 +905,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
         Some(Row::Review(i)) => (None, review_side(app, &app.snap.reviews[i], t)),
+        Some(Row::Issue(i)) => (None, issue_side(&app.snap.issues[i])),
         Some(Row::Header(title, n)) => {
             let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
@@ -1429,11 +1463,15 @@ const HELP: &[(&str, &str)] = &[
     ("v", "resolve the thread, with an optional reply (\"Fixed in <commit>\")"),
     ("p", "push the workspace's branch; opens a draft merge request if it has none"),
     ("", ""),
-    ("", "To review (merge requests where you are a reviewer)"),
+    ("", "Reviews (merge requests where you are a reviewer)"),
     ("Enter", "open the merge request in GitLab (over SSH: Ctrl+click its link in the panel)"),
     ("c", "check it out in its own worktree and open Claude with a review prompt (not sent)"),
     ("x", "on a review workspace: close it and delete its checkout"),
     ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
+    ("", ""),
+    ("", "My issues (open issues assigned to you)"),
+    ("Enter", "open the issue in GitLab"),
+    ("c", "open Claude in the repo's workspace with the issue in its prompt (not sent)"),
     ("", ""),
     ("", "From any terminal"),
     ("HUBKEY", "back to the hub, or click ◀ Claude Hub in the top bar"),

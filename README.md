@@ -115,8 +115,8 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
-| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Local workspaces** starts open; **Merge requests to review** and **Recently closed Claude sessions** start folded |
-| Hub | `z` | Fold every workspace, **Merge requests to review** and **Recently closed Claude sessions**, or unfold them all when all are folded |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** and **Other sessions** start open; **Reviews**, **My issues** and **Closed sessions** start folded |
+| Hub | `z` | Fold every workspace and every section except **Workspaces**, or unfold them all when all are folded |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
@@ -155,7 +155,7 @@ first time), `v` resolves the thread with a "Fixed in <commit>" reply you can ed
 with its status and duration.
 
 **Reviewing others' merge requests.** MRs where you are a requested reviewer are listed under
-**MERGE REQUESTS TO REVIEW**, newest activity first, with author, pipeline and open threads. The panel shows the
+**REVIEWS**, newest activity first, with author, pipeline and open threads. The panel shows the
 description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
 code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
@@ -164,11 +164,17 @@ deletes the checkout. The list refreshes every two minutes; `Ctrl+R` on it refre
 The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not
 gitlab.com, set it once, or the list stays empty: `glab config set --global host git.example.com`.
 
+**Your issues.** Open issues assigned to you are listed under **MY ISSUES**, newest activity
+first, with labels. The panel shows the description. `Enter` opens the issue in GitLab. `c`
+opens Claude in a new window of the workspace for your local clone, with a prompt that names
+the issue typed in but not sent. The prompt asks Claude to make a branch first. The list
+refreshes with the reviews.
+
 Links in the panel (the `!140` line of an MR, "Open the thread in GitLab") are real terminal
 hyperlinks: Ctrl+click (Cmd+click on macOS) opens them in the browser of the computer you sit
 at, also over SSH.
 
-Claude sessions that run outside claude-hub are listed too, marked *outside hub*. The hub
+Claude sessions that run outside claude-hub are listed under **OTHER SESSIONS**, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them. Press `a`
 to adopt one: the hub stops the process and resumes the session with `claude --resume` in
 a new window of the workspace for its directory.

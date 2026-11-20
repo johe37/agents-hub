@@ -124,6 +124,8 @@ pub struct Snapshot {
     pub notices: Vec<(String, bool)>,
     /// Open MRs where you are a requested reviewer.
     pub reviews: Vec<crate::gitlab::Mr>,
+    /// Open issues assigned to you.
+    pub issues: Vec<crate::gitlab::Issue>,
     pub usage: Option<crate::usage::Usage>,
 }
 
@@ -160,10 +162,12 @@ pub enum Cmd {
     Publish { path: String, open_mr: bool },
     /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
     ThreadNote { path: String, mr: Box<crate::gitlab::Mr>, thread: String, text: String, resolve: bool, done: String },
-    /// Fetch the MRs to review again.
-    ForgetReviews,
+    /// Fetch the MRs to review and the assigned issues again.
+    ForgetInbox,
     /// Check out an MR from the clone at repo and open it for a review with Claude.
     StartReview { mr: Box<crate::gitlab::Mr>, repo: String },
+    /// Open Claude in the workspace of the clone at repo, with the issue in its prompt.
+    StartIssue { issue: Box<crate::gitlab::Issue>, repo: String },
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -177,7 +181,7 @@ struct Collector {
     cfg: Config,
     git: Arc<GitCache>,
     mrs: Arc<crate::gitlab::MrCache>,
-    reviews: Arc<crate::gitlab::ReviewCache>,
+    inbox: Arc<crate::gitlab::InboxCache>,
     notices: Arc<Mutex<Vec<(String, bool)>>>,
     transcripts: TranscriptCache,
     screens: Arc<Mutex<ScreenCache>>,
@@ -217,7 +221,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             hub_seen: Instant::now(),
             git: Default::default(),
             mrs: Default::default(),
-            reviews: Default::default(),
+            inbox: Default::default(),
             notices: Default::default(),
             transcripts: TranscriptCache::default(),
             screens,
@@ -284,8 +288,8 @@ impl Collector {
                     self.mrs.forget(&path);
                     last = Instant::now() - interval;
                 }
-                Ok(Cmd::ForgetReviews) => {
-                    self.reviews.forget();
+                Ok(Cmd::ForgetInbox) => {
+                    self.inbox.forget();
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::StartReview { mr, repo }) => {
@@ -294,6 +298,13 @@ impl Collector {
                         let name = format!("review-{}-{}", mr.repo(), mr.iid);
                         let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_review(&dir, &name, &mr.review_prompt()));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
+                    });
+                }
+                Ok(Cmd::StartIssue { issue, repo }) => {
+                    let notices = Arc::clone(&self.notices);
+                    std::thread::spawn(move || {
+                        let r = tmux::open_issue(&repo, &issue.prompt());
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not open #{}: {e}", issue.iid), true), |m| (m, false)));
                     });
                 }
                 // Its own thread: a push can take a while, and status updates must keep flowing meanwhile.
@@ -384,6 +395,7 @@ impl Collector {
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
         self.fill_claude(&all_panes, &started);
         let pool = tmux::list_all_panes();
+        let inbox = self.inbox.get(seen);
         Snapshot {
             workspaces,
             agents,
@@ -392,7 +404,8 @@ impl Collector {
             claude_spares: tmux::claude_spares(&pool).into_iter().collect(),
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
-            reviews: self.reviews.get(seen),
+            reviews: inbox.reviews,
+            issues: inbox.issues,
             usage: crate::usage::load(),
         }
     }

@@ -33,6 +33,18 @@ REVIEWS = {
                  "not_approved", 2400, "Stores the account screen in local storage."),
 }
 
+ISSUES = [
+    {"iid": 204, "title": "Refunds over 10 000 SEK need a second approval", "labels": ["backend", "priority::high"],
+     "milestone": {"title": "Q4"}, "author": {"username": "maria.k"}, "updated_at": iso(5400),
+     "web_url": "https://gitlab.example.com/acme/payments-api/-/issues/204",
+     "references": {"full": "acme/payments-api#204"},
+     "description": "Finance wants a second person to approve large refunds before they go out."},
+    {"iid": 61, "title": "Dark mode for the usage charts", "labels": ["frontend"], "milestone": None,
+     "author": {"username": "anna.l"}, "updated_at": iso(86400 * 2),
+     "web_url": "https://gitlab.example.com/acme/web-dashboard/-/issues/61",
+     "references": {"full": "acme/web-dashboard#61"}, "description": ""},
+]
+
 def note(nid, author, body, path=None, line=None):
     n = {"id": nid, "system": False, "resolvable": True, "resolved": False,
          "author": {"username": author}, "body": body}
@@ -77,6 +89,8 @@ def main(args):
     path = args[1]
     if path == "user":
         return {"username": "johe"}
+    if path.startswith("issues?"):
+        return ISSUES
     if path.startswith("merge_requests?"):
         return [{"project_id": p, "iid": i} for p, i in REVIEWS]
     parts = path.split("?")[0].split("/")

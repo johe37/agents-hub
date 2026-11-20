@@ -475,6 +475,22 @@ pub fn open_review(dir: &str, name: &str, prompt: &str) -> Result<String, String
     Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
 }
 
+/// Open Claude in a new window of the workspace for path, with prompt typed but not sent, and switch to it.
+pub fn open_issue(path: &str, prompt: &str) -> Result<String, String> {
+    let session = ensure_workspace(path)?;
+    let out = run(&["new-window", "-P", "-F", "#{pane_id}", "-t", &format!("={session}:"), "-c", path, "-n", "claude", "claude"]).ok_or("tmux not found")?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let _ = switch_client(&session);
+    if !wait_for_claude(&pane) {
+        return Ok(format!("Opened Claude in {session}, but it took too long to start, so the issue is not typed in"));
+    }
+    type_text(&socket_path(), &pane, prompt)?;
+    Ok(format!("Issue ready in {session}: check the prompt, then Enter starts it"))
+}
+
 /// Wait until Claude in pane reports its first hook event: before that it drops typed input.
 fn wait_for_claude(pane: &str) -> bool {
     let dir = crate::hooks::events_dir();

@@ -1,4 +1,4 @@
-//! Merge request status and unresolved review threads, through the glab CLI.
+//! Merge request status, unresolved review threads and assigned issues, through the glab CLI.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -11,8 +11,8 @@ use serde_json::Value;
 const TTL: Duration = Duration::from_secs(60);
 /// While a pipeline runs, so its jobs move along on screen.
 const RUNNING_TTL: Duration = Duration::from_secs(10);
-/// MRs waiting for your review: one call per MR, so not too often.
-const REVIEW_TTL: Duration = Duration::from_secs(120);
+/// MRs waiting for your review and your issues: one call per MR, so not too often.
+const INBOX_TTL: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Default)]
 pub struct Mr {
@@ -38,6 +38,34 @@ pub struct Mr {
     pub draft: bool,
     /// Usernames; only fetched for MRs you review.
     pub approved_by: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Issue {
+    pub iid: u64,
+    pub title: String,
+    pub url: String,
+    /// Full project path, `craton/auxiliary/craton-cli`.
+    pub project: String,
+    pub labels: Vec<String>,
+    pub milestone: Option<String>,
+    pub author: String,
+    /// Last activity, seconds since the epoch.
+    pub updated: u64,
+    pub description: String,
+}
+
+impl Issue {
+    pub fn repo(&self) -> &str {
+        self.project.rsplit('/').next().unwrap_or(&self.project)
+    }
+
+    pub fn prompt(&self) -> String {
+        format!(
+            "Work on issue #{} in {}: \"{}\". Read it with `glab issue view {} -R {} --comments`. Create a branch for it first, then plan the change before you edit any code.",
+            self.iid, self.project, self.title, self.iid, self.project
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -172,6 +200,20 @@ fn parse_mr(v: &Value) -> Option<Mr> {
     })
 }
 
+fn parse_issue(v: &Value) -> Option<Issue> {
+    Some(Issue {
+        iid: v["iid"].as_u64()?,
+        title: v["title"].as_str()?.to_string(),
+        url: v["web_url"].as_str().unwrap_or_default().to_string(),
+        project: v["references"]["full"].as_str().and_then(|r| r.split('#').next()).unwrap_or_default().to_string(),
+        labels: v["labels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(String::from)).collect(),
+        milestone: v["milestone"]["title"].as_str().map(String::from),
+        author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
+        updated: v["updated_at"].as_str().and_then(epoch).unwrap_or(0),
+        description: v["description"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
 /// Seconds since the epoch for GitLab's `2026-11-18T13:42:24.086+01:00`.
 fn epoch(s: &str) -> Option<u64> {
     let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
@@ -295,6 +337,13 @@ fn fetch_reviews(user: &str) -> Option<Vec<Mr>> {
     Some(mrs)
 }
 
+/// Open issues assigned to you, newest activity first.
+fn fetch_issues() -> Option<Vec<Issue>> {
+    let home = crate::config::home().display().to_string();
+    let list: Value = serde_json::from_str(&glab(&home, &["api", "issues?scope=assigned_to_me&state=opened&order_by=updated_at&per_page=50"]).ok()?).ok()?;
+    Some(list.as_array()?.iter().filter_map(parse_issue).collect())
+}
+
 pub fn reviews_dir() -> PathBuf {
     crate::config::cache_dir().join("reviews")
 }
@@ -339,18 +388,24 @@ pub fn remove_checkout(dir: &str) -> Result<(), String> {
     run(dir, 30, "git", &["worktree", "remove", "--force", dir]).map(|_| ())
 }
 
-/// MRs to review, refreshed in the background like `MrCache`.
+#[derive(Clone, Default)]
+pub struct Inbox {
+    pub reviews: Vec<Mr>,
+    pub issues: Vec<Issue>,
+}
+
+/// MRs to review and issues assigned to you, refreshed in the background like `MrCache`.
 #[derive(Default)]
-pub struct ReviewCache {
-    state: Mutex<(Option<Instant>, Vec<Mr>)>,
+pub struct InboxCache {
+    state: Mutex<(Option<Instant>, Inbox)>,
     busy: Mutex<bool>,
     user: Mutex<Option<String>>,
 }
 
-impl ReviewCache {
-    pub fn get(self: &Arc<Self>, refresh: bool) -> Vec<Mr> {
-        let (at, mrs) = self.state.lock().unwrap().clone();
-        if refresh && at.is_none_or(|at| at.elapsed() > REVIEW_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
+impl InboxCache {
+    pub fn get(self: &Arc<Self>, refresh: bool) -> Inbox {
+        let (at, inbox) = self.state.lock().unwrap().clone();
+        if refresh && at.is_none_or(|at| at.elapsed() > INBOX_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
             let me = Arc::clone(self);
             std::thread::spawn(move || {
                 let home = crate::config::home().display().to_string();
@@ -359,14 +414,16 @@ impl ReviewCache {
                     v["username"].as_str().map(String::from)
                 });
                 *me.user.lock().unwrap() = user.clone();
-                let fresh = user.and_then(|u| fetch_reviews(&u));
+                let reviews = user.and_then(|u| fetch_reviews(&u));
+                let issues = fetch_issues();
                 let mut state = me.state.lock().unwrap();
-                // Keep the old list when GitLab is unreachable; try again after the TTL either way.
-                *state = (Some(Instant::now()), fresh.unwrap_or_else(|| state.1.clone()));
+                // Keep the old lists when GitLab is unreachable; try again after the TTL either way.
+                let old = std::mem::take(&mut state.1);
+                *state = (Some(Instant::now()), Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues) });
                 *me.busy.lock().unwrap() = false;
             });
         }
-        mrs
+        inbox
     }
 
     pub fn forget(&self) {
@@ -522,6 +579,13 @@ mod tests {
         let mr = parse_mr(&serde_json::json!({"iid": 140, "project_id": 2954, "title": "T", "author": {"username": "vilu"},
             "references": {"full": "craton/auxiliary/craton-cli!140"}, "draft": true})).unwrap();
         assert_eq!((mr.project.as_str(), mr.repo(), mr.author.as_str(), mr.draft), ("craton/auxiliary/craton-cli", "craton-cli", "vilu", true));
+    }
+
+    #[test]
+    fn reads_issue_fields() {
+        let issue = parse_issue(&serde_json::json!({"iid": 12, "title": "T", "labels": ["bug", "backend"],
+            "milestone": {"title": "v2"}, "references": {"full": "craton/auxiliary/craton-cli#12"}})).unwrap();
+        assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("craton/auxiliary/craton-cli", "craton-cli", 2, Some("v2")));
     }
 }
 
