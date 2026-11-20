@@ -903,16 +903,8 @@ impl App {
 
     /// y/n answers a permission prompt; anything else is typed to the agent.
     fn send_reply(&mut self, text: String) {
-        if let Some((ws, mr, th)) = self.current_thread() {
-            let (path, done) = (ws.path.clone(), format!("Replied on !{} at {}", mr.iid, th.place()));
-            match crate::gitlab::reply(&path, mr, &th.id, &text) {
-                Ok(()) => {
-                    self.notify(done, false);
-                    let _ = self.cmd.send(Cmd::ForgetMr(path));
-                }
-                Err(e) => self.notify(format!("GitLab: {e}"), true),
-            }
-            return;
+        if self.current_thread().is_some() {
+            return self.thread_note(text, false);
         }
         let Some(a) = self.current_agent().cloned() else { return };
         let lower = text.to_lowercase();
@@ -926,16 +918,13 @@ impl App {
         }
     }
 
-    /// Post the text in the selected thread, if any, then mark the thread resolved.
-    fn resolve(&mut self, text: String) {
+    /// Post the text in the selected thread, if any, and mark the thread resolved when asked. GitLab is slow, so it runs on the collector side.
+    fn thread_note(&mut self, text: String, resolve: bool) {
         let Some((ws, mr, th)) = self.current_thread() else { return };
-        let (path, done) = (ws.path.clone(), format!("Resolved the thread at {} on !{}", th.place(), mr.iid));
-        let r = (if text.is_empty() { Ok(()) } else { crate::gitlab::reply(&path, mr, &th.id, &text) }).and_then(|()| crate::gitlab::resolve(&path, mr, &th.id));
-        match r {
-            Ok(()) => self.notify(done, false),
-            Err(e) => self.notify(format!("GitLab: {e}"), true),
-        }
-        let _ = self.cmd.send(Cmd::ForgetMr(path));
+        let done = if resolve { format!("Resolved the thread at {} on !{}", th.place(), mr.iid) } else { format!("Replied on !{} at {}", mr.iid, th.place()) };
+        let cmd = Cmd::ThreadNote { path: ws.path.clone(), mr: Box::new(mr.clone()), thread: th.id.clone(), text, resolve, done };
+        let _ = self.cmd.send(cmd);
+        self.notify(if resolve { "Resolving the thread…" } else { "Posting the reply…" }, false);
     }
 
     /// Push the workspace's branch after asking, and open a draft merge request when it has none.
@@ -1069,7 +1058,7 @@ impl App {
                         let text = std::mem::take(&mut self.reply).text.trim().to_string();
                         self.focus = Focus::List;
                         if std::mem::take(&mut self.resolving) {
-                            self.resolve(text);
+                            self.thread_note(text, true);
                         } else if !text.is_empty() {
                             self.send_reply(text);
                         }

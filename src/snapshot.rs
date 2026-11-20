@@ -154,6 +154,8 @@ pub enum Cmd {
     ForgetMr(String),
     /// Push the branch checked out at path, opening a draft merge request when asked.
     Publish { path: String, open_mr: bool },
+    /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
+    ThreadNote { path: String, mr: Box<crate::gitlab::Mr>, thread: String, text: String, resolve: bool, done: String },
     /// Fetch the MRs to review again.
     ForgetReviews,
     /// Check out an MR from the clone at repo and open it for a review with Claude.
@@ -289,6 +291,15 @@ impl Collector {
                         let r = crate::gitlab::publish(&path, open_mr);
                         mrs.forget(&path);
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Push failed: {e}"), true), |m| (m, false)));
+                    });
+                }
+                Ok(Cmd::ThreadNote { path, mr, thread, text, resolve, done }) => {
+                    let (mrs, notices) = (Arc::clone(&self.mrs), Arc::clone(&self.notices));
+                    std::thread::spawn(move || {
+                        let r = (if text.is_empty() { Ok(()) } else { crate::gitlab::reply(&path, &mr, &thread, &text) })
+                            .and_then(|()| if resolve { crate::gitlab::resolve(&path, &mr, &thread) } else { Ok(()) });
+                        mrs.forget(&path);
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("GitLab: {e}"), true), |()| (done, false)));
                     });
                 }
                 Err(RecvTimeoutError::Timeout) => {}
