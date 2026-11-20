@@ -112,21 +112,12 @@ pub struct GitCache {
 }
 
 impl GitCache {
-    /// Main repo root for a path. Worktrees resolve to the repo they belong to.
+    /// Top level of the checkout holding path; a worktree is its own checkout, with its own branch and changes.
     pub fn repo_root(&self, path: &str) -> Option<String> {
         if let Some(r) = self.roots.lock().unwrap().get(path) {
             return r.clone();
         }
-        let root = git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"]).and_then(|out| {
-            let mut lines = out.lines();
-            let toplevel = lines.next()?;
-            let common = Path::new(lines.next()?);
-            Some(if common.file_name().is_some_and(|n| n == ".git") {
-                common.parent()?.display().to_string()
-            } else {
-                toplevel.to_string()
-            })
-        });
+        let root = git(path, &["rev-parse", "--show-toplevel"]).map(|out| out.trim().to_string()).filter(|r| !r.is_empty());
         self.roots.lock().unwrap().insert(path.to_string(), root.clone());
         root
     }
@@ -166,5 +157,21 @@ mod tests {
         assert_eq!(st.files[0], (".M".into(), "src/x.rs".into()));
         assert_eq!(st.files[1], ("R.".into(), "new name.rs".into()));
         assert_eq!(st.files[2], ("??".into(), "untracked file".into()));
+    }
+
+    #[test]
+    fn worktree_is_its_own_root() {
+        let dir = std::env::temp_dir().join(format!("claude-hub-git-{}", std::process::id()));
+        let (main, wt) = (dir.join("main"), dir.join("wt"));
+        std::fs::create_dir_all(&main).unwrap();
+        let sh = |cwd: &Path, args: &[&str]| assert!(Command::new("git").current_dir(cwd).args(args).output().unwrap().status.success());
+        sh(&main, &["init", "-q"]);
+        sh(&main, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+        sh(&main, &["worktree", "add", "-q", "-b", "feature", wt.to_str().unwrap()]);
+        let cache = GitCache::default();
+        let root = cache.repo_root(wt.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::canonicalize(&root).unwrap(), std::fs::canonicalize(&wt).unwrap());
+        assert_eq!(cache.status(&root).branch.as_deref(), Some("feature"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
