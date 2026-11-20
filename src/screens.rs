@@ -71,9 +71,16 @@ fn styled_lines(screen: &vt100::Screen) -> Vec<Line<'static>> {
     lines
 }
 
+struct Screen {
+    parser: vt100::Parser,
+    offset: u64,
+    /// The styled screen, kept until new output or a resize changes it.
+    lines: Option<Vec<Line<'static>>>,
+}
+
 #[derive(Default)]
 pub struct ScreenCache {
-    screens: HashMap<String, (vt100::Parser, u64)>,
+    screens: HashMap<String, Screen>,
 }
 
 impl ScreenCache {
@@ -82,33 +89,35 @@ impl ScreenCache {
         let path = log_path(pane_id);
         let size = std::fs::metadata(&path).ok()?.len();
         let (h, w) = (NonZeroU16::new(height).unwrap_or(NonZeroU16::MIN), NonZeroU16::new(width).unwrap_or(NonZeroU16::MIN));
-        let (parser, offset) = self.screens.entry(pane_id.to_string()).or_insert_with(|| (vt100::Parser::new(h, w, 0), 0));
-        if parser.screen().size() != (h, w) {
-            parser.screen_mut().set_size(h, w);
+        let sc = self.screens.entry(pane_id.to_string()).or_insert_with(|| Screen { parser: vt100::Parser::new(h, w, 0), offset: 0, lines: None });
+        if sc.parser.screen().size() != (h, w) {
+            sc.parser.screen_mut().set_size(h, w);
+            sc.lines = None;
         }
-        if size < *offset {
-            *offset = 0;
+        if size < sc.offset {
+            sc.offset = 0;
         }
-        if size > *offset {
+        if size > sc.offset {
             let mut data = vec![];
             if let Ok(mut f) = std::fs::File::open(&path) {
-                let _ = f.seek(SeekFrom::Start(*offset)).and_then(|_| f.take(size - *offset).read_to_end(&mut data));
+                let _ = f.seek(SeekFrom::Start(sc.offset)).and_then(|_| f.take(size - sc.offset).read_to_end(&mut data));
             }
-            parser.process(&data);
-            *offset += data.len() as u64;
+            sc.parser.process(&data);
+            sc.offset += data.len() as u64;
+            sc.lines = None;
         }
         if size > MAX_LOG {
             // The screen state lives in memory; the file only needs what the next hub start replays.
             if std::fs::File::options().write(true).open(&path).and_then(|f| f.set_len(0)).is_ok() {
-                *offset = 0;
+                sc.offset = 0;
             }
         }
-        Some(styled_lines(parser.screen()))
+        Some(sc.lines.get_or_insert_with(|| styled_lines(sc.parser.screen())).clone())
     }
 
     /// Where the pane's cursor is, as (row, col), unless the program hides it.
     pub fn cursor(&self, pane_id: &str) -> Option<(u16, u16)> {
-        let screen = self.screens.get(pane_id)?.0.screen();
+        let screen = self.screens.get(pane_id)?.parser.screen();
         (!screen.hide_cursor()).then(|| screen.cursor_position())
     }
 
