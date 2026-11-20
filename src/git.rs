@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::config::cache_dir;
@@ -109,6 +109,8 @@ fn parse_status(out: &str) -> GitStatus {
 pub struct GitCache {
     roots: Mutex<HashMap<String, Option<String>>>,
     status: Mutex<HashMap<String, (Instant, GitStatus)>>,
+    /// Repos with a status refresh running in the background.
+    busy: Mutex<HashSet<String>>,
 }
 
 impl GitCache {
@@ -122,12 +124,21 @@ impl GitCache {
         root
     }
 
-    pub fn status(&self, repo: &str) -> GitStatus {
-        if let Some((at, st)) = self.status.lock().unwrap().get(repo) {
-            if at.elapsed() < STATUS_TTL {
-                return st.clone();
-            }
+    /// The cached status, refreshed in the background once it is old, so a slow repo never holds up a snapshot.
+    pub fn status(self: &Arc<Self>, repo: &str) -> GitStatus {
+        let cached = self.status.lock().unwrap().get(repo).cloned();
+        let Some((at, st)) = cached else { return self.refresh(repo) };
+        if at.elapsed() >= STATUS_TTL && self.busy.lock().unwrap().insert(repo.to_string()) {
+            let (cache, repo) = (Arc::clone(self), repo.to_string());
+            std::thread::spawn(move || {
+                cache.refresh(&repo);
+                cache.busy.lock().unwrap().remove(&repo);
+            });
         }
+        st
+    }
+
+    fn refresh(&self, repo: &str) -> GitStatus {
         let mut st = git(repo, &["status", "--porcelain=v2", "--branch"]).map(|o| parse_status(&o)).unwrap_or_default();
         for line in git(repo, &["diff", "--numstat", "HEAD"]).unwrap_or_default().lines() {
             let mut f = line.split('\t');
@@ -168,7 +179,7 @@ mod tests {
         sh(&main, &["init", "-q"]);
         sh(&main, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
         sh(&main, &["worktree", "add", "-q", "-b", "feature", wt.to_str().unwrap()]);
-        let cache = GitCache::default();
+        let cache = Arc::new(GitCache::default());
         let root = cache.repo_root(wt.to_str().unwrap()).unwrap();
         assert_eq!(std::fs::canonicalize(&root).unwrap(), std::fs::canonicalize(&wt).unwrap());
         assert_eq!(cache.status(&root).branch.as_deref(), Some("feature"));

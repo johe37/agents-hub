@@ -169,7 +169,7 @@ fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> 
 
 struct Collector {
     cfg: Config,
-    git: GitCache,
+    git: Arc<GitCache>,
     mrs: Arc<crate::gitlab::MrCache>,
     reviews: Arc<crate::gitlab::ReviewCache>,
     notices: Arc<Mutex<Vec<(String, bool)>>>,
@@ -206,7 +206,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             claude_spares: vec![],
             claude_pause: HashMap::new(),
             hub_seen: Instant::now(),
-            git: GitCache::default(),
+            git: Default::default(),
             mrs: Default::default(),
             reviews: Default::default(),
             notices: Default::default(),
