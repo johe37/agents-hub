@@ -225,8 +225,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if app.rows.is_empty() {
-        let msg = if app.filter.text.is_empty() { "Nothing here yet. Press n to open a workspace." } else { "Nothing matches the filter." };
-        f.render_widget(Paragraph::new(s(format!(" {msg}"), fg(colors().muted))), inner);
+        f.render_widget(Paragraph::new(s(" Nothing matches the filter.", fg(colors().muted))), inner);
         return;
     }
 
@@ -372,6 +371,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             }
             (l, right)
         }
+        Row::NewWorkspace => (vec![s("╰─ ", fg(colors().border).bold()), s("+ Open a workspace", fg(colors().accent).bold())], vec![s(" n ", fg(colors().bg).bg(colors().accent).bold())]),
         Row::Review(i) => {
             let m = &app.snap.reviews[i];
             let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];

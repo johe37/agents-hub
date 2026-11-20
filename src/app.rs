@@ -31,6 +31,8 @@ pub enum Row {
     Thread(usize, usize),
     /// An open MR where you are a requested reviewer, by index into the snapshot's reviews.
     Review(usize),
+    /// Stands in for the workspaces until there are any, so a new user sees how to open one.
+    NewWorkspace,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -417,6 +419,11 @@ impl App {
         let mut rows = vec![];
         if !sections.is_empty() {
             rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, sections.len())));
+        } else if self.snap.workspaces.is_empty() && self.filter.text.is_empty() {
+            rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, 0)));
+            if self.section_open(WORKSPACES) {
+                rows.push(("new-workspace".into(), Row::NewWorkspace));
+            }
         }
         if !self.section_open(WORKSPACES) {
             sections.clear();
@@ -687,6 +694,7 @@ impl App {
     fn open(&mut self) {
         let r = match self.current() {
             Some(Row::Header(..)) => return self.toggle_fold(),
+            Some(Row::NewWorkspace) => return self.act(Action::NewWorkspace),
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
                 match (&a.workspace, &a.window_id) {
@@ -1288,8 +1296,9 @@ impl App {
                             self.select(i);
                             return self.act(Action::Fold);
                         }
-                        if i == self.selected || double(self.last_click, i) {
+                        if i == self.selected || double(self.last_click, i) || self.rows[i].1 == Row::NewWorkspace {
                             self.last_click = None;
+                            self.select(i);
                             return self.act(Action::Open);
                         }
                         self.select(i);
