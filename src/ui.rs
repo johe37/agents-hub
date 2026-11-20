@@ -975,10 +975,11 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// The workspace's windows, each clickable.
 fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option<&str>) {
-    let ws = app.snap.workspaces[wi].clone();
+    let ws = &app.snap.workspaces[wi];
     if ws.windows.is_empty() {
         f.render_widget(Paragraph::new(s("No windows. c starts Claude, t a terminal.", fg(colors().muted))), area);
     }
+    let mut buttons = vec![];
     for (n, w) in ws.windows.iter().enumerate() {
         let y = area.y + n as u16;
         if y >= area.bottom() {
@@ -994,8 +995,9 @@ fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option
         }
         let rect = Rect { y, height: 1, ..area };
         f.render_widget(Paragraph::new(Line::from(spans)), rect);
-        app.hits.buttons.push((rect, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
+        buttons.push((rect, Action::JumpWindow(ws.name.clone(), w.window_id.clone())));
     }
+    app.hits.buttons.extend(buttons);
 }
 
 fn draw_reply(f: &mut Frame, app: &mut App, area: Rect) {
