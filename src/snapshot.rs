@@ -136,8 +136,8 @@ const CLAUDE_KEEP: Duration = Duration::from_secs(5 * 60);
 const CLAUDE_PAUSE: Duration = Duration::from_secs(60);
 /// Count a Claude as started after this long, even without a SessionStart event, as hooks may be missing.
 const CLAUDE_START: Duration = Duration::from_secs(30);
-/// Drop the pre-started Claude when nobody looked at the hub for this long.
-const CLAUDE_UNSEEN: Duration = Duration::from_secs(15 * 60);
+/// Drop the pre-started Claudes and stop polling GitLab when nobody looked at the hub for this long.
+const UNSEEN: Duration = Duration::from_secs(15 * 60);
 
 struct ClaudeSpare {
     window_id: String,
@@ -327,6 +327,10 @@ impl Collector {
     }
 
     fn collect(&mut self) -> Snapshot {
+        if tmux::hub_visible() {
+            self.hub_seen = Instant::now();
+        }
+        let seen = self.hub_seen.elapsed() < UNSEEN;
         let all_panes = tmux::list_all_panes();
         let panes: Vec<&Pane> = all_panes.iter().filter(|p| !p.session.starts_with('_')).collect();
         let hub_panes: Vec<(String, String)> = all_panes.iter().map(|p| (p.pane_id.clone(), p.session.clone())).collect();
@@ -355,7 +359,7 @@ impl Collector {
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
         for (ws, st) in workspaces.iter_mut().zip(statuses) {
-            ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b));
+            ws.mr = st.as_ref().and_then(|g| g.branch.as_deref()).and_then(|b| self.mrs.get(&ws.path, b, seen));
             ws.git = st;
         }
         workspaces.sort_by_key(|w| w.name.to_lowercase());
@@ -388,7 +392,7 @@ impl Collector {
             claude_spares: tmux::claude_spares(&pool).into_iter().collect(),
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
-            reviews: self.reviews.get(),
+            reviews: self.reviews.get(seen),
             usage: crate::usage::load(),
         }
     }
@@ -583,10 +587,7 @@ impl Collector {
     /// A workspace dropped from the targets keeps its Claude for a while, so moving back to it finds one ready.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
     fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>) {
-        if tmux::hub_visible() {
-            self.hub_seen = Instant::now();
-        }
-        let active = self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN;
+        let active = self.cfg.prewarm_claude && self.hub_seen.elapsed() < UNSEEN;
         let wanted: Vec<String> = self
             .claude_targets
             .iter()

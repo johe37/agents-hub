@@ -348,9 +348,9 @@ pub struct ReviewCache {
 }
 
 impl ReviewCache {
-    pub fn get(self: &Arc<Self>) -> Vec<Mr> {
+    pub fn get(self: &Arc<Self>, refresh: bool) -> Vec<Mr> {
         let (at, mrs) = self.state.lock().unwrap().clone();
-        if at.is_none_or(|at| at.elapsed() > REVIEW_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
+        if refresh && at.is_none_or(|at| at.elapsed() > REVIEW_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
             let me = Arc::clone(self);
             std::thread::spawn(move || {
                 let home = crate::config::home().display().to_string();
@@ -417,7 +417,8 @@ pub struct MrCache {
 }
 
 impl MrCache {
-    pub fn get(self: &Arc<Self>, cwd: &str, branch: &str) -> Option<Mr> {
+    /// The cached MR. Fetches it again in the background when stale and refresh is set.
+    pub fn get(self: &Arc<Self>, cwd: &str, branch: &str, refresh: bool) -> Option<Mr> {
         // shortcut: assumes MRs never come from the default branch; skips a glab call per repo and minute.
         // A detached checkout, like a review, is "(detached)": no branch to look up.
         if matches!(branch, "main" | "master") || branch.starts_with('(') {
@@ -426,7 +427,7 @@ impl MrCache {
         let key = (cwd.to_string(), branch.to_string());
         let cached = self.items.lock().unwrap().get(&key).cloned();
         let stale = |(at, mr): &(Instant, Option<Mr>)| at.elapsed() > if mr.as_ref().is_some_and(Mr::running) { RUNNING_TTL } else { TTL };
-        if cached.as_ref().is_none_or(stale) && self.busy.lock().unwrap().insert(key.clone()) {
+        if refresh && cached.as_ref().is_none_or(stale) && self.busy.lock().unwrap().insert(key.clone()) {
             let me = Arc::clone(self);
             std::thread::spawn(move || {
                 let mr = fetch(&key.0, &key.1);
