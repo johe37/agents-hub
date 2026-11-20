@@ -307,9 +307,11 @@ impl App {
         for (text, error) in &snap.notices {
             self.notify(text.clone(), *error);
         }
+        // The rows still index the old snapshot, so find the selection's owner before replacing it.
+        let owner = self.owner();
         self.snap = snap;
         self.loaded = true;
-        self.build_rows();
+        self.rebuild_rows(owner);
         if dirs_changed {
             if let Some(Modal::Picker(p)) = &mut self.modal {
                 p.candidates = picker::candidates(&self.snap, &self.cfg.roots);
@@ -367,15 +369,23 @@ impl App {
     }
 
     pub fn build_rows(&mut self) {
-        let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
-        // A row that a fold hides hands the selection to its workspace or section.
-        let owner = match self.current() {
+        let owner = self.owner();
+        self.rebuild_rows(owner);
+    }
+
+    /// The row key that takes the selection when a fold hides the selected row: its workspace or section.
+    fn owner(&self) -> Option<String> {
+        match self.current() {
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
             Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_some() && !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() && !self.snap.agents[i].status.alive() => Some(section_key(CLOSED)),
             _ => self.current_workspace().map(|w| format!("ws:{}", w.name)),
-        };
+        }
+    }
+
+    fn rebuild_rows(&mut self, owner: Option<String>) {
+        let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
         let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
             let agents = self.agents_of(ws);
