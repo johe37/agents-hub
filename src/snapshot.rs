@@ -130,6 +130,8 @@ pub struct Snapshot {
 /// Keep a Claude ready for this many of the last selected workspaces, so moving between two of them finds one ready.
 const CLAUDE_TARGETS: usize = 2;
 const CLAUDE_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+/// How long the Claude of a path dropped from the targets stays, in case the user comes back to it.
+const CLAUDE_KEEP: Duration = Duration::from_secs(5 * 60);
 const CLAUDE_PAUSE: Duration = Duration::from_secs(60);
 /// Count a Claude as started after this long, even without a SessionStart event, as hooks may be missing.
 const CLAUDE_START: Duration = Duration::from_secs(30);
@@ -181,6 +183,8 @@ struct Collector {
     speculative: Option<String>,
     /// Paths to keep a Claude ready for, last selected first.
     claude_targets: Vec<String>,
+    /// Paths dropped from claude_targets, last dropped first, and when.
+    claude_dropped: Vec<(String, Instant)>,
     claude_spares: Vec<ClaudeSpare>,
     /// When a spare for a path last exited or failed to start.
     claude_pause: HashMap<String, Instant>,
@@ -205,6 +209,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
             claude_targets: vec![],
+            claude_dropped: vec![],
             claude_spares: vec![],
             claude_pause: HashMap::new(),
             hub_seen: Instant::now(),
@@ -264,8 +269,13 @@ impl Collector {
                 Ok(Cmd::Prewarm(path)) => self.prewarm(path),
                 Ok(Cmd::PrewarmClaude(path)) => {
                     self.claude_targets.retain(|p| *p != path);
+                    self.claude_dropped.retain(|(p, _)| *p != path);
                     self.claude_targets.insert(0, path);
-                    self.claude_targets.truncate(CLAUDE_TARGETS);
+                    if self.claude_targets.len() > CLAUDE_TARGETS {
+                        let dropped = self.claude_targets.split_off(CLAUDE_TARGETS);
+                        self.claude_dropped.splice(0..0, dropped.into_iter().map(|p| (p, Instant::now())));
+                        self.claude_dropped.truncate(CLAUDE_TARGETS);
+                    }
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::ForgetMr(path)) => {
@@ -568,15 +578,17 @@ impl Collector {
     /// highlighted in the picker, so c or Ctrl+O shows it at once.
     /// Only a few, as each takes a few hundred MB; replaced when old or on another branch,
     /// as Claude reads the git state and CLAUDE.md files when it starts.
+    /// A workspace dropped from the targets keeps its Claude for a while, so moving back to it finds one ready.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
     fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>) {
         if tmux::hub_visible() {
             self.hub_seen = Instant::now();
         }
+        let active = self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN;
         let wanted: Vec<String> = self
             .claude_targets
             .iter()
-            .filter(|p| self.cfg.prewarm_claude && self.hub_seen.elapsed() < CLAUDE_UNSEEN && std::path::Path::new(p).is_dir())
+            .filter(|p| active && std::path::Path::new(p).is_dir())
             .cloned()
             .collect();
         let pool = tmux::claude_pool(all_panes);
@@ -592,8 +604,11 @@ impl Collector {
         for path in exited {
             self.claude_pause.insert(path, Instant::now());
         }
+        self.claude_dropped.retain(|(_, at)| at.elapsed() < CLAUDE_KEEP);
+        let ours = |w: &tmux::ClaudeWindow| self.claude_spares.iter().any(|s| s.window_id == w.window_id);
+        let kept = |w: &tmux::ClaudeWindow| active && !w.next && self.claude_dropped.iter().any(|(p, _)| *p == w.path);
         let (pool, unwanted): (Vec<_>, Vec<_>) =
-            pool.into_iter().partition(|w| wanted.contains(&w.path) && self.claude_spares.iter().any(|s| s.window_id == w.window_id));
+            pool.into_iter().filter(|w| !(kept(w) && ours(w))).partition(|w| wanted.contains(&w.path) && ours(w));
         for w in unwanted {
             self.kill_claude(&w.window_id);
         }
