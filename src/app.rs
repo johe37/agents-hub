@@ -163,6 +163,9 @@ pub struct Selection {
 }
 
 pub const FLASH: Duration = Duration::from_millis(1500);
+/// How long a workspace must stay selected before a Claude starts for it. Each start costs a few hundred MB,
+/// so moving through the list must not start one for every row passed.
+const CLAUDE_DWELL: Duration = Duration::from_secs(2);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
@@ -273,7 +276,7 @@ impl App {
     }
 
     /// Start a Claude for the selected workspace, or the directory highlighted in the picker,
-    /// so c or Ctrl+O shows it at once. Held keys pass by without starting one for every row.
+    /// so c or Ctrl+O shows it at once.
     fn prewarm_claude(&mut self) {
         let path = match &self.modal {
             Some(Modal::Picker(p)) => p.selected_path(),
@@ -285,7 +288,7 @@ impl App {
             }
         }
         let Some((at, path)) = &self.claude_target else { return };
-        if at.elapsed() > Duration::from_millis(150) && self.claude_sent.as_ref() != Some(path) {
+        if at.elapsed() > CLAUDE_DWELL && self.claude_sent.as_ref() != Some(path) {
             let _ = self.cmd.send(Cmd::PrewarmClaude(path.clone()));
             self.claude_sent = Some(path.clone());
         }
