@@ -41,6 +41,12 @@ def event(sid, cwd, ago, name, pane="", sock=socket, **extra):
 
 cwd = f"{repos}/payments-api"
 t = transcript("demo-pay", cwd, "Refund webhooks with retries", [
+    ("Where do we send refund webhooks today?",
+     "In `src/ledger.rs`, right after the refund is booked. It sends once and drops the event "
+     "if the merchant answers with an error, so a short outage loses refunds.", None),
+    ("Can we retry them instead of dropping them?",
+     "Yes. I suggest a retry queue with exponential backoff, and a cap so one bad merchant "
+     "does not hold the queue. Do you want a cap on the delay or on the number of tries?", None),
     ("Send refund webhooks with retries and exponential backoff. Cap the delay at 10 minutes.",
      "I added a retry queue in src/webhooks/retry.rs with backoff capped at 10 minutes. "
      "Now I want to run the webhook tests to check it.",
@@ -51,6 +57,9 @@ event("demo-pay", cwd, 40, "Notification", pay, transcript=t,
 
 cwd = f"{repos}/web-dashboard"
 t = transcript("demo-dash", cwd, "Fix jumping chart tooltip", [
+    ("Why does the tooltip jump on the revenue chart?",
+     "The tooltip is placed from the legend height. The legend wraps to two lines on narrow "
+     "screens, but the height is read only on the first render.", None),
     ("The tooltip jumps on stacked charts when the legend wraps. Fix it and add a story for it.",
      "The tooltip uses the legend height from the first render. I will measure it on resize instead.",
      ("Edit", {"file_path": f"{cwd}/src/components/Chart.tsx", "old_string": "a", "new_string": "b"})),
@@ -60,6 +69,8 @@ event("demo-dash", cwd, 4, "PreToolUse", dash, transcript=t,
 
 cwd = f"{repos}/infra-terraform"
 t = transcript("demo-infra", cwd, "Plan staging move to eu-north-1", [
+    ("What runs in the staging cluster today?",
+     "14 resources in eu-west-1: the EKS cluster, two node groups, RDS, Redis and the load balancers.", None),
     ("Plan the move of the staging cluster to eu-north-1. Don't apply anything.",
      "The plan is in docs/migration.md: 14 resources move, 3 need a new name, and the RDS snapshot "
      "copy takes about 40 minutes. `terraform plan` shows no changes to production. Ready when you are.",

@@ -98,7 +98,7 @@ mkrepo mobile-app master app/account.ts
 cd "$HOME"
 # Starts the tmux server and the hub, then fails to attach without a terminal; that is fine.
 for ws in payments-api web-dashboard infra-terraform docs-site; do
-    "$HUB" "$R/$ws" >/dev/null 2>&1 || true
+    "$HUB" "$R/$ws" </dev/null >/dev/null 2>&1 || true
 done
 t() { tmux -L claude-hub "$@"; }
 t new-window -d -t =payments-api: -n claude -c "$R/payments-api" "claude payments"
@@ -116,6 +116,15 @@ t send-keys -t =payments-api:shell 'clear; git --no-pager status -sb; git --no-p
 t send-keys -t =web-dashboard:shell "clear; printf '\n  \e[32mVITE v6.2.0\e[0m  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose\n\n  \e[2m14:02:11\e[0m \e[32mhmr update\e[0m /src/components/Chart.tsx\n'" Enter
 t send-keys -t =infra-terraform:shell 'clear; git --no-pager status -sb; ls staging' Enter
 t send-keys -t =docs-site:shell 'clear; ls -la content' Enter
+t send-keys -t =payments-api:nvim C-l
+# Select the waiting agent, so the side panel shows its chat. The hub writes the
+# summary once it knows the agents; before that, w finds nothing to select.
+for _ in $(seq 60); do
+    grep -q waiting "$HOME/.local/state/claude-hub/summary" 2>/dev/null && break
+    sleep 0.5
+done
+sleep 1
+t send-keys -t =_hub: w
 
 if [ -t 1 ] && [ -z "$OUTER_TMUX" ]; then
     exec env TMUX_TMPDIR="$TMUX_TMPDIR" tmux -L claude-hub attach -t _hub
