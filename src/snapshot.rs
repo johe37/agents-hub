@@ -129,7 +129,8 @@ pub struct Snapshot {
 
 /// Keep a Claude ready for this many of the last selected workspaces, so moving between two of them finds one ready.
 const CLAUDE_TARGETS: usize = 2;
-const CLAUDE_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+/// Replace a ready Claude this old even when its checkout is unchanged, so it picks up a newer claude.
+const CLAUDE_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// How long the Claude of a path dropped from the targets stays, in case the user comes back to it.
 const CLAUDE_KEEP: Duration = Duration::from_secs(5 * 60);
 const CLAUDE_PAUSE: Duration = Duration::from_secs(60);
@@ -142,7 +143,8 @@ struct ClaudeSpare {
     window_id: String,
     path: String,
     started: Instant,
-    branch: Option<String>,
+    /// (branch, commit) when it started.
+    checkout: (Option<String>, Option<String>),
 }
 
 pub enum Cmd {
@@ -576,7 +578,7 @@ impl Collector {
 
     /// Keep a Claude started for the last workspaces selected in the hub, or directories
     /// highlighted in the picker, so c or Ctrl+O shows it at once.
-    /// Only a few, as each takes a few hundred MB; replaced when old or on another branch,
+    /// Only a few, as each takes a few hundred MB; replaced when the branch or commit changes,
     /// as Claude reads the git state and CLAUDE.md files when it starts.
     /// A workspace dropped from the targets keeps its Claude for a while, so moving back to it finds one ready.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
@@ -613,10 +615,10 @@ impl Collector {
             self.kill_claude(&w.window_id);
         }
         for path in wanted {
-            let branch = self.git.repo_root(&path).and_then(|r| self.git.status(&r).branch);
+            let checkout = self.git.repo_root(&path).map(|r| self.git.status(&r)).map_or((None, None), |st| (st.branch, st.commit));
             let spare = |next: bool| pool.iter().find(|w| w.path == path && w.next == next);
             let info = |w: &tmux::ClaudeWindow| self.claude_spares.iter().find(|s| s.window_id == w.window_id);
-            let fresh = |w: &tmux::ClaudeWindow| info(w).is_some_and(|s| s.started.elapsed() < CLAUDE_MAX_AGE && s.branch == branch);
+            let fresh = |w: &tmux::ClaudeWindow| info(w).is_some_and(|s| s.started.elapsed() < CLAUDE_MAX_AGE && s.checkout == checkout);
             let up = |w: &tmux::ClaudeWindow| started.contains(&w.pane_id) || info(w).is_some_and(|s| s.started.elapsed() > CLAUDE_START);
             match (spare(false), spare(true)) {
                 (Some(cur), next) if fresh(cur) => {
@@ -624,7 +626,7 @@ impl Collector {
                         self.kill_claude(&n.window_id);
                     }
                 }
-                (Some(_), None) => self.spawn_claude(&path, branch, true),
+                (Some(_), None) => self.spawn_claude(&path, checkout, true),
                 (Some(_), Some(n)) if !fresh(n) => self.kill_claude(&n.window_id),
                 (Some(cur), Some(n)) if up(n) => {
                     self.kill_claude(&cur.window_id);
@@ -633,17 +635,17 @@ impl Collector {
                 (Some(_), Some(_)) => {}
                 // The spare was taken while its replacement started: a starting Claude beats a cold start.
                 (None, Some(n)) => tmux::promote_claude(&n.window_id, &path),
-                (None, None) => self.spawn_claude(&path, branch, false),
+                (None, None) => self.spawn_claude(&path, checkout, false),
             }
         }
     }
 
-    fn spawn_claude(&mut self, path: &str, branch: Option<String>, next: bool) {
+    fn spawn_claude(&mut self, path: &str, checkout: (Option<String>, Option<String>), next: bool) {
         if self.claude_pause.get(path).is_some_and(|at| at.elapsed() < CLAUDE_PAUSE) {
             return;
         }
         match tmux::spawn_claude_spare(path, next) {
-            Some(window_id) => self.claude_spares.push(ClaudeSpare { window_id, path: path.to_string(), started: Instant::now(), branch }),
+            Some(window_id) => self.claude_spares.push(ClaudeSpare { window_id, path: path.to_string(), started: Instant::now(), checkout }),
             None => {
                 self.claude_pause.insert(path.to_string(), Instant::now());
             }

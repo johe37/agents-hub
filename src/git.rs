@@ -11,6 +11,7 @@ const STATUS_TTL: Duration = Duration::from_secs(5);
 #[derive(Clone, Default, Debug)]
 pub struct GitStatus {
     pub branch: Option<String>,
+    pub commit: Option<String>,
     pub dirty: usize,
     pub ahead: u32,
     pub behind: u32,
@@ -90,7 +91,9 @@ fn changed_file(line: &str) -> (String, String) {
 fn parse_status(out: &str) -> GitStatus {
     let mut st = GitStatus::default();
     for line in out.lines().filter(|l| !l.is_empty()) {
-        if let Some(head) = line.strip_prefix("# branch.head ") {
+        if let Some(oid) = line.strip_prefix("# branch.oid ") {
+            st.commit = Some(oid.into());
+        } else if let Some(head) = line.strip_prefix("# branch.head ") {
             st.branch = Some(head.into());
         } else if let Some(ab) = line.strip_prefix("# branch.ab ") {
             let mut it = ab.split(' ').map(|n| n.trim_start_matches(['+', '-']).parse().unwrap_or(0));
@@ -164,6 +167,7 @@ mod tests {
                    ? untracked file\n";
         let st = parse_status(out);
         assert_eq!(st.branch.as_deref(), Some("main"));
+        assert_eq!(st.commit.as_deref(), Some("abc"));
         assert_eq!((st.ahead, st.behind, st.dirty), (2, 3, 3));
         assert_eq!(st.files[0], (".M".into(), "src/x.rs".into()));
         assert_eq!(st.files[1], ("R.".into(), "new name.rs".into()));
