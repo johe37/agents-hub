@@ -126,6 +126,7 @@ pub struct Snapshot {
     pub issues: Vec<crate::gitlab::Issue>,
     /// The reviews and issues are not fetched yet.
     pub inbox_loading: bool,
+    pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub usage: Option<crate::usage::Usage>,
 }
 
@@ -412,6 +413,7 @@ impl Collector {
             reviews: inbox.reviews,
             issues: inbox.issues,
             inbox_loading: !inbox.loaded,
+            inbox_errors: inbox.errors,
             usage: crate::usage::load(),
         }
     }

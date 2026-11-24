@@ -295,7 +295,11 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         }
         Row::Header(title, n) if foldable(title) => {
             let chevron = if app.section_open(title) { "▾ " } else { "▸ " };
-            (vec![s(chevron, fg(colors().muted)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
+            let mut l = vec![s(chevron, fg(colors().muted)), s(format!("{title} · {n}"), fg(colors().muted).bold())];
+            if let Some(e) = app.fetch_error(title) {
+                l.push(s(format!("  ⚠ {e}"), fg(colors().warning)));
+            }
+            (l, vec![])
         }
         Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![]),
         Row::Workspace(wi) => {
@@ -985,7 +989,13 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 format!("{n} in this section. Press space or Enter to {verb} them.")
             };
-            f.render_widget(Paragraph::new(s(text, fg(colors().muted))), inner);
+            let mut lines = vec![Line::from(s(text, fg(colors().muted)))];
+            if let Some(e) = app.fetch_error(title) {
+                lines.push(Line::default());
+                lines.push(Line::from(s(format!("⚠ The last fetch from GitLab failed: {e}"), fg(colors().warning))));
+                lines.push(Line::from(s("Check `glab auth status`. Ctrl+R tries again.", fg(colors().muted))));
+            }
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
             app.hits.detail = Rect::default();
             return;
         }

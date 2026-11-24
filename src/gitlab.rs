@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::config::Section;
+
 const TTL: Duration = Duration::from_secs(60);
 /// While a pipeline runs, so its jobs move along on screen.
 const RUNNING_TTL: Duration = Duration::from_secs(10);
@@ -167,8 +169,11 @@ fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, Str
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| format!("{program}: {e}"))?;
-    if out.status.success() {
-        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    match out.status.code() {
+        Some(0) => return Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Some(124) => return Err(format!("{program} timed out")),
+        Some(127) => return Err(format!("{program} is not installed")),
+        _ => {}
     }
     Err(failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or(format!("{program} failed")))
 }
@@ -312,10 +317,10 @@ fn fill(cwd: &str, mr: &mut Mr, v: &Value) {
 }
 
 /// Open MRs where user is a requested reviewer, newest activity first.
-fn fetch_reviews(user: &str) -> Option<Vec<Mr>> {
+fn fetch_reviews(user: &str) -> Result<Vec<Mr>, String> {
     let home = crate::config::home().display().to_string();
-    let list: Value = serde_json::from_str(&glab(&home, &["api", &format!("merge_requests?scope=all&state=opened&reviewer_username={user}&per_page=50")]).ok()?).ok()?;
-    let ids: Vec<(u64, u64)> = list.as_array()?.iter().filter_map(|m| Some((m["project_id"].as_u64()?, m["iid"].as_u64()?))).collect();
+    let list = api_list(&home, &format!("merge_requests?scope=all&state=opened&reviewer_username={user}&per_page=50"))?;
+    let ids: Vec<(u64, u64)> = list.iter().filter_map(|m| Some((m["project_id"].as_u64()?, m["iid"].as_u64()?))).collect();
     // The list leaves out the pipeline, so fetch each MR; in parallel, since they are independent.
     let mut mrs: Vec<Mr> = std::thread::scope(|s| {
         let handles: Vec<_> = ids
@@ -338,14 +343,21 @@ fn fetch_reviews(user: &str) -> Option<Vec<Mr>> {
         handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
     });
     mrs.sort_by_key(|m| std::cmp::Reverse(m.updated));
-    Some(mrs)
+    Ok(mrs)
 }
 
 /// Open issues assigned to you, newest activity first.
-fn fetch_issues() -> Option<Vec<Issue>> {
+fn fetch_issues() -> Result<Vec<Issue>, String> {
     let home = crate::config::home().display().to_string();
-    let list: Value = serde_json::from_str(&glab(&home, &["api", "issues?scope=assigned_to_me&state=opened&order_by=updated_at&per_page=50"]).ok()?).ok()?;
-    Some(list.as_array()?.iter().filter_map(parse_issue).collect())
+    Ok(api_list(&home, "issues?scope=assigned_to_me&state=opened&order_by=updated_at&per_page=50")?.iter().filter_map(parse_issue).collect())
+}
+
+fn api_list(cwd: &str, path: &str) -> Result<Vec<Value>, String> {
+    let text = glab(cwd, &["api", path])?;
+    match serde_json::from_str(&text) {
+        Ok(Value::Array(list)) => Ok(list),
+        _ => Err("glab gave an unexpected answer".into()),
+    }
 }
 
 pub fn reviews_dir() -> PathBuf {
@@ -398,6 +410,8 @@ pub struct Inbox {
     pub issues: Vec<Issue>,
     /// The first fetch has finished, whether it worked or not.
     pub loaded: bool,
+    /// Why the last fetch of a section failed.
+    pub errors: Vec<(Section, String)>,
 }
 
 /// MRs to review and issues assigned to you, refreshed in the background like `MrCache`.
@@ -415,17 +429,30 @@ impl InboxCache {
             let me = Arc::clone(self);
             std::thread::spawn(move || {
                 let home = crate::config::home().display().to_string();
-                let user = me.user.lock().unwrap().clone().or_else(|| {
-                    let v: Value = serde_json::from_str(&glab(&home, &["api", "user"]).ok()?).ok()?;
-                    v["username"].as_str().map(String::from)
-                });
-                *me.user.lock().unwrap() = user.clone();
+                let user = match me.user.lock().unwrap().clone() {
+                    Some(u) => Ok(u),
+                    None => glab(&home, &["api", "user"]).and_then(|text| {
+                        let v: Value = serde_json::from_str(&text).unwrap_or_default();
+                        v["username"].as_str().map(String::from).ok_or_else(|| "glab gave no user name".to_string())
+                    }),
+                };
+                *me.user.lock().unwrap() = user.clone().ok();
                 let reviews = user.and_then(|u| fetch_reviews(&u));
                 let issues = fetch_issues();
+                let mut errors = vec![];
+                if let Err(e) = &reviews {
+                    errors.push((Section::GitlabReviews, e.clone()));
+                }
+                if let Err(e) = &issues {
+                    errors.push((Section::GitlabIssues, e.clone()));
+                }
                 let mut state = me.state.lock().unwrap();
                 // Keep the old lists when GitLab is unreachable; try again after the TTL either way.
                 let old = std::mem::take(&mut state.1);
-                *state = (Some(Instant::now()), Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues), loaded: true });
+                *state = (
+                    Some(Instant::now()),
+                    Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues), loaded: true, errors },
+                );
                 *me.busy.lock().unwrap() = false;
             });
         }
@@ -560,6 +587,11 @@ mod tests {
         assert_eq!(failure(push).as_deref(), Some("! [rejected]        b -> b (fetch first)"));
         assert_eq!(failure("\n  404 Not Found\n").as_deref(), Some("404 Not Found"));
         assert_eq!(failure(""), None);
+    }
+
+    #[test]
+    fn names_a_missing_program() {
+        assert_eq!(run("/", 5, "no-such-program-here", &[]), Err("no-such-program-here is not installed".into()));
     }
 
     fn mr_stub() -> Mr {

@@ -531,7 +531,7 @@ impl App {
                 review_rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
                 self.push_reviews(&mut review_rows, approved, self.section_open(APPROVED));
             }
-        } else if self.loading(REVIEWS) {
+        } else if self.placeholder(REVIEWS) {
             review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
         }
         let issues: Vec<usize> = (0..self.snap.issues.len())
@@ -546,7 +546,7 @@ impl App {
             if self.section_open(ISSUES) {
                 issue_rows.extend(issues.into_iter().map(|i| (format!("issue:{}#{}", self.snap.issues[i].project, self.snap.issues[i].iid), Row::Issue(i))));
             }
-        } else if self.loading(ISSUES) {
+        } else if self.placeholder(ISSUES) {
             issue_rows.push((section_key(ISSUES), Row::Header(ISSUES, 0)));
         }
         let (outside, closed) = (section(true), section(false));
@@ -966,6 +966,21 @@ impl App {
         matches!(title, REVIEWS | ISSUES) && self.snap.inbox_loading && self.filter.text.is_empty()
     }
 
+    /// Why the section's last fetch failed.
+    pub fn fetch_error(&self, title: &str) -> Option<&str> {
+        let section = match title {
+            REVIEWS => Section::GitlabReviews,
+            ISSUES => Section::GitlabIssues,
+            _ => return None,
+        };
+        self.snap.inbox_errors.iter().find(|(s, _)| *s == section).map(|(_, e)| e.as_str())
+    }
+
+    /// An empty section still shows its title while it loads or when its fetch fails, so you see why it is empty.
+    fn placeholder(&self, title: &str) -> bool {
+        self.filter.text.is_empty() && (self.loading(title) || self.fetch_error(title).is_some())
+    }
+
     /// A filter shows every match, folded or not.
     pub fn section_open(&self, title: &str) -> bool {
         !foldable(title) || !self.filter.text.is_empty() || self.open_sections.contains(title)
@@ -1158,7 +1173,7 @@ impl App {
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
     fn refresh_mr(&mut self) {
-        if self.current_review().is_some() || self.current_issue().is_some() {
+        if self.current_review().is_some() || self.current_issue().is_some() || matches!(self.current(), Some(Row::Header(REVIEWS | ISSUES | APPROVED, _))) {
             let _ = self.cmd.send(Cmd::ForgetInbox);
             return self.notify("Refreshing the reviews and issues…", false);
         }
