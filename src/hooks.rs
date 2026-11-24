@@ -32,7 +32,7 @@ pub fn report() {
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let tmux = std::env::var("TMUX").unwrap_or_default();
-    let record = json!({
+    let mut record = json!({
         "time": now,
         "tmux": tmux.split(',').next().unwrap_or(""),
         "tmux_pane": std::env::var("TMUX_PANE").unwrap_or_default(),
@@ -40,10 +40,12 @@ pub fn report() {
     });
     let dir = events_dir();
     let _ = std::fs::create_dir_all(&dir);
+    let target = dir.join(format!("{id}.json"));
+    record["polling"] = next_polling(stored_polling(&target), &event).into();
     // Write and rename: the rename bumps the directory mtime, which the hub watches.
     let tmp = dir.join(format!(".{id}.{}", std::process::id()));
     if std::fs::write(&tmp, record.to_string()).is_ok() {
-        let _ = std::fs::rename(&tmp, dir.join(format!("{id}.json")));
+        let _ = std::fs::rename(&tmp, &target);
     }
 }
 
@@ -141,4 +143,83 @@ pub fn install(yes: bool) -> i32 {
     }
     println!("Done. Backup saved as settings.json.bak. New Claude sessions will report status.");
     0
+}
+
+/// Tools that hand control back to Claude Code with a promise to resume the session later.
+const DEFERRAL_TOOLS: [&str; 3] = ["ScheduleWakeup", "CronCreate", "Monitor"];
+
+/// Whether the session will resume on its own once the event is in, e.g. `Stop` right after
+/// `ScheduleWakeup` leaves it idle but not done. The hub keeps only the latest event, and `Stop`
+/// would hide the deferral, so the flag is carried in the record next to it.
+pub fn next_polling(previous: bool, event: &Value) -> bool {
+    match event["hook_event_name"].as_str() {
+        Some("UserPromptSubmit" | "SessionStart" | "SessionEnd") => false,
+        Some("PostToolUse") => {
+            let input = &event["tool_input"];
+            match event["tool_name"].as_str() {
+                // `stop: true` ends a /loop instead of scheduling another round.
+                Some("ScheduleWakeup") if input["stop"] == true => false,
+                Some(tool) if DEFERRAL_TOOLS.contains(&tool) => true,
+                Some("Bash") if input["run_in_background"] == true => true,
+                _ => previous,
+            }
+        }
+        _ => previous,
+    }
+}
+
+/// The polling flag of the session's stored record, false when there is none.
+fn stored_polling(path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else { return false };
+    let Ok(record) = serde_json::from_slice::<Value>(&bytes) else { return false };
+    record["polling"] == true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn post(tool: &str, input: Value) -> Value {
+        json!({"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": input})
+    }
+
+    fn named(name: &str) -> Value {
+        json!({"hook_event_name": name})
+    }
+
+    #[test]
+    fn deferral_tools_start_polling() {
+        for tool in ["ScheduleWakeup", "CronCreate", "Monitor"] {
+            assert!(next_polling(false, &post(tool, json!({}))), "{tool}");
+        }
+    }
+
+    #[test]
+    fn background_bash_starts_polling_but_foreground_does_not() {
+        assert!(next_polling(false, &post("Bash", json!({"run_in_background": true}))));
+        assert!(!next_polling(false, &post("Bash", json!({"command": "ls"}))));
+        assert!(!next_polling(false, &post("Bash", json!({"run_in_background": false}))));
+    }
+
+    #[test]
+    fn ending_the_loop_stops_polling() {
+        assert!(!next_polling(true, &post("ScheduleWakeup", json!({"stop": true}))));
+    }
+
+    #[test]
+    fn a_new_prompt_or_session_boundary_stops_polling() {
+        for name in ["UserPromptSubmit", "SessionStart", "SessionEnd"] {
+            assert!(!next_polling(true, &named(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn other_events_keep_the_flag() {
+        for previous in [false, true] {
+            for name in ["Stop", "PreToolUse", "Notification"] {
+                assert_eq!(next_polling(previous, &named(name)), previous, "{name}");
+            }
+            assert_eq!(next_polling(previous, &post("Read", json!({}))), previous);
+        }
+    }
 }

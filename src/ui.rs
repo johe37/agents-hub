@@ -43,6 +43,7 @@ fn status_symbol(status: Status, t: u128) -> Span<'static> {
         // Pulses, so an agent that needs you catches the eye.
         Status::Waiting => s("◉", fg(if (t / 600) % 2 == 0 { colors().warning } else { lerp(colors().warning, colors().bg, 0.5) }).bold()),
         Status::Working => s(SPINNER[(t / 80) as usize % SPINNER.len()], fg(colors().info)),
+        Status::Polling => s("↻", fg(colors().info)),
         Status::Idle => s("○", fg(colors().success)),
         Status::Unknown => s("·", fg(colors().dim)),
         Status::Ended => s("✗", fg(colors().dim)),
@@ -174,6 +175,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let working = count(Status::Working);
     if working > 0 {
         right.push(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().on_accent).bg(colors().accent).bold()));
+        right.push(Span::raw(" "));
+    }
+    let polling = count(Status::Polling);
+    if polling > 0 {
+        right.push(pill(format!("↻ {polling} polling"), fg(colors().muted).bg(colors().panel)));
         right.push(Span::raw(" "));
     }
     let idle = count(Status::Idle);
@@ -550,6 +556,7 @@ fn headline(a: &Agent) -> (String, Option<String>) {
             (reason.into(), tool.or_else(|| sess.and_then(|s| s.message.clone())))
         }
         Status::Working => ("Working".into(), sess.and_then(|s| s.tool.clone()).or_else(|| t.and_then(|t| t.last_tool.clone()))),
+        Status::Polling => ("Polling".into(), Some("Resumes on its own at the next wake-up or when a background task finishes.".into())),
         Status::Idle => ("Done with its turn".into(), Some("Enter opens it to continue.".into())),
         Status::Ended | Status::Stale => ("Closed".into(), Some("Enter resumes it in a Claude Hub workspace.".into())),
         _ => ("No status".into(), Some("Started before claude-hub hooks were installed.".into())),
