@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{APPROVED, Action, App, FLASH, Focus, Mine, Modal, Row, foldable, selectable};
+use crate::app::{APPROVED, Action, App, FLASH, Focus, Mine, Modal, Row, foldable, gitlab_section, selectable};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::gitlab;
@@ -303,7 +303,12 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             if let Some(e) = app.fetch_error(title) {
                 l.push(s(format!("  ⚠ {e}"), fg(colors().warning)));
             }
-            (l, vec![])
+            let r = match gitlab_section(title) {
+                Some(_) if app.snap.inbox_busy => vec![s(format!(" {} ", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().muted))],
+                Some(_) => vec![s(" ↻ ", fg(colors().muted))],
+                None => vec![],
+            };
+            (l, r)
         }
         Row::Header(title, n) => (vec![s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![]),
         Row::Workspace(wi) => {
@@ -1059,7 +1064,11 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             if let Some(e) = app.fetch_error(title) {
                 lines.push(Line::default());
                 lines.push(Line::from(s(format!("⚠ The last fetch from GitLab failed: {e}"), fg(colors().warning))));
-                lines.push(Line::from(s("Check `glab auth status`. Ctrl+R tries again.", fg(colors().muted))));
+                lines.push(Line::from(s("Check `glab auth status`.", fg(colors().muted))));
+            }
+            if gitlab_section(title).is_some() {
+                lines.push(Line::default());
+                lines.push(Line::from(s("The GitLab lists refresh every two minutes. Ctrl+R or a click on ↻ refreshes them now.", fg(colors().muted))));
             }
             f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
             app.hits.detail = Rect::default();
@@ -1624,6 +1633,7 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "Merge requests (yours, and the ones assigned to you)"),
     ("Enter", "go to the workspace that has its branch, or open it in GitLab"),
+    ("Ctrl+R", "on any GitLab row or title, or click ↻: refresh the GitLab lists now"),
     ("c t e", "Claude, a shell or nvim in that workspace"),
     ("", ""),
     ("", "Issues (open issues assigned to you)"),

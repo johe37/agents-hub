@@ -71,6 +71,7 @@ pub enum Action {
     Fold,
     FoldAll,
     Type,
+    Refresh,
 }
 
 pub enum Modal {
@@ -361,6 +362,7 @@ impl App {
     fn animating(&self) -> bool {
         !self.loaded
             || self.snap.inbox_loading
+            || self.snap.inbox_busy
             || self.toast.is_some()
             || self.changed.values().any(|t| t.elapsed() < FLASH)
             || self.snap.agents.iter().any(|a| matches!(a.status, Status::Working | Status::Waiting))
@@ -798,6 +800,9 @@ impl App {
             v.push(("↵", "open in GitLab", Action::Open));
             v.push(("c", "review with Claude", Action::NewWindow("claude")));
         }
+        if !side_visible && matches!(self.current(), Some(Row::Header(title, _)) if gitlab_section(title).is_some()) {
+            v.push(("^R", "refresh", Action::Refresh));
+        }
         if !side_visible && let Some(m) = self.current_mr() {
             v.push(("↵", if self.mr_workspace(m).is_some() { "go to workspace" } else { "open in GitLab" }, Action::Open));
         }
@@ -840,6 +845,7 @@ impl App {
     fn act(&mut self, action: Action) {
         match action {
             Action::Open => self.open(),
+            Action::Refresh => self.refresh_mr(),
             Action::NewWorkspace => self.open_picker(""),
             Action::NewWindow("claude") if self.current_review().is_some() => self.start_review("claude"),
             Action::NewWindow(kind) if self.current_review().is_some() && self.current_workspace().is_none() => self.start_review(kind),
@@ -1598,6 +1604,11 @@ impl App {
                     self.focus = Focus::List;
                     let i = self.offset + (pos.y - l.y) as usize;
                     if i < self.rows.len() && selectable(&self.rows[i].1) {
+                        // The ↻ at the right end of a GitLab title.
+                        if matches!(self.rows[i].1, Row::Header(title, _) if gitlab_section(title).is_some()) && pos.x + 3 >= l.right() {
+                            self.select(i);
+                            return self.act(Action::Refresh);
+                        }
                         let foldable_row = match self.rows[i].1 {
                             Row::Workspace(_) | Row::Header(..) => true,
                             Row::Review(r) => self.review_workspace(r).is_some(),
@@ -1638,7 +1649,7 @@ fn is_shell(command: &str) -> bool {
     matches!(command, "bash" | "zsh" | "fish" | "sh" | "dash" | "ksh" | "nu")
 }
 
-fn gitlab_section(title: &str) -> Option<Section> {
+pub fn gitlab_section(title: &str) -> Option<Section> {
     GITLAB.into_iter().find(|s| s.title() == title)
 }
 
@@ -1659,5 +1670,26 @@ pub fn selectable(r: &Row) -> bool {
         Row::Gap => false,
         Row::Header(title, _) => foldable(title),
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::{MouseButton, MouseEvent};
+
+    #[test]
+    fn a_click_on_the_refresh_mark_fetches_the_gitlab_lists_again() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(Config::default(), tx, Default::default());
+        app.snap.inbox_errors = vec![(Section::GitlabIssues, "timed out".into())];
+        app.build_rows();
+        app.hits.list = Rect::new(1, 1, 60, 20);
+        let y = app.rows.iter().position(|(_, r)| *r == Row::Header(ISSUES, 0)).unwrap() as u16 + 1;
+        let click = |column| MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column, row: y, modifiers: KeyModifiers::NONE };
+        app.on_mouse(click(30));
+        assert!(rx.try_recv().is_err(), "a click on the title only selects it");
+        app.on_mouse(click(59));
+        assert!(matches!(rx.try_recv(), Ok(Cmd::ForgetInbox)));
     }
 }

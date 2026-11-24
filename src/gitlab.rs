@@ -416,6 +416,8 @@ pub struct Inbox {
     pub loaded: bool,
     /// Why the last fetch of a section failed.
     pub errors: Vec<(Section, String)>,
+    /// A fetch runs now.
+    pub busy: bool,
 }
 
 /// MRs to review, your own and assigned MRs, and issues assigned to you, refreshed in the background like `MrCache`.
@@ -475,11 +477,11 @@ impl InboxCache {
                     }
                     None => vec![],
                 };
-                *state = (Some(Instant::now()), Inbox { reviews, authored, assigned, issues, loaded: true, errors });
+                *state = (Some(Instant::now()), Inbox { reviews, authored, assigned, issues, loaded: true, errors, busy: false });
                 *me.busy.lock().unwrap() = false;
             });
         }
-        inbox
+        Inbox { busy: *self.busy.lock().unwrap(), ..inbox }
     }
 
     pub fn forget(&self) {

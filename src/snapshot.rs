@@ -131,6 +131,7 @@ pub struct Snapshot {
     /// The GitLab lists are not fetched yet.
     pub inbox_loading: bool,
     pub inbox_errors: Vec<(crate::config::Section, String)>,
+    pub inbox_busy: bool,
     pub usage: Option<crate::usage::Usage>,
 }
 
@@ -420,6 +421,7 @@ impl Collector {
             issues: inbox.issues,
             inbox_loading: !inbox.loaded,
             inbox_errors: inbox.errors,
+            inbox_busy: inbox.busy,
             usage: crate::usage::load(),
         }
     }
