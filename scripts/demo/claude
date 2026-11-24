@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fake Claude Code screen for the claude-hub screenshot demo.
+# Fake Claude Code screen for the claude-hub demo.
 o=$'\e[38;5;209m'; d=$'\e[2m'; b=$'\e[1m'; g=$'\e[32m'; r=$'\e[0m'
 clear
 printf '%s╭───────────────────────────────────────────────╮%s\n' "$o" "$r"

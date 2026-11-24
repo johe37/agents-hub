@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a claude-hub with made-up workspaces, agents and merge requests, for screenshots.
+# Start a claude-hub with made-up workspaces, agents and merge requests, to try changes by hand.
 # It runs on its own tmux server with its own HOME, so your real hub is not touched.
 set -euo pipefail
 
