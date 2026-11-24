@@ -161,8 +161,14 @@ with its status and duration.
 description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
 code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
-then press `Enter`. Your own checkout is never touched. `x` on a review workspace closes it and
-deletes the checkout. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
+then press `Enter`. `t` and `e` check it out the same way, with a shell or nvim instead of
+Claude. Your own checkout is never touched. The review's workspace shows under its
+MR in **REVIEWS**, with its agents and terminals, even when the section is folded. `Enter` on
+the MR then goes to a shell in the checkout (a new one if none is open), and `x` closes the
+workspace and deletes the checkout. When the MR leaves your review list, its workspace moves
+to **WORKSPACES**. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
+workspace moves to a folded **✓ APPROVED** group at the end; close the workspace with `x` to
+send it there. If the author pushes and GitLab drops your approval, the MR moves back. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
 The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not
 gitlab.com, set it once, or the list stays empty: `glab config set --global host git.example.com`.
 

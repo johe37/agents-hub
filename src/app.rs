@@ -137,6 +137,8 @@ pub struct App {
     pub folded: HashSet<String>,
     /// Foldable sections the user unfolded; they start folded.
     pub open_sections: HashSet<&'static str>,
+    /// For each review, the workspace that holds its checkout, if one is open.
+    pub review_ws: Vec<Option<usize>>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
     /// The workspace selected last, and since when; its Claude is started once the selection rests.
@@ -172,6 +174,10 @@ const CLAUDE_DWELL: Duration = Duration::from_secs(2);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
+pub fn window_command(kind: &str) -> Option<&'static str> {
+    WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c)
+}
+
 impl App {
     pub fn new(cfg: Config, cmd: Sender<Cmd>, screens: Arc<Mutex<ScreenCache>>) -> Self {
         App {
@@ -198,6 +204,7 @@ impl App {
             changed: HashMap::new(),
             folded: HashSet::new(),
             open_sections: HashSet::from([WORKSPACES, OTHER]),
+            review_ws: vec![],
             last_click: None,
             prewarm_pending: None,
             claude_target: None,
@@ -383,7 +390,13 @@ impl App {
 
     /// The row key that takes the selection when a fold hides the selected row: its workspace or section.
     fn owner(&self) -> Option<String> {
+        if !matches!(self.current(), Some(Row::Review(_))) {
+            if let Some(ri) = self.current_workspace().and_then(|ws| self.review_of(&ws.name)) {
+                return Some(review_key(&self.snap.reviews[ri]));
+            }
+        }
         match self.current() {
+            Some(Row::Review(i)) if self.in_approved(i) && self.section_open(REVIEWS) => Some(section_key(APPROVED)),
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
             Some(Row::Issue(_)) => Some(section_key(ISSUES)),
             Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
@@ -395,8 +408,22 @@ impl App {
 
     fn rebuild_rows(&mut self, owner: Option<String>) {
         let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
+        let paths: Vec<String> = self.snap.workspaces.iter().map(|w| tmux::canonical(&w.path)).collect();
+        self.review_ws = self
+            .snap
+            .reviews
+            .iter()
+            .map(|m| {
+                let dir = tmux::canonical(&m.review_dir().display().to_string());
+                paths.iter().position(|p| *p == dir)
+            })
+            .collect();
         let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
+            // A review's workspace shows under its review instead.
+            if self.review_ws.contains(&Some(wi)) {
+                continue;
+            }
             let agents = self.agents_of(ws);
             let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_claude()).collect();
             let threads: Vec<usize> = (0..ws.mr.as_ref().map_or(0, |m| m.threads.len())).collect();
@@ -465,19 +492,40 @@ impl App {
             }
             v
         };
-        let reviews: Vec<usize> = (0..self.snap.reviews.len())
-            .filter(|&i| {
-                let m = &self.snap.reviews[i];
-                self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
-            })
-            .collect();
+        let mut reviews: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
+        for (i, m) in self.snap.reviews.iter().enumerate() {
+            let ws = self.review_ws[i].map(|wi| &self.snap.workspaces[wi]);
+            let mut agents = ws.map(|ws| self.agents_of(ws)).unwrap_or_default();
+            let mut terminals: Vec<usize> = ws.map(|ws| (0..ws.windows.len()).filter(|&t| !ws.windows[t].is_claude()).collect()).unwrap_or_default();
+            if !self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)]) {
+                agents.retain(|&a| self.agent_matches(&self.snap.agents[a]));
+                terminals.retain(|&t| {
+                    let w = &ws.unwrap().windows[t];
+                    self.matches(&[Some(&w.name), Some(&w.command)])
+                });
+                if agents.is_empty() && terminals.is_empty() {
+                    continue;
+                }
+            }
+            if self.filter.text.is_empty() && ws.is_some_and(|ws| self.folded.contains(&ws.name)) {
+                agents.retain(|&a| self.snap.agents[a].status == Status::Waiting);
+                terminals.clear();
+            }
+            reviews.push((i, agents, terminals));
+        }
         if !reviews.is_empty() {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, reviews.len())));
-            if self.section_open(REVIEWS) {
-                rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
+            // A review with a workspace is work in progress, approved or not, so it stays on top.
+            let (approved, mut todo): (Vec<_>, Vec<_>) = reviews.into_iter().partition(|r| self.in_approved(r.0));
+            todo.sort_by_key(|r| self.review_ws[r.0].is_none());
+            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, todo.len())));
+            let open = self.section_open(REVIEWS);
+            self.push_reviews(&mut rows, todo, open);
+            if open && !approved.is_empty() {
+                rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
+                self.push_reviews(&mut rows, approved, self.section_open(APPROVED));
             }
         }
         let issues: Vec<usize> = (0..self.snap.issues.len())
@@ -548,15 +596,15 @@ impl App {
         self.snap.reviews.get(i)
     }
 
-    /// Check out the selected MR in its own worktree and open it with Claude, ready to review.
-    fn start_review(&mut self) {
+    /// Check out the selected MR in its own worktree and open it with a window of kind; Claude gets the review prompt.
+    fn start_review(&mut self, kind: &'static str) {
         let Some(mr) = self.current_review().cloned() else { return };
         let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
             let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
             return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
         };
         self.notify(format!("Checking out !{} from {}…", mr.iid, shorten(&repo)), false);
-        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo });
+        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo, kind });
     }
 
     pub fn current_issue(&self) -> Option<&crate::gitlab::Issue> {
@@ -581,9 +629,38 @@ impl App {
         Some((ws, ws.windows.get(ti)?))
     }
 
+    /// Approved by you and no workspace open: done, so it goes in the APPROVED group.
+    pub fn in_approved(&self, review: usize) -> bool {
+        self.snap.reviews[review].approved && self.review_ws.get(review).copied().flatten().is_none()
+    }
+
+    fn push_reviews(&self, rows: &mut Vec<(String, Row)>, reviews: Vec<(usize, Vec<usize>, Vec<usize>)>, open: bool) {
+        for (i, agents, terminals) in reviews {
+            let Some(wi) = self.review_ws[i] else {
+                if open {
+                    rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
+                }
+                continue;
+            };
+            rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
+            rows.extend(agents.into_iter().map(|a| (self.snap.agents[a].key.clone(), Row::Agent(a))));
+            rows.extend(terminals.into_iter().map(|t| (format!("term:{}", self.snap.workspaces[wi].windows[t].window_id), Row::Terminal(wi, t))));
+        }
+    }
+
+    /// The review whose checkout the named workspace holds.
+    pub fn review_of(&self, ws: &str) -> Option<usize> {
+        self.review_ws.iter().position(|w| w.is_some_and(|wi| self.snap.workspaces[wi].name == ws))
+    }
+
+    pub fn review_workspace(&self, review: usize) -> Option<&Workspace> {
+        self.review_ws.get(review).copied().flatten().and_then(|wi| self.snap.workspaces.get(wi))
+    }
+
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
             Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
+            Row::Review(i) => return self.review_workspace(i),
             Row::Agent(i) => self.snap.agents[i].workspace.clone()?,
             _ => return None,
         };
@@ -659,7 +736,8 @@ impl App {
         match action {
             Action::Open => self.open(),
             Action::NewWorkspace => self.open_picker(""),
-            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review(),
+            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review("claude"),
+            Action::NewWindow(kind) if self.current_review().is_some() && self.current_workspace().is_none() => self.start_review(kind),
             Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
             Action::NewWindow(kind) => self.new_window(kind),
             Action::NewChat => self.new_chat(),
@@ -769,10 +847,17 @@ impl App {
                 }
             }
             Some(Row::Workspace(i)) => tmux::switch_client(&self.snap.workspaces[i].name),
-            Some(Row::Review(_)) => {
-                let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
-                return self.open_url(&url);
-            }
+            // A review is tried out in a shell; Claude has a row of its own.
+            Some(Row::Review(i)) => match self.review_workspace(i) {
+                Some(ws) => match ws.windows.iter().find(|w| !w.is_claude() && is_shell(&w.command)) {
+                    Some(w) => tmux::jump_to_window(&ws.name, &w.window_id),
+                    None => tmux::new_window(&ws.name, &ws.path, "shell", None, self.snap.spares.get(&ws.path).map(|s| s.as_str())),
+                },
+                None => {
+                    let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
+                    return self.open_url(&url);
+                }
+            },
             Some(Row::Issue(_)) => {
                 let Some(url) = self.current_issue().map(|is| is.url.clone()) else { return };
                 return self.open_url(&url);
@@ -807,7 +892,7 @@ impl App {
             self.notify("Select a workspace first, or press n for a new one", true);
             return;
         };
-        let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
+        let command = window_command(kind);
         let spare = match command {
             None => self.snap.spares.get(&ws.path),
             Some("claude") => self.snap.claude_spares.get(&ws.path),
@@ -860,7 +945,7 @@ impl App {
     fn toggle_fold_all(&mut self) {
         let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         // The workspaces section stays open so that the folded workspaces still show.
-        let sections = [REVIEWS, ISSUES, OTHER, CLOSED];
+        let sections = [REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
         if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
             self.folded.clear();
             self.open_sections.extend(sections);
@@ -876,6 +961,7 @@ impl App {
         let agents = match self.current() {
             Some(Row::Agent(i)) => vec![i],
             Some(Row::Workspace(wi)) => self.agents_of(&self.snap.workspaces[wi]),
+            Some(Row::Review(i)) => self.review_workspace(i).map(|ws| self.agents_of(ws)).unwrap_or_default(),
             _ => vec![],
         };
         let sessions: Vec<_> = agents.iter().filter_map(|&i| self.snap.agents[i].session.as_ref()).filter(|s| s.status == Status::Waiting).collect();
@@ -917,7 +1003,11 @@ impl App {
     }
 
     fn close(&mut self) {
-        let (question, then): (String, Box<dyn Fn() -> Res>) = match self.current() {
+        let row = match self.current() {
+            Some(Row::Review(i)) => self.review_ws.get(i).copied().flatten().map(Row::Workspace),
+            r => r,
+        };
+        let (question, then): (String, Box<dyn Fn() -> Res>) = match row {
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
                 if a.background && a.status.alive() {
@@ -1076,7 +1166,7 @@ impl App {
             let r = tmux::switch_client(&ws.name);
             return self.finish(r);
         }
-        let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
+        let command = window_command(kind);
         // Look up the pool fresh: the picker may have started a spare for this path a moment ago.
         let pool = tmux::list_all_panes();
         let spares = match command {
@@ -1363,7 +1453,13 @@ impl App {
                     self.focus = Focus::List;
                     let i = self.offset + (pos.y - l.y) as usize;
                     if i < self.rows.len() && selectable(&self.rows[i].1) {
-                        if matches!(self.rows[i].1, Row::Workspace(_) | Row::Header(..)) && (l.x + 1..=l.x + 2).contains(&pos.x) {
+                        let foldable_row = match self.rows[i].1 {
+                            Row::Workspace(_) | Row::Header(..) => true,
+                            Row::Review(r) => self.review_workspace(r).is_some(),
+                            _ => false,
+                        };
+                        let indent = if matches!(self.rows[i].1, Row::Header(APPROVED, _)) { 2 } else { 0 };
+                        if foldable_row && (l.x + 1 + indent..=l.x + 2 + indent).contains(&pos.x) {
                             self.select(i);
                             return self.act(Action::Fold);
                         }
@@ -1383,10 +1479,19 @@ impl App {
 
 const WORKSPACES: &str = "WORKSPACES";
 const REVIEWS: &str = "REVIEWS";
+pub const APPROVED: &str = "APPROVED";
 const ISSUES: &str = "MY ISSUES";
 const OTHER: &str = "OTHER SESSIONS";
 const CLOSED: &str = "CLOSED SESSIONS";
-const FOLDABLE: [&str; 5] = [WORKSPACES, REVIEWS, ISSUES, OTHER, CLOSED];
+const FOLDABLE: [&str; 6] = [WORKSPACES, REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
+
+fn is_shell(command: &str) -> bool {
+    matches!(command, "bash" | "zsh" | "fish" | "sh" | "dash" | "ksh" | "nu")
+}
+
+fn review_key(m: &crate::gitlab::Mr) -> String {
+    format!("review:{}!{}", m.project, m.iid)
+}
 
 fn section_key(title: &str) -> String {
     format!("section:{title}")
