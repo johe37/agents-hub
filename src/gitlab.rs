@@ -38,7 +38,7 @@ pub struct Mr {
     pub updated: u64,
     pub description: String,
     pub draft: bool,
-    /// Usernames; only fetched for MRs you review.
+    /// Usernames; not fetched for a workspace's MR.
     pub approved_by: Vec<String>,
     /// You are among approved_by.
     pub approved: bool,
@@ -316,34 +316,97 @@ fn fill(cwd: &str, mr: &mut Mr, v: &Value) {
     }
 }
 
-/// The open MRs that query lists, newest activity first; approved means user approved.
-fn fetch_mrs(query: &str, user: &str) -> Result<Vec<Mr>, String> {
+/// What a list of MRs asks GraphQL for. Thread texts are left out: they take most of the time, so
+/// they come over REST, and only for the MRs that have unresolved threads.
+const MR_FIELDS: &str = "iid title webUrl state draft updatedAt description detailedMergeStatus author { username } \
+    project { id fullPath } approvedBy { nodes { username } } resolvableDiscussionsCount resolvedDiscussionsCount \
+    headPipeline { status path jobs { nodes { id name status allowFailure duration webPath stage { name } } } }";
+
+/// Your open MRs in one of GitLab's lists on the current user, such as `authoredMergeRequests`, newest activity first.
+fn fetch_mrs(list: &str) -> Result<Vec<Mr>, String> {
     let home = crate::config::home().display().to_string();
-    let list = api_list(&home, &format!("merge_requests?{query}&state=opened&per_page=50"))?;
-    let ids: Vec<(u64, u64)> = list.iter().filter_map(|m| Some((m["project_id"].as_u64()?, m["iid"].as_u64()?))).collect();
-    // The list leaves out the pipeline, so fetch each MR; in parallel, since they are independent.
-    let mut mrs: Vec<Mr> = std::thread::scope(|s| {
-        let handles: Vec<_> = ids
-            .iter()
-            .map(|&(project, iid)| {
-                let home = &home;
-                s.spawn(move || {
-                    let v: Value = serde_json::from_str(&glab(home, &["api", &format!("projects/{project}/merge_requests/{iid}")]).ok()?).ok()?;
-                    let mut mr = parse_mr(&v)?;
-                    fill(home, &mut mr, &v);
-                    if let Ok(text) = glab(home, &["api", &format!("projects/{project}/merge_requests/{iid}/approvals")]) {
-                        let a: Value = serde_json::from_str(&text).unwrap_or_default();
-                        mr.approved_by = a["approved_by"].as_array().into_iter().flatten().filter_map(|u| u["user"]["username"].as_str().map(String::from)).collect();
-                        mr.approved = mr.approved_by.iter().any(|u| u == user);
-                    }
-                    Some(mr)
-                })
-            })
-            .collect();
-        handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+    let query = format!("query {{ currentUser {{ username {list}(state: opened, first: 50) {{ nodes {{ {MR_FIELDS} }} }} }} }}");
+    let v: Value = serde_json::from_str(&glab(&home, &["api", "graphql", "-f", &format!("query={query}")])?).map_err(|_| "glab gave an unexpected answer".to_string())?;
+    if let Some(e) = v["errors"][0]["message"].as_str() {
+        return Err(e.to_string());
+    }
+    let me = &v["data"]["currentUser"];
+    let user = me["username"].as_str().unwrap_or_default();
+    let nodes = me[list]["nodes"].as_array().ok_or("glab gave an unexpected answer")?;
+    let mut mrs: Vec<(Mr, i64)> = nodes.iter().filter_map(|n| parse_graphql_mr(n, user)).collect();
+    std::thread::scope(|s| {
+        for (mr, _) in mrs.iter_mut().filter(|(_, open)| *open > 0) {
+            let home = &home;
+            s.spawn(move || {
+                let path = format!("projects/{}/merge_requests/{}/discussions?per_page=100", mr.project_id, mr.iid);
+                if let Ok(text) = glab(home, &["api", &path]) {
+                    mr.threads = serde_json::from_str(&text).map(|v| parse_threads(&v)).unwrap_or_default();
+                }
+            });
+        }
     });
+    let mut mrs: Vec<Mr> = mrs.into_iter().map(|(m, _)| m).collect();
     mrs.sort_by_key(|m| std::cmp::Reverse(m.updated));
     Ok(mrs)
+}
+
+/// An MR from GraphQL and its number of unresolved threads; approved means user approved.
+fn parse_graphql_mr(n: &Value, user: &str) -> Option<(Mr, i64)> {
+    let url = n["webUrl"].as_str()?;
+    // GraphQL gives paths; links need the host in front.
+    let host = url.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+    let pipeline = &n["headPipeline"];
+    let approved_by: Vec<String> = n["approvedBy"]["nodes"].as_array().into_iter().flatten().filter_map(|u| u["username"].as_str().map(String::from)).collect();
+    let mut jobs: Vec<Job> = pipeline["jobs"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|j| {
+            Some(Job {
+                id: gid(&j["id"])?,
+                name: j["name"].as_str()?.to_string(),
+                stage: j["stage"]["name"].as_str()?.to_string(),
+                status: match lower(&j["status"])?.as_str() {
+                    "failed" if j["allowFailure"] == true => "warning".to_string(),
+                    s => s.to_string(),
+                },
+                duration: j["duration"].as_f64(),
+                url: j["webPath"].as_str().map(|p| format!("{host}{p}")).unwrap_or_default(),
+            })
+        })
+        .collect();
+    jobs.sort_by_key(|j| j.id);
+    let open = n["resolvableDiscussionsCount"].as_i64().unwrap_or(0) - n["resolvedDiscussionsCount"].as_i64().unwrap_or(0);
+    let mr = Mr {
+        iid: n["iid"].as_str()?.parse().ok()?,
+        project_id: gid(&n["project"]["id"])?,
+        title: n["title"].as_str()?.to_string(),
+        url: url.to_string(),
+        state: n["state"].as_str().unwrap_or_default().to_string(),
+        pipeline: lower(&pipeline["status"]),
+        pipeline_url: pipeline["path"].as_str().map(|p| format!("{host}{p}")),
+        merge_status: lower(&n["detailedMergeStatus"]),
+        threads: vec![],
+        jobs,
+        author: n["author"]["username"].as_str().unwrap_or_default().to_string(),
+        project: n["project"]["fullPath"].as_str().unwrap_or_default().to_string(),
+        updated: n["updatedAt"].as_str().and_then(epoch).unwrap_or(0),
+        description: n["description"].as_str().unwrap_or_default().to_string(),
+        draft: n["draft"] == true,
+        approved: approved_by.iter().any(|u| u == user),
+        approved_by,
+    };
+    Some((mr, open))
+}
+
+/// The number at the end of a GraphQL id, `gid://gitlab/Project/235`.
+fn gid(v: &Value) -> Option<u64> {
+    v.as_str()?.rsplit('/').next()?.parse().ok()
+}
+
+/// GraphQL's enums are REST's values in capitals: SUCCESS is success.
+fn lower(v: &Value) -> Option<String> {
+    v.as_str().map(str::to_lowercase)
 }
 
 /// Open issues assigned to you, newest activity first.
@@ -428,7 +491,6 @@ pub struct InboxCache {
     busy: Mutex<Vec<Section>>,
     /// Sections to fetch at once, out of turn.
     asked: Mutex<Vec<Section>>,
-    user: Mutex<Option<String>>,
 }
 
 impl InboxCache {
@@ -450,21 +512,12 @@ impl InboxCache {
     }
 
     fn fetch(&self, wanted: &[Section], all: bool) {
-        let home = crate::config::home().display().to_string();
-        let user = match self.user.lock().unwrap().clone() {
-            Some(u) => Ok(u),
-            None => glab(&home, &["api", "user"]).and_then(|text| {
-                let v: Value = serde_json::from_str(&text).unwrap_or_default();
-                v["username"].as_str().map(String::from).ok_or_else(|| "glab gave no user name".to_string())
-            }),
-        };
-        *self.user.lock().unwrap() = user.clone().ok();
         let on = |s| wanted.contains(&s);
-        let mrs = |section, query: &str| on(section).then(|| user.clone().and_then(|u| fetch_mrs(&query.replace("{user}", &u), &u)));
+        let mrs = |section, list| on(section).then(|| fetch_mrs(list));
         let (reviews, authored, assigned, issues) = std::thread::scope(|s| {
-            let reviews = s.spawn(|| mrs(Section::GitlabReviews, "scope=all&reviewer_username={user}"));
-            let authored = s.spawn(|| mrs(Section::GitlabMergeRequests, "scope=created_by_me"));
-            let assigned = s.spawn(|| mrs(Section::GitlabAssignedMergeRequests, "scope=assigned_to_me"));
+            let reviews = s.spawn(|| mrs(Section::GitlabReviews, "reviewRequestedMergeRequests"));
+            let authored = s.spawn(|| mrs(Section::GitlabMergeRequests, "authoredMergeRequests"));
+            let assigned = s.spawn(|| mrs(Section::GitlabAssignedMergeRequests, "assignedMergeRequests"));
             let issues = on(Section::GitlabIssues).then(fetch_issues);
             (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues)
         });
@@ -653,6 +706,29 @@ mod tests {
         let mr = parse_mr(&serde_json::json!({"iid": 140, "project_id": 2954, "title": "T", "author": {"username": "vilu"},
             "references": {"full": "craton/auxiliary/craton-cli!140"}, "draft": true})).unwrap();
         assert_eq!((mr.project.as_str(), mr.repo(), mr.author.as_str(), mr.draft), ("craton/auxiliary/craton-cli", "craton-cli", "vilu", true));
+    }
+
+    #[test]
+    fn reads_graphql_mrs() {
+        let n: Value = serde_json::from_str(
+            r#"{"iid": "170", "title": "Fix", "webUrl": "https://git.x/a/b/-/merge_requests/170", "state": "opened", "draft": true,
+                "updatedAt": "2026-10-22T07:43:13+02:00", "description": "d", "detailedMergeStatus": "DISCUSSIONS_NOT_RESOLVED",
+                "author": {"username": "anna"}, "project": {"id": "gid://gitlab/Project/7016", "fullPath": "a/b"},
+                "approvedBy": {"nodes": [{"username": "johe"}]}, "resolvableDiscussionsCount": 5, "resolvedDiscussionsCount": 2,
+                "headPipeline": {"status": "FAILED", "path": "/a/b/-/pipelines/9", "jobs": {"nodes": [
+                    {"id": "gid://gitlab/Ci::Build/12", "name": "lint", "status": "FAILED", "allowFailure": true, "duration": 4, "webPath": "/a/b/-/jobs/12", "stage": {"name": "test"}},
+                    {"id": "gid://gitlab/Ci::Build/11", "name": "build", "status": "SUCCESS", "allowFailure": false, "duration": null, "webPath": "/a/b/-/jobs/11", "stage": {"name": "build"}}]}}}"#,
+        )
+        .unwrap();
+        let (mr, open) = parse_graphql_mr(&n, "johe").unwrap();
+        assert_eq!(open, 3);
+        assert_eq!((mr.iid, mr.project_id, mr.project.as_str()), (170, 7016, "a/b"));
+        assert_eq!(mr.pipeline.as_deref(), Some("failed"));
+        assert_eq!(mr.pipeline_url.as_deref(), Some("https://git.x/a/b/-/pipelines/9"));
+        assert_eq!(mr.merge_status.as_deref(), Some("discussions_not_resolved"));
+        assert!(mr.draft && mr.approved);
+        let jobs: Vec<_> = mr.jobs.iter().map(|j| (j.name.as_str(), j.stage.as_str(), j.status.as_str(), j.duration, j.url.as_str())).collect();
+        assert_eq!(jobs, [("build", "build", "success", None, "https://git.x/a/b/-/jobs/11"), ("lint", "test", "warning", Some(4.0), "https://git.x/a/b/-/jobs/12")]);
     }
 
     #[test]
