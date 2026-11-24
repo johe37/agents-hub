@@ -175,7 +175,7 @@ the MR then goes to a shell in the checkout (a new one if none is open), and `x`
 workspace and deletes the checkout. When the MR leaves your review list, its workspace moves
 to **WORKSPACES**. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
 workspace moves to a folded **✓ APPROVED** group at the end; close the workspace with `x` to
-send it there. If the author pushes and GitLab drops your approval, the MR moves back. The GitLab lists refresh every two minutes; `Ctrl+R` on a GitLab row or title, or a click on the `↻` at the end of a title, refreshes them now. A spinner takes the place of `↻` while they load.
+send it there. If the author pushes and GitLab drops your approval, the MR moves back. The GitLab lists refresh every two minutes; `Ctrl+R` on a GitLab row or title, or a click on the `↻` at the end of a title, refreshes that list now. A spinner takes the place of `↻` while a list loads.
 Until the first fetch is done, each GitLab section shows its title with a spinner. If a fetch
 fails, the title stays and says why, for example `⚠ glab is not installed`.
 The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not

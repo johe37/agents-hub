@@ -362,7 +362,7 @@ impl App {
     fn animating(&self) -> bool {
         !self.loaded
             || self.snap.inbox_loading
-            || self.snap.inbox_busy
+            || !self.snap.inbox_busy.is_empty()
             || self.toast.is_some()
             || self.changed.values().any(|t| t.elapsed() < FLASH)
             || self.snap.agents.iter().any(|a| matches!(a.status, Status::Working | Status::Waiting))
@@ -1249,14 +1249,17 @@ impl App {
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
     fn refresh_mr(&mut self) {
-        let inbox_row = match self.current() {
-            Some(Row::Review(_) | Row::Issue(_) | Row::Mr(..)) => true,
-            Some(Row::Header(title, _)) => title == APPROVED || gitlab_section(title).is_some(),
-            _ => false,
+        let section = match self.current() {
+            Some(Row::Review(_) | Row::Header(APPROVED, _)) => Some(Section::GitlabReviews),
+            Some(Row::Issue(_)) => Some(Section::GitlabIssues),
+            Some(Row::Mr(Mine::Authored, _)) => Some(Section::GitlabMergeRequests),
+            Some(Row::Mr(Mine::Assigned, _)) => Some(Section::GitlabAssignedMergeRequests),
+            Some(Row::Header(title, _)) => gitlab_section(title),
+            _ => None,
         };
-        if inbox_row {
-            let _ = self.cmd.send(Cmd::ForgetInbox);
-            return self.notify("Refreshing the GitLab lists…", false);
+        if let Some(section) = section {
+            let _ = self.cmd.send(Cmd::ForgetInbox(section));
+            return self.notify(format!("Refreshing {}…", section.title()), false);
         }
         let Some(ws) = self.current_workspace() else { return };
         let (path, text) = (ws.path.clone(), format!("Refreshing the merge request of {}…", ws.name));
@@ -1690,6 +1693,6 @@ mod tests {
         app.on_mouse(click(30));
         assert!(rx.try_recv().is_err(), "a click on the title only selects it");
         app.on_mouse(click(59));
-        assert!(matches!(rx.try_recv(), Ok(Cmd::ForgetInbox)));
+        assert!(matches!(rx.try_recv(), Ok(Cmd::ForgetInbox(Section::GitlabIssues))));
     }
 }

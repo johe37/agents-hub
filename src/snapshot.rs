@@ -131,7 +131,7 @@ pub struct Snapshot {
     /// The GitLab lists are not fetched yet.
     pub inbox_loading: bool,
     pub inbox_errors: Vec<(crate::config::Section, String)>,
-    pub inbox_busy: bool,
+    pub inbox_busy: Vec<crate::config::Section>,
     pub usage: Option<crate::usage::Usage>,
 }
 
@@ -169,7 +169,7 @@ pub enum Cmd {
     /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
     ThreadNote { path: String, mr: Box<crate::gitlab::Mr>, thread: String, text: String, resolve: bool, done: String },
     /// Fetch the MRs to review and the assigned issues again.
-    ForgetInbox,
+    ForgetInbox(crate::config::Section),
     /// Check out an MR from the clone at repo and open it for a review with Claude.
     /// Check out the MR and open it in a workspace with a window of this kind: claude, shell or nvim.
     StartReview { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
@@ -298,8 +298,8 @@ impl Collector {
                     self.mrs.forget(&path);
                     last = Instant::now() - interval;
                 }
-                Ok(Cmd::ForgetInbox) => {
-                    self.inbox.forget();
+                Ok(Cmd::ForgetInbox(section)) => {
+                    self.inbox.forget(section);
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::StartReview { mr, repo, kind }) => {

@@ -304,7 +304,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
                 l.push(s(format!("  ⚠ {e}"), fg(colors().warning)));
             }
             let r = match gitlab_section(title) {
-                Some(_) if app.snap.inbox_busy => vec![s(format!(" {} ", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().muted))],
+                Some(section) if app.snap.inbox_busy.contains(&section) => vec![s(format!(" {} ", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().muted))],
                 Some(_) => vec![s(" ↻ ", fg(colors().muted))],
                 None => vec![],
             };
@@ -1068,7 +1068,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             }
             if gitlab_section(title).is_some() {
                 lines.push(Line::default());
-                lines.push(Line::from(s("The GitLab lists refresh every two minutes. Ctrl+R or a click on ↻ refreshes them now.", fg(colors().muted))));
+                lines.push(Line::from(s("The GitLab lists refresh every two minutes. Ctrl+R or a click on ↻ refreshes this one now.", fg(colors().muted))));
             }
             f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
             app.hits.detail = Rect::default();
@@ -1633,7 +1633,7 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "Merge requests (yours, and the ones assigned to you)"),
     ("Enter", "go to the workspace that has its branch, or open it in GitLab"),
-    ("Ctrl+R", "on any GitLab row or title, or click ↻: refresh the GitLab lists now"),
+    ("Ctrl+R", "on a GitLab row or title, or click ↻: refresh that list now"),
     ("c t e", "Claude, a shell or nvim in that workspace"),
     ("", ""),
     ("", "Issues (open issues assigned to you)"),
