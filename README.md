@@ -72,7 +72,7 @@ stale_minutes = 60
 prewarm = true               # keep a started shell ready per workspace
 prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
-theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
+theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
 chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 ```
 

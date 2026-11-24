@@ -148,8 +148,8 @@ set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Clau
 set -g status-right-length 80
 set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""
-set -g window-status-format "#[fg={muted}]  #I #{{?#{{==:#W,claude}},✻ ,}}#W  "
-set -g window-status-current-format "#[bg={bg},fg={accent}]▎#[fg={bright},bold]#I #{{?#{{==:#W,claude}},✻ ,}}#W  "
+set -g window-status-format "#[fg={muted}]  #I #{{?#{{==:#W,claude}},◆ ,}}#W  "
+set -g window-status-current-format "#[bg={bg},fg={accent}]▎#[fg={bright},bold]#I #{{?#{{==:#W,claude}},◆ ,}}#W  "
 set -g message-style "bg={accent},fg={on_accent},bold"
 set -g pane-border-status off
 set -g pane-border-style "fg={border}"
