@@ -322,11 +322,10 @@ impl App {
         for (text, error) in &snap.notices {
             self.notify(text.clone(), *error);
         }
-        // The rows still index the old snapshot, so find the selection's owner before replacing it.
-        let owner = self.owner();
         self.snap = snap;
         self.loaded = true;
-        self.rebuild_rows(owner);
+        // A row that goes away leaves the selection at the same place, on the row that takes its spot.
+        self.rebuild_rows(None);
         if dirs_changed {
             if let Some(Modal::Picker(p)) = &mut self.modal {
                 p.candidates = picker::candidates(&self.snap, &self.cfg.roots);
@@ -564,9 +563,10 @@ impl App {
         }
         self.rows = rows;
         let fallback = owner.and_then(|k| self.rows.iter().position(|(key, _)| *key == k));
-        let first = self.rows.iter().position(|(_, r)| selectable(r)).unwrap_or(0);
         let prev = self.selected;
-        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(first);
+        let at = prev.min(self.rows.len().saturating_sub(1));
+        let near = (at..self.rows.len()).chain((0..at).rev()).find(|&i| selectable(&self.rows[i].1)).unwrap_or(0);
+        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(near);
         if self.selected != prev {
             self.detail_scroll = 0;
             self.sel = None;
