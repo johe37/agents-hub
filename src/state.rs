@@ -16,6 +16,8 @@ const PRUNE_AFTER: u64 = 24 * 3600;
 pub enum Status {
     Waiting,
     Working,
+    /// Done with its turn, but a wake-up or background task will resume it.
+    Polling,
     Idle,
     Unknown,
     Ended,
@@ -79,6 +81,12 @@ fn read_event(path: PathBuf) -> Option<Session> {
     if event["notification_type"] == "agent_completed" {
         // Sent to every open session when some other session finishes; it says nothing about this one.
         status = Status::Idle;
+    }
+    // The hook flags a turn that ended with a wake-up or background task pending: the agent resumes by itself.
+    // idle_prompt comes a minute after Stop, so it counts as the same state.
+    let turn_ended = name == "Stop" || event["notification_type"] == "idle_prompt";
+    if turn_ended && record["polling"] == true {
+        status = Status::Polling;
     }
     let waiting = status == Status::Waiting;
     Some(Session {
@@ -209,6 +217,60 @@ pub fn age(ts: u64) -> String {
         }
     }
     format!("{secs}s")
+}
+
+#[cfg(test)]
+mod polling_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn status_of(name: &str, polling: bool) -> Status {
+        status_with_type(name, "", polling)
+    }
+
+    fn status_with_type(name: &str, notification_type: &str, polling: bool) -> Status {
+        let dir = std::env::temp_dir().join(format!("claude-hub-state-{}-{name}-{notification_type}-{polling}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("abc.json");
+        let event = json!({"hook_event_name": name, "session_id": "abc", "notification_type": notification_type});
+        let record = json!({"time": 1, "polling": polling, "event": event});
+        std::fs::write(&path, record.to_string()).unwrap();
+        let status = read_event(path).unwrap().status;
+        std::fs::remove_dir_all(dir).unwrap();
+        status
+    }
+
+    #[test]
+    fn stop_while_polling_is_polling() {
+        assert_eq!(status_of("Stop", true), Status::Polling);
+        assert_eq!(status_of("Stop", false), Status::Idle);
+    }
+
+    #[test]
+    fn the_flag_only_matters_after_stop() {
+        assert_eq!(status_of("UserPromptSubmit", true), Status::Working);
+        assert_eq!(status_of("PreToolUse", true), Status::Working);
+        assert_eq!(status_of("Notification", true), Status::Waiting);
+    }
+
+    #[test]
+    fn idle_prompt_while_polling_is_still_polling() {
+        // Claude Code sends idle_prompt a minute after a turn ends, also when a wake-up or background task is pending.
+        assert_eq!(status_with_type("Notification", "idle_prompt", true), Status::Polling);
+        assert_eq!(status_with_type("Notification", "idle_prompt", false), Status::Waiting);
+    }
+
+    #[test]
+    fn a_permission_prompt_while_polling_still_needs_you() {
+        assert_eq!(status_with_type("Notification", "permission_prompt", true), Status::Waiting);
+    }
+
+    #[test]
+    fn polling_sorts_between_working_and_idle() {
+        assert!(Status::Working < Status::Polling && Status::Polling < Status::Idle);
+        assert!(Status::Polling.alive());
+    }
 }
 
 #[cfg(test)]
