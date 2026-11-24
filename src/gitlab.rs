@@ -32,7 +32,7 @@ pub struct Mr {
     /// The head pipeline's jobs, oldest first, which is also stage order.
     pub jobs: Vec<Job>,
     pub author: String,
-    /// Full project path, `craton/auxiliary/craton-cli`.
+    /// Full project path, `acme/tools/acme-cli`.
     pub project: String,
     /// Last activity, seconds since the epoch.
     pub updated: u64,
@@ -49,7 +49,7 @@ pub struct Issue {
     pub iid: u64,
     pub title: String,
     pub url: String,
-    /// Full project path, `craton/auxiliary/craton-cli`.
+    /// Full project path, `acme/tools/acme-cli`.
     pub project: String,
     pub labels: Vec<String>,
     pub milestone: Option<String>,
@@ -85,7 +85,7 @@ pub struct Job {
 }
 
 impl Mr {
-    /// The repo's own name, `craton-cli`.
+    /// The repo's own name, `acme-cli`.
     pub fn repo(&self) -> &str {
         self.project.rsplit('/').next().unwrap_or(&self.project)
     }
@@ -639,7 +639,7 @@ mod tests {
             {"id":"sys","notes":[{"id":1,"system":true,"resolvable":false,"author":{"username":"bot"},"body":"added 1 commit"}]},
             {"id":"done","notes":[{"id":2,"system":false,"resolvable":true,"resolved":true,"author":{"username":"a"},"body":"fixed"}]},
             {"id":"open","notes":[
-                {"id":3,"system":false,"resolvable":true,"resolved":false,"author":{"username":"vilu"},"body":"Rename\nthis","position":{"new_path":"src/x.rs","new_line":12}},
+                {"id":3,"system":false,"resolvable":true,"resolved":false,"author":{"username":"erik"},"body":"Rename\nthis","position":{"new_path":"src/x.rs","new_line":12}},
                 {"id":4,"system":false,"resolvable":true,"resolved":false,"author":{"username":"me"},"body":"ok"}]}
         ]"#,
         )
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(threads[0].place(), "src/x.rs:12");
         assert_eq!(threads[0].notes.len(), 2);
         let mr = Mr { iid: 7, ..mr_stub() };
-        assert_eq!(threads[0].as_prompt(&mr), "Review comment on merge request !7 at src/x.rs:12. vilu: Rename this | me: ok. Please address it.");
+        assert_eq!(threads[0].as_prompt(&mr), "Review comment on merge request !7 at src/x.rs:12. erik: Rename this | me: ok. Please address it.");
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn failure_skips_the_push_preamble() {
-        let push = "To git.basalt.se:lubo/x.git\n ! [rejected]        b -> b (fetch first)\nerror: failed to push some refs\n";
+        let push = "To git.example.com:anna/x.git\n ! [rejected]        b -> b (fetch first)\nerror: failed to push some refs\n";
         assert_eq!(failure(push).as_deref(), Some("! [rejected]        b -> b (fetch first)"));
         assert_eq!(failure("\n  404 Not Found\n").as_deref(), Some("404 Not Found"));
         assert_eq!(failure(""), None);
@@ -696,16 +696,16 @@ mod tests {
 
     #[test]
     fn builds_project_urls_like_the_remote() {
-        assert_eq!(project_url("git@git.basalt.se:lubo/craton-cli.git", "craton/auxiliary/craton-cli").as_deref(), Some("git@git.basalt.se:craton/auxiliary/craton-cli.git"));
-        assert_eq!(project_url("https://git.basalt.se/lubo/x.git", "a/b").as_deref(), Some("https://git.basalt.se/a/b.git"));
-        assert_eq!(project_url("ssh://git@host:2222/lubo/x.git", "a/b").as_deref(), Some("ssh://git@host:2222/a/b.git"));
+        assert_eq!(project_url("git@git.example.com:anna/acme-cli.git", "acme/tools/acme-cli").as_deref(), Some("git@git.example.com:acme/tools/acme-cli.git"));
+        assert_eq!(project_url("https://git.example.com/anna/x.git", "a/b").as_deref(), Some("https://git.example.com/a/b.git"));
+        assert_eq!(project_url("ssh://git@host:2222/anna/x.git", "a/b").as_deref(), Some("ssh://git@host:2222/a/b.git"));
     }
 
     #[test]
     fn reads_review_fields() {
-        let mr = parse_mr(&serde_json::json!({"iid": 140, "project_id": 2954, "title": "T", "author": {"username": "vilu"},
-            "references": {"full": "craton/auxiliary/craton-cli!140"}, "draft": true})).unwrap();
-        assert_eq!((mr.project.as_str(), mr.repo(), mr.author.as_str(), mr.draft), ("craton/auxiliary/craton-cli", "craton-cli", "vilu", true));
+        let mr = parse_mr(&serde_json::json!({"iid": 140, "project_id": 2954, "title": "T", "author": {"username": "erik"},
+            "references": {"full": "acme/tools/acme-cli!140"}, "draft": true})).unwrap();
+        assert_eq!((mr.project.as_str(), mr.repo(), mr.author.as_str(), mr.draft), ("acme/tools/acme-cli", "acme-cli", "erik", true));
     }
 
     #[test]
@@ -734,8 +734,8 @@ mod tests {
     #[test]
     fn reads_issue_fields() {
         let issue = parse_issue(&serde_json::json!({"iid": 12, "title": "T", "labels": ["bug", "backend"],
-            "milestone": {"title": "v2"}, "references": {"full": "craton/auxiliary/craton-cli#12"}})).unwrap();
-        assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("craton/auxiliary/craton-cli", "craton-cli", 2, Some("v2")));
+            "milestone": {"title": "v2"}, "references": {"full": "acme/tools/acme-cli#12"}})).unwrap();
+        assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("acme/tools/acme-cli", "acme-cli", 2, Some("v2")));
     }
 }
 
