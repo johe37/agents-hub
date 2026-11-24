@@ -678,6 +678,13 @@ impl App {
         self.mine(list).get(i)
     }
 
+    /// The MR at i in list. A workspace refreshes its MR more often, so that copy wins, with the list's approvals.
+    pub fn mine_at(&self, list: Mine, i: usize) -> Option<crate::gitlab::Mr> {
+        let m = self.mine(list).get(i)?;
+        let Some(fresh) = self.mr_workspace(m).and_then(|ws| ws.mr.as_ref()) else { return Some(m.clone()) };
+        Some(crate::gitlab::Mr { approved_by: m.approved_by.clone(), approved: m.approved, ..fresh.clone() })
+    }
+
     /// The workspace whose branch has the MR.
     pub fn mr_workspace(&self, m: &crate::gitlab::Mr) -> Option<&Workspace> {
         self.snap.workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| wm.project_id == m.project_id && wm.iid == m.iid))
@@ -1694,5 +1701,19 @@ mod tests {
         assert!(rx.try_recv().is_err(), "a click on the title only selects it");
         app.on_mouse(click(59));
         assert!(matches!(rx.try_recv(), Ok(Cmd::ForgetInbox(Section::GitlabIssues))));
+    }
+
+    #[test]
+    fn your_mr_shows_its_workspace_copy_with_the_list_approvals() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut app = App::new(Config::default(), tx, Default::default());
+        let mr = |pipeline: &str, approved_by: Vec<String>| crate::gitlab::Mr { project_id: 11, iid: 142, pipeline: Some(pipeline.into()), approved_by, ..Default::default() };
+        app.snap.authored = vec![mr("running", vec!["maria".into()])];
+        app.snap.workspaces = vec![Workspace { name: "pay".into(), path: "/x".into(), windows: vec![], git: None, mr: Some(mr("failed", vec![])) }];
+        let m = app.mine_at(Mine::Authored, 0).unwrap();
+        assert_eq!(m.pipeline.as_deref(), Some("failed"));
+        assert_eq!(m.approved_by, ["maria"]);
+        app.snap.workspaces.clear();
+        assert_eq!(app.mine_at(Mine::Authored, 0).unwrap().pipeline.as_deref(), Some("running"));
     }
 }

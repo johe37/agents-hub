@@ -430,7 +430,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             (l, r)
         }
         Row::Mr(list, i) => {
-            let m = &app.mine(list)[i];
+            let m = &app.mine_at(list, i).unwrap_or_default();
             let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
             let mut r = vec![];
             match app.mr_workspace(m) {
@@ -1049,7 +1049,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
         Some(Row::Review(i)) => (None, review_side(app, i, t)),
         Some(Row::Issue(i)) => (None, issue_side(&app.snap.issues[i])),
-        Some(Row::Mr(list, i)) => (None, mine_side(app, &app.mine(list)[i], t)),
+        Some(Row::Mr(list, i)) => (None, mine_side(app, &app.mine_at(list, i).unwrap_or_default(), t)),
         Some(Row::Header(title, n)) => {
             let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
