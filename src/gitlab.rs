@@ -38,6 +38,8 @@ pub struct Mr {
     pub draft: bool,
     /// Usernames; only fetched for MRs you review.
     pub approved_by: Vec<String>,
+    /// You are among approved_by.
+    pub approved: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -197,6 +199,7 @@ fn parse_mr(v: &Value) -> Option<Mr> {
         description: v["description"].as_str().unwrap_or_default().to_string(),
         draft: v["draft"] == true,
         approved_by: vec![],
+        approved: false,
     })
 }
 
@@ -326,6 +329,7 @@ fn fetch_reviews(user: &str) -> Option<Vec<Mr>> {
                     if let Ok(text) = glab(home, &["api", &format!("projects/{project}/merge_requests/{iid}/approvals")]) {
                         let a: Value = serde_json::from_str(&text).unwrap_or_default();
                         mr.approved_by = a["approved_by"].as_array().into_iter().flatten().filter_map(|u| u["user"]["username"].as_str().map(String::from)).collect();
+                        mr.approved = mr.approved_by.iter().any(|u| u == user);
                     }
                     Some(mr)
                 })

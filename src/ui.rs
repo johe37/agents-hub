@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{Action, App, FLASH, Focus, Modal, Row, foldable, selectable};
+use crate::app::{APPROVED, Action, App, FLASH, Focus, Modal, Row, foldable, selectable};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::gitlab;
@@ -274,12 +274,20 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
             _ => Span::raw(" "),
         },
+        Row::Review(ri) => match app.review_workspace(ri).and_then(|ws| app.worst(&app.agents_of(ws))) {
+            Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
+            _ => Span::raw(" "),
+        },
         _ => Span::raw(" "),
     };
     let w = width.saturating_sub(1);
 
     let (left, right): (Vec<Span>, Vec<Span>) = match row {
         Row::Gap => (vec![], vec![]),
+        Row::Header(title @ APPROVED, n) => {
+            let chevron = if app.section_open(title) { "  ▾ " } else { "  ▸ " };
+            (vec![s(chevron, fg(colors().muted)), s("✓ ", fg(colors().success)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
+        }
         Row::Header(title, n) if foldable(title) => {
             let chevron = if app.section_open(title) { "▾ " } else { "▸ " };
             (vec![s(chevron, fg(colors().muted)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
@@ -370,7 +378,25 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         Row::NewWorkspace => (vec![s("╰─ ", fg(colors().border).bold()), s("+ Open a workspace", fg(colors().accent).bold())], vec![s(" n ", fg(colors().bg).bg(colors().accent).bold())]),
         Row::Review(i) => {
             let m = &app.snap.reviews[i];
-            let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
+            let mut l = match app.review_workspace(i) {
+                Some(ws) => {
+                    let chevron = if app.folded.contains(&ws.name) { "▸ " } else { "▾ " };
+                    let symbol = match app.worst(&app.agents_of(ws)) {
+                        Some(st) => status_symbol(st, t),
+                        None => s("▪", fg(colors().dim)),
+                    };
+                    let mut l = vec![s(chevron, fg(colors().muted)), symbol, Span::raw(" ")];
+                    if m.approved {
+                        l.push(s("✓ ", fg(colors().success)));
+                    }
+                    l
+                }
+                // Indented under the APPROVED header, which carries the ✓.
+                None if m.approved => vec![Span::raw("      ")],
+                None => vec![Span::raw("    ")],
+            };
+            let (name, title) = if app.in_approved(i) { (fg(colors().dim).bold(), fg(colors().dim)) } else { (fg(colors().fg).bold(), fg(colors().fg)) };
+            l.extend([s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), name), s(format!("  {}", m.title), title)]);
             let mut r = vec![s(m.author.clone(), fg(colors().dim))];
             if m.draft {
                 r.push(s(" draft", fg(colors().dim)));
@@ -853,13 +879,22 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
 }
 
 /// An MR you are asked to review: what it is, its threads, approvals and pipeline.
-fn review_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
+fn review_side(app: &App, i: usize, t: u128) -> Side {
+    let m = &app.snap.reviews[i];
+    let ws = app.review_workspace(i);
     let status = [m.draft.then(|| "draft".to_string()), m.pipeline.as_ref().map(|p| format!("pipeline {p}")), m.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     let banner = vec![
         Line::from(vec![s(format!("!{} ", m.iid), fg(colors().accent).bold()), s(format!("by {}", m.author), fg(colors().fg)), s(format!("  ·  updated {} ago", age(m.updated)), fg(colors().dim))]),
         Line::from(vec![pipeline_symbol(m.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]),
-        Line::from(s("c checks it out and opens Claude with a review prompt; nothing is sent until you press Enter.", fg(colors().dim))),
+        match ws {
+            Some(ws) => Line::from(s(format!("In review in workspace {}. x closes it and deletes the checkout.", ws.name), fg(colors().dim))),
+            None => Line::from(s("c checks it out and opens Claude with a review prompt; nothing is sent until you press Enter. t and e check it out with a shell or nvim.", fg(colors().dim))),
+        },
     ];
+    let buttons = match ws {
+        Some(_) => vec![("↵", "shell in the checkout", colors().accent, Action::Open), ("x", "close", colors().accent, Action::Close)],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+    };
     let mut body_links = vec![];
     let body = match app.tab {
         0 if m.description.trim().is_empty() => vec![Line::from(s("No description.", fg(colors().muted)))],
@@ -888,7 +923,7 @@ fn review_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
         meta: Line::from(s(format!(" {} ", m.project), fg(colors().dim))),
         color: if m.threads.is_empty() { colors().info } else { colors().warning },
         banner,
-        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude"))],
+        buttons,
         tabs: vec![("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())],
         body,
         link: Some((0, m.url.clone())),
@@ -933,7 +968,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             (wi, agent_side(app, a, wi.map(|w| &app.snap.workspaces[w]), t))
         }
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
-        Some(Row::Review(i)) => (None, review_side(app, &app.snap.reviews[i], t)),
+        Some(Row::Review(i)) => (None, review_side(app, i, t)),
         Some(Row::Issue(i)) => (None, issue_side(&app.snap.issues[i])),
         Some(Row::Header(title, n)) => {
             let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
@@ -1468,6 +1503,7 @@ const HELP: &[(&str, &str)] = &[
     ("Enter", "go to the agent, terminal or workspace"),
     ("n", "open a workspace (fuzzy search or type a path)"),
     ("c / t / e", "new Claude / terminal / nvim in the workspace"),
+    ("C", "new chat: Claude in the chats workspace (chat_dir), outside any repo"),
     ("x", "close the agent, terminal or workspace"),
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),
@@ -1479,7 +1515,9 @@ const HELP: &[(&str, &str)] = &[
     ("r", "reply: type a message, Enter sends it to the agent"),
     ("i", "type into the selected terminal from its preview; Ctrl+] stops"),
     ("y / d", "approve / deny a permission prompt"),
-    ("j k / arrows", "move   g G  top / bottom"),
+    ("j k / arrows", "move; a count first moves that many rows: 4j"),
+    ("J K", "next / previous workspace, review or section"),
+    ("g G", "top / bottom   Ctrl+d Ctrl+u  half a page"),
     ("h l / ← → / Tab", "previous / next panel tab: chat, changes, windows, pipeline (or 1–4)"),
     ("PgUp / PgDn", "scroll the detail panel"),
     ("/", "filter, Esc clears"),

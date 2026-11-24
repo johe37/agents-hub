@@ -165,7 +165,8 @@ pub enum Cmd {
     /// Fetch the MRs to review and the assigned issues again.
     ForgetInbox,
     /// Check out an MR from the clone at repo and open it for a review with Claude.
-    StartReview { mr: Box<crate::gitlab::Mr>, repo: String },
+    /// Check out the MR and open it in a workspace with a window of this kind: claude, shell or nvim.
+    StartReview { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
     /// Open Claude in the workspace of the clone at repo, with the issue in its prompt.
     StartIssue { issue: Box<crate::gitlab::Issue>, repo: String },
 }
@@ -292,11 +293,11 @@ impl Collector {
                     self.inbox.forget();
                     last = Instant::now() - interval;
                 }
-                Ok(Cmd::StartReview { mr, repo }) => {
+                Ok(Cmd::StartReview { mr, repo, kind }) => {
                     let notices = Arc::clone(&self.notices);
                     std::thread::spawn(move || {
                         let name = format!("review-{}-{}", mr.repo(), mr.iid);
-                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_review(&dir, &name, &mr.review_prompt()));
+                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_review(&dir, &name, kind, crate::app::window_command(kind), &mr.review_prompt()));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }

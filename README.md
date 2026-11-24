@@ -73,6 +73,7 @@ prewarm = true               # keep a started shell ready per workspace
 prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
+chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
@@ -106,11 +107,13 @@ picker after you clone a new repo.
 | Where | Key | Action |
 |---|---|---|
 | Anywhere | `Alt+Q` or click **◀ Claude Hub** | Back to the hub |
-| Hub | `j` / `k` or `↓` / `↑` | Move down / up |
-| Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F` | First / last row, page up / down |
+| Hub | `j` / `k` or `↓` / `↑` | Move down / up. A count first moves that many rows: `4j` |
+| Hub | `J` / `K` | Jump to the next / previous workspace, review or section |
+| Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F`, `Ctrl+U` / `Ctrl+D` | First / last row, page up / down, half a page up / down |
 | Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
+| Hub | `C` or click **chat** | New chat: Claude in the `chats` workspace (`chat_dir`), for questions that belong to no repo. `claude --resume` there lists earlier chats |
 | Hub | `x` | Close the agent or the workspace |
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
@@ -120,7 +123,7 @@ picker after you clone a new repo.
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
-| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel |
+| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel. A digit waits 0.4 s for a `j`/`k` before it switches |
 | Thread | `Enter` / `r` / `f` | Open in GitLab / reply in the thread / put it in Claude's prompt |
 | Thread | `v` | Resolve the thread, posting an optional reply first (pre-filled with `Fixed in <commit>.`) |
 | Hub | `p` | Push the workspace's branch; opens a draft merge request when it has none |
@@ -159,8 +162,14 @@ with its status and duration.
 description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
 code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
-then press `Enter`. Your own checkout is never touched. `x` on a review workspace closes it and
-deletes the checkout. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
+then press `Enter`. `t` and `e` check it out the same way, with a shell or nvim instead of
+Claude. Your own checkout is never touched. The review's workspace shows under its
+MR in **REVIEWS**, with its agents and terminals, even when the section is folded. `Enter` on
+the MR then goes to a shell in the checkout (a new one if none is open), and `x` closes the
+workspace and deletes the checkout. When the MR leaves your review list, its workspace moves
+to **WORKSPACES**. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
+workspace moves to a folded **✓ APPROVED** group at the end; close the workspace with `x` to
+send it there. If the author pushes and GitLab drops your approval, the MR moves back. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
 The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not
 gitlab.com, set it once, or the list stays empty: `glab config set --global host git.example.com`.
 

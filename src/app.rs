@@ -42,6 +42,7 @@ pub enum Action {
     Open,
     NewWorkspace,
     NewWindow(&'static str),
+    NewChat,
     Close,
     Rename,
     Reply,
@@ -136,8 +137,12 @@ pub struct App {
     pub folded: HashSet<String>,
     /// Foldable sections the user unfolded; they start folded.
     pub open_sections: HashSet<&'static str>,
+    /// For each review, the workspace that holds its checkout, if one is open.
+    pub review_ws: Vec<Option<usize>>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
+    /// A count typed before j/k, vim style, and when its last digit came.
+    pub count: Option<(usize, Instant)>,
     /// The workspace selected last, and since when; its Claude is started once the selection rests.
     claude_target: Option<(Instant, String)>,
     claude_sent: Option<String>,
@@ -171,6 +176,10 @@ const CLAUDE_DWELL: Duration = Duration::from_secs(2);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
+pub fn window_command(kind: &str) -> Option<&'static str> {
+    WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c)
+}
+
 impl App {
     pub fn new(cfg: Config, cmd: Sender<Cmd>, screens: Arc<Mutex<ScreenCache>>) -> Self {
         App {
@@ -197,8 +206,10 @@ impl App {
             changed: HashMap::new(),
             folded: HashSet::new(),
             open_sections: HashSet::from([WORKSPACES, OTHER]),
+            review_ws: vec![],
             last_click: None,
             prewarm_pending: None,
+            count: None,
             claude_target: None,
             claude_sent: None,
             rescanning: false,
@@ -214,7 +225,7 @@ impl App {
         while !self.quit {
             term.draw(|f| crate::ui::draw(f, self))?;
             // Fast ticks only while something animates, faster still while typing so echo feels immediate.
-            let timeout = if self.focus == Focus::Terminal {
+            let timeout = if self.focus == Focus::Terminal || self.count.is_some() {
                 Duration::from_millis(30)
             } else if self.animating() {
                 Duration::from_millis(80)
@@ -240,6 +251,9 @@ impl App {
             if last_request_check.elapsed() > Duration::from_millis(300) {
                 last_request_check = Instant::now();
                 self.check_request();
+            }
+            if self.count.is_some_and(|(_, at)| at.elapsed() > COUNT_TIMEOUT) {
+                self.flush_count();
             }
             if let Some((at, path)) = &self.prewarm_pending {
                 if at.elapsed() > Duration::from_millis(150) {
@@ -314,11 +328,10 @@ impl App {
         for (text, error) in &snap.notices {
             self.notify(text.clone(), *error);
         }
-        // The rows still index the old snapshot, so find the selection's owner before replacing it.
-        let owner = self.owner();
         self.snap = snap;
         self.loaded = true;
-        self.rebuild_rows(owner);
+        // A row that goes away leaves the selection at the same place, on the row that takes its spot.
+        self.rebuild_rows(None);
         if dirs_changed {
             if let Some(Modal::Picker(p)) = &mut self.modal {
                 p.candidates = picker::candidates(&self.snap, &self.cfg.roots);
@@ -382,7 +395,13 @@ impl App {
 
     /// The row key that takes the selection when a fold hides the selected row: its workspace or section.
     fn owner(&self) -> Option<String> {
+        if !matches!(self.current(), Some(Row::Review(_))) {
+            if let Some(ri) = self.current_workspace().and_then(|ws| self.review_of(&ws.name)) {
+                return Some(review_key(&self.snap.reviews[ri]));
+            }
+        }
         match self.current() {
+            Some(Row::Review(i)) if self.in_approved(i) && self.section_open(REVIEWS) => Some(section_key(APPROVED)),
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
             Some(Row::Issue(_)) => Some(section_key(ISSUES)),
             Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
@@ -394,8 +413,22 @@ impl App {
 
     fn rebuild_rows(&mut self, owner: Option<String>) {
         let current = self.rows.get(self.selected).map(|(k, _)| k.clone());
+        let paths: Vec<String> = self.snap.workspaces.iter().map(|w| tmux::canonical(&w.path)).collect();
+        self.review_ws = self
+            .snap
+            .reviews
+            .iter()
+            .map(|m| {
+                let dir = tmux::canonical(&m.review_dir().display().to_string());
+                paths.iter().position(|p| *p == dir)
+            })
+            .collect();
         let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
+            // A review's workspace shows under its review instead.
+            if self.review_ws.contains(&Some(wi)) {
+                continue;
+            }
             let agents = self.agents_of(ws);
             let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_claude()).collect();
             let threads: Vec<usize> = (0..ws.mr.as_ref().map_or(0, |m| m.threads.len())).collect();
@@ -464,19 +497,40 @@ impl App {
             }
             v
         };
-        let reviews: Vec<usize> = (0..self.snap.reviews.len())
-            .filter(|&i| {
-                let m = &self.snap.reviews[i];
-                self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
-            })
-            .collect();
+        let mut reviews: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
+        for (i, m) in self.snap.reviews.iter().enumerate() {
+            let ws = self.review_ws[i].map(|wi| &self.snap.workspaces[wi]);
+            let mut agents = ws.map(|ws| self.agents_of(ws)).unwrap_or_default();
+            let mut terminals: Vec<usize> = ws.map(|ws| (0..ws.windows.len()).filter(|&t| !ws.windows[t].is_claude()).collect()).unwrap_or_default();
+            if !self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)]) {
+                agents.retain(|&a| self.agent_matches(&self.snap.agents[a]));
+                terminals.retain(|&t| {
+                    let w = &ws.unwrap().windows[t];
+                    self.matches(&[Some(&w.name), Some(&w.command)])
+                });
+                if agents.is_empty() && terminals.is_empty() {
+                    continue;
+                }
+            }
+            if self.filter.text.is_empty() && ws.is_some_and(|ws| self.folded.contains(&ws.name)) {
+                agents.retain(|&a| self.snap.agents[a].status == Status::Waiting);
+                terminals.clear();
+            }
+            reviews.push((i, agents, terminals));
+        }
         if !reviews.is_empty() {
             if !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, reviews.len())));
-            if self.section_open(REVIEWS) {
-                rows.extend(reviews.into_iter().map(|i| (format!("review:{}!{}", self.snap.reviews[i].project, self.snap.reviews[i].iid), Row::Review(i))));
+            // A review with a workspace is work in progress, approved or not, so it stays on top.
+            let (approved, mut todo): (Vec<_>, Vec<_>) = reviews.into_iter().partition(|r| self.in_approved(r.0));
+            todo.sort_by_key(|r| self.review_ws[r.0].is_none());
+            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, todo.len())));
+            let open = self.section_open(REVIEWS);
+            self.push_reviews(&mut rows, todo, open);
+            if open && !approved.is_empty() {
+                rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
+                self.push_reviews(&mut rows, approved, self.section_open(APPROVED));
             }
         }
         let issues: Vec<usize> = (0..self.snap.issues.len())
@@ -515,9 +569,10 @@ impl App {
         }
         self.rows = rows;
         let fallback = owner.and_then(|k| self.rows.iter().position(|(key, _)| *key == k));
-        let first = self.rows.iter().position(|(_, r)| selectable(r)).unwrap_or(0);
         let prev = self.selected;
-        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(first);
+        let at = prev.min(self.rows.len().saturating_sub(1));
+        let near = (at..self.rows.len()).chain((0..at).rev()).find(|&i| selectable(&self.rows[i].1)).unwrap_or(0);
+        self.selected = current.and_then(|k| self.rows.iter().position(|(key, _)| *key == k)).or(fallback).unwrap_or(near);
         if self.selected != prev {
             self.detail_scroll = 0;
             self.sel = None;
@@ -547,15 +602,15 @@ impl App {
         self.snap.reviews.get(i)
     }
 
-    /// Check out the selected MR in its own worktree and open it with Claude, ready to review.
-    fn start_review(&mut self) {
+    /// Check out the selected MR in its own worktree and open it with a window of kind; Claude gets the review prompt.
+    fn start_review(&mut self, kind: &'static str) {
         let Some(mr) = self.current_review().cloned() else { return };
         let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
             let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
             return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
         };
         self.notify(format!("Checking out !{} from {}…", mr.iid, shorten(&repo)), false);
-        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo });
+        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo, kind });
     }
 
     pub fn current_issue(&self) -> Option<&crate::gitlab::Issue> {
@@ -580,9 +635,38 @@ impl App {
         Some((ws, ws.windows.get(ti)?))
     }
 
+    /// Approved by you and no workspace open: done, so it goes in the APPROVED group.
+    pub fn in_approved(&self, review: usize) -> bool {
+        self.snap.reviews[review].approved && self.review_ws.get(review).copied().flatten().is_none()
+    }
+
+    fn push_reviews(&self, rows: &mut Vec<(String, Row)>, reviews: Vec<(usize, Vec<usize>, Vec<usize>)>, open: bool) {
+        for (i, agents, terminals) in reviews {
+            let Some(wi) = self.review_ws[i] else {
+                if open {
+                    rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
+                }
+                continue;
+            };
+            rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
+            rows.extend(agents.into_iter().map(|a| (self.snap.agents[a].key.clone(), Row::Agent(a))));
+            rows.extend(terminals.into_iter().map(|t| (format!("term:{}", self.snap.workspaces[wi].windows[t].window_id), Row::Terminal(wi, t))));
+        }
+    }
+
+    /// The review whose checkout the named workspace holds.
+    pub fn review_of(&self, ws: &str) -> Option<usize> {
+        self.review_ws.iter().position(|w| w.is_some_and(|wi| self.snap.workspaces[wi].name == ws))
+    }
+
+    pub fn review_workspace(&self, review: usize) -> Option<&Workspace> {
+        self.review_ws.get(review).copied().flatten().and_then(|wi| self.snap.workspaces.get(wi))
+    }
+
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
             Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
+            Row::Review(i) => return self.review_workspace(i),
             Row::Agent(i) => self.snap.agents[i].workspace.clone()?,
             _ => return None,
         };
@@ -594,6 +678,33 @@ impl App {
             self.selected = index;
             self.detail_scroll = 0;
             self.sel = None;
+        }
+    }
+
+    /// A lone 1–4 that no j/k followed switches the panel tab, as it did before counts.
+    fn flush_count(&mut self) {
+        if let Some((n @ 1..=4, _)) = self.count.take() {
+            self.act(Action::Tab(n - 1));
+        }
+    }
+
+    /// Move n selectable rows, so a count skips gaps and never lands between sections.
+    fn move_steps(&mut self, dir: isize, n: usize) {
+        for _ in 0..n {
+            self.move_by(dir);
+        }
+    }
+
+    /// Jump to the next or previous workspace, review or section title.
+    fn jump_group(&mut self, dir: isize) {
+        let n = self.rows.len() as isize;
+        let mut i = self.selected as isize + dir;
+        while (0..n).contains(&i) {
+            let r = &self.rows[i as usize].1;
+            if matches!(r, Row::Workspace(_) | Row::Review(_) | Row::Header(..)) && selectable(r) {
+                return self.select(i as usize);
+            }
+            i += dir;
         }
     }
 
@@ -648,6 +759,7 @@ impl App {
         if self.snap.agents.iter().any(|a| a.status == Status::Waiting) {
             v.push(("w", "next waiting", Action::NextWaiting));
         }
+        v.push(("C", "chat", Action::NewChat));
         v.push(("?", "help", Action::Help));
         v.push(("q", "leave", Action::Leave));
         v
@@ -657,9 +769,11 @@ impl App {
         match action {
             Action::Open => self.open(),
             Action::NewWorkspace => self.open_picker(""),
-            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review(),
+            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review("claude"),
+            Action::NewWindow(kind) if self.current_review().is_some() && self.current_workspace().is_none() => self.start_review(kind),
             Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
             Action::NewWindow(kind) => self.new_window(kind),
+            Action::NewChat => self.new_chat(),
             Action::Close => self.close(),
             Action::Rename => {
                 if let Some(ws) = self.current_workspace() {
@@ -766,10 +880,17 @@ impl App {
                 }
             }
             Some(Row::Workspace(i)) => tmux::switch_client(&self.snap.workspaces[i].name),
-            Some(Row::Review(_)) => {
-                let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
-                return self.open_url(&url);
-            }
+            // A review is tried out in a shell; Claude has a row of its own.
+            Some(Row::Review(i)) => match self.review_workspace(i) {
+                Some(ws) => match ws.windows.iter().find(|w| !w.is_claude() && is_shell(&w.command)) {
+                    Some(w) => tmux::jump_to_window(&ws.name, &w.window_id),
+                    None => tmux::new_window(&ws.name, &ws.path, "shell", None, self.snap.spares.get(&ws.path).map(|s| s.as_str())),
+                },
+                None => {
+                    let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
+                    return self.open_url(&url);
+                }
+            },
             Some(Row::Issue(_)) => {
                 let Some(url) = self.current_issue().map(|is| is.url.clone()) else { return };
                 return self.open_url(&url);
@@ -804,7 +925,7 @@ impl App {
             self.notify("Select a workspace first, or press n for a new one", true);
             return;
         };
-        let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
+        let command = window_command(kind);
         let spare = match command {
             None => self.snap.spares.get(&ws.path),
             Some("claude") => self.snap.claude_spares.get(&ws.path),
@@ -812,6 +933,25 @@ impl App {
         };
         let spare = spare.cloned();
         let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
+        self.finish(r);
+    }
+
+    /// Open Claude in the chats workspace, for questions that belong to no repo.
+    fn new_chat(&mut self) {
+        let path = self.cfg.chat_dir.clone();
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            return self.notify(format!("Could not create {}: {e}", shorten(&path)), true);
+        }
+        let spare = self.snap.claude_spares.get(&path).cloned();
+        let real = tmux::canonical(&path);
+        let r = match self.snap.workspaces.iter().find(|w| tmux::canonical(&w.path) == real) {
+            Some(ws) => tmux::new_window(&ws.name, &path, "claude", Some("claude"), spare.as_deref()),
+            None => {
+                let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
+                let name = tmux::unique_session_name(&basename(&path), &taken);
+                tmux::create_workspace(&name, &path, "claude", Some("claude"), spare.as_deref())
+            }
+        };
         self.finish(r);
     }
 
@@ -838,7 +978,7 @@ impl App {
     fn toggle_fold_all(&mut self) {
         let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         // The workspaces section stays open so that the folded workspaces still show.
-        let sections = [REVIEWS, ISSUES, OTHER, CLOSED];
+        let sections = [REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
         if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
             self.folded.clear();
             self.open_sections.extend(sections);
@@ -854,6 +994,7 @@ impl App {
         let agents = match self.current() {
             Some(Row::Agent(i)) => vec![i],
             Some(Row::Workspace(wi)) => self.agents_of(&self.snap.workspaces[wi]),
+            Some(Row::Review(i)) => self.review_workspace(i).map(|ws| self.agents_of(ws)).unwrap_or_default(),
             _ => vec![],
         };
         let sessions: Vec<_> = agents.iter().filter_map(|&i| self.snap.agents[i].session.as_ref()).filter(|s| s.status == Status::Waiting).collect();
@@ -895,7 +1036,11 @@ impl App {
     }
 
     fn close(&mut self) {
-        let (question, then): (String, Box<dyn Fn() -> Res>) = match self.current() {
+        let row = match self.current() {
+            Some(Row::Review(i)) => self.review_ws.get(i).copied().flatten().map(Row::Workspace),
+            r => r,
+        };
+        let (question, then): (String, Box<dyn Fn() -> Res>) = match row {
             Some(Row::Agent(i)) => {
                 let a = &self.snap.agents[i];
                 if a.background && a.status.alive() {
@@ -1054,7 +1199,7 @@ impl App {
             let r = tmux::switch_client(&ws.name);
             return self.finish(r);
         }
-        let command = WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c);
+        let command = window_command(kind);
         // Look up the pool fresh: the picker may have started a spare for this path a moment ago.
         let pool = tmux::list_all_panes();
         let spares = match command {
@@ -1129,9 +1274,28 @@ impl App {
             Focus::List => {}
         }
         let page = self.hits.list.height.max(2) as isize - 1;
+        let plain = !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if let KeyCode::Char(c @ '0'..='9') = k.code {
+            if plain && (c != '0' || self.count.is_some()) {
+                let n = self.count.map_or(0, |(n, _)| n).saturating_mul(10).saturating_add(c as usize - '0' as usize);
+                self.count = Some((n.min(9999), Instant::now()));
+                return;
+            }
+        }
+        let n = match k.code {
+            KeyCode::Down | KeyCode::Up | KeyCode::Char('j' | 'k' | 'J' | 'K') => self.count.take().map_or(1, |(n, _)| n),
+            _ => {
+                self.flush_count();
+                1
+            }
+        };
         match k.code {
-            KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_steps(1, n),
+            KeyCode::Up | KeyCode::Char('k') => self.move_steps(-1, n),
+            KeyCode::Char('J') => (0..n).for_each(|_| self.jump_group(1)),
+            KeyCode::Char('K') => (0..n).for_each(|_| self.jump_group(-1)),
+            KeyCode::Char('d') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(page / 2 + 1),
+            KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(-(page / 2 + 1)),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(-(self.rows.len() as isize)),
             KeyCode::Char('G') | KeyCode::End => self.move_by(self.rows.len() as isize),
             KeyCode::Char('f') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(page),
@@ -1146,9 +1310,9 @@ impl App {
             KeyCode::Enter => self.act(Action::Open),
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.act(Action::Tab((self.tab + 1) % 4)),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.act(Action::Tab((self.tab + 3) % 4)),
-            KeyCode::Char(c @ '1'..='4') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
+            KeyCode::Char('C') => self.act(Action::NewChat),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
             KeyCode::Char('e') => self.act(Action::NewWindow("nvim")),
             KeyCode::Char('x') => self.act(Action::Close),
@@ -1340,7 +1504,13 @@ impl App {
                     self.focus = Focus::List;
                     let i = self.offset + (pos.y - l.y) as usize;
                     if i < self.rows.len() && selectable(&self.rows[i].1) {
-                        if matches!(self.rows[i].1, Row::Workspace(_) | Row::Header(..)) && (l.x + 1..=l.x + 2).contains(&pos.x) {
+                        let foldable_row = match self.rows[i].1 {
+                            Row::Workspace(_) | Row::Header(..) => true,
+                            Row::Review(r) => self.review_workspace(r).is_some(),
+                            _ => false,
+                        };
+                        let indent = if matches!(self.rows[i].1, Row::Header(APPROVED, _)) { 2 } else { 0 };
+                        if foldable_row && (l.x + 1 + indent..=l.x + 2 + indent).contains(&pos.x) {
                             self.select(i);
                             return self.act(Action::Fold);
                         }
@@ -1358,12 +1528,22 @@ impl App {
     }
 }
 
+const COUNT_TIMEOUT: Duration = Duration::from_millis(400);
 const WORKSPACES: &str = "WORKSPACES";
 const REVIEWS: &str = "REVIEWS";
+pub const APPROVED: &str = "APPROVED";
 const ISSUES: &str = "MY ISSUES";
 const OTHER: &str = "OTHER SESSIONS";
 const CLOSED: &str = "CLOSED SESSIONS";
-const FOLDABLE: [&str; 5] = [WORKSPACES, REVIEWS, ISSUES, OTHER, CLOSED];
+const FOLDABLE: [&str; 6] = [WORKSPACES, REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
+
+fn is_shell(command: &str) -> bool {
+    matches!(command, "bash" | "zsh" | "fish" | "sh" | "dash" | "ksh" | "nu")
+}
+
+fn review_key(m: &crate::gitlab::Mr) -> String {
+    format!("review:{}!{}", m.project, m.iid)
+}
 
 fn section_key(title: &str) -> String {
     format!("section:{title}")

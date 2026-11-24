@@ -49,6 +49,7 @@ pub struct Config {
     pub prewarm_claude: bool,
     pub hub_key: String,
     pub theme: String,
+    pub chat_dir: String,
 }
 
 impl Default for Config {
@@ -62,6 +63,7 @@ impl Default for Config {
             prewarm_claude: true,
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
+            chat_dir: "~/chats".into(),
         }
     }
 }
@@ -75,6 +77,7 @@ pub fn load() -> Config {
         Err(_) => Config::default(),
     };
     cfg.roots = cfg.roots.iter().map(|r| expand(r)).collect();
+    cfg.chat_dir = expand(&cfg.chat_dir);
     cfg.refresh_seconds = cfg.refresh_seconds.max(0.2);
     if let Err(e) = crate::theme::select(&cfg.theme) {
         eprintln!("claude-hub: {e}");
