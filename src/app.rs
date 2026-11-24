@@ -182,7 +182,8 @@ pub fn window_command(kind: &str) -> Option<&'static str> {
 
 impl App {
     pub fn new(cfg: Config, cmd: Sender<Cmd>, screens: Arc<Mutex<ScreenCache>>) -> Self {
-        App {
+        let warnings = cfg.warnings.join(" ");
+        let mut app = App {
             cfg,
             snap: Snapshot::default(),
             loaded: false,
@@ -217,7 +218,11 @@ impl App {
             attach_to: None,
             screens,
             live: None,
+        };
+        if !warnings.is_empty() {
+            app.notify(warnings, true);
         }
+        app
     }
 
     pub fn run(&mut self, term: &mut DefaultTerminal, snaps: Receiver<Snapshot>) -> std::io::Result<()> {

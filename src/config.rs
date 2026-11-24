@@ -39,8 +39,7 @@ pub fn shorten(path: &str) -> String {
 }
 
 /// A section of the hub's list. The GitLab sections are named for their host, so GitHub can join later.
-#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Section {
     Workspaces,
     GitlabReviews,
@@ -62,8 +61,20 @@ pub struct Config {
     pub theme: String,
     pub chat_dir: String,
     /// The sections to show, in this order.
+    #[serde(skip)]
     pub sections: Vec<Section>,
+    /// Problems in the config file, for the hub to show.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
 }
+
+const SECTIONS: [(&str, Section); 5] = [
+    ("workspaces", Section::Workspaces),
+    ("gitlab-reviews", Section::GitlabReviews),
+    ("gitlab-issues", Section::GitlabIssues),
+    ("other-sessions", Section::OtherSessions),
+    ("closed-sessions", Section::ClosedSessions),
+];
 
 impl Config {
     pub fn gitlab(&self) -> bool {
@@ -83,24 +94,50 @@ impl Default for Config {
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
             chat_dir: "~/chats".into(),
-            sections: vec![Section::Workspaces, Section::GitlabReviews, Section::GitlabIssues, Section::OtherSessions, Section::ClosedSessions],
+            sections: SECTIONS.iter().map(|(_, s)| *s).collect(),
+            warnings: vec![],
         }
     }
 }
 
 pub fn load() -> Config {
-    let mut cfg: Config = match std::fs::read_to_string(config_path()) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("claude-hub: ignoring invalid {}: {e}", config_path().display());
-            Config::default()
-        }),
+    let mut cfg = match std::fs::read_to_string(config_path()) {
+        Ok(text) => parse(&text),
         Err(_) => Config::default(),
     };
     cfg.roots = cfg.roots.iter().map(|r| expand(r)).collect();
     cfg.chat_dir = expand(&cfg.chat_dir);
     cfg.refresh_seconds = cfg.refresh_seconds.max(0.2);
     if let Err(e) = crate::theme::select(&cfg.theme) {
-        eprintln!("claude-hub: {e}");
+        cfg.warnings.push(e);
+    }
+    cfg
+}
+
+/// The config in text. A bad `sections` entry is skipped on its own, so a typo there keeps the other keys.
+fn parse(text: &str) -> Config {
+    let file = config_path().display().to_string();
+    let mut table: toml::Table = match text.parse() {
+        Ok(t) => t,
+        Err(e) => return Config { warnings: vec![format!("Ignoring invalid {file}: {e}")], ..Config::default() },
+    };
+    let sections = table.remove("sections");
+    let mut cfg: Config = toml::Value::Table(table).try_into().unwrap_or_else(|e| Config { warnings: vec![format!("Ignoring invalid {file}: {e}")], ..Config::default() });
+    if let Some(v) = sections {
+        let Some(list) = v.as_array() else {
+            cfg.warnings.push("`sections` must be a list of names".into());
+            return cfg;
+        };
+        cfg.sections = vec![];
+        for item in list {
+            match SECTIONS.iter().find(|(n, _)| Some(*n) == item.as_str()) {
+                Some((_, s)) => cfg.sections.push(*s),
+                None => {
+                    let names: Vec<&str> = SECTIONS.iter().map(|(n, _)| *n).collect();
+                    cfg.warnings.push(format!("Unknown section {item} in {file}. Use one of: {}", names.join(", ")));
+                }
+            }
+        }
     }
     cfg
 }
@@ -111,11 +148,18 @@ mod tests {
 
     #[test]
     fn reads_sections_in_order() {
-        let cfg: Config = toml::from_str(r#"sections = ["gitlab-reviews", "workspaces"]"#).unwrap();
+        let cfg = parse(r#"sections = ["gitlab-reviews", "workspaces"]"#);
         assert_eq!(cfg.sections, [Section::GitlabReviews, Section::Workspaces]);
-        assert!(cfg.gitlab());
-        let cfg: Config = toml::from_str(r#"sections = ["workspaces"]"#).unwrap();
-        assert!(!cfg.gitlab());
-        assert!(toml::from_str::<Config>(r#"sections = ["reviews"]"#).is_err());
+        assert!(cfg.gitlab() && cfg.warnings.is_empty());
+        assert!(!parse(r#"sections = ["workspaces"]"#).gitlab());
+    }
+
+    #[test]
+    fn skips_an_unknown_section_but_keeps_the_rest() {
+        let cfg = parse("mouse = false\nsections = [\"reviews\", \"workspaces\"]");
+        assert!(!cfg.mouse);
+        assert_eq!(cfg.sections, [Section::Workspaces]);
+        assert_eq!(cfg.warnings.len(), 1);
+        assert!(cfg.warnings[0].contains("\"reviews\""));
     }
 }
