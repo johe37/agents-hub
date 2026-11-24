@@ -1472,6 +1472,7 @@ const HELP: &[(&str, &str)] = &[
     ("Enter", "go to the agent, terminal or workspace"),
     ("n", "open a workspace (fuzzy search or type a path)"),
     ("c / t / e", "new Claude / terminal / nvim in the workspace"),
+    ("C", "new chat: Claude in the chats workspace (chat_dir), outside any repo"),
     ("x", "close the agent, terminal or workspace"),
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),

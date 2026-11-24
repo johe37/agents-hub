@@ -73,6 +73,7 @@ prewarm = true               # keep a started shell ready per workspace
 prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night
+chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 ```
 
 All keys are optional. The default for `roots` is `~/repos`.
@@ -111,6 +112,7 @@ picker after you clone a new repo.
 | Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
+| Hub | `C` or click **chat** | New chat: Claude in the `chats` workspace (`chat_dir`), for questions that belong to no repo. `claude --resume` there lists earlier chats |
 | Hub | `x` | Close the agent or the workspace |
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |

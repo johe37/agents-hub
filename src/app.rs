@@ -42,6 +42,7 @@ pub enum Action {
     Open,
     NewWorkspace,
     NewWindow(&'static str),
+    NewChat,
     Close,
     Rename,
     Reply,
@@ -648,6 +649,7 @@ impl App {
         if self.snap.agents.iter().any(|a| a.status == Status::Waiting) {
             v.push(("w", "next waiting", Action::NextWaiting));
         }
+        v.push(("C", "chat", Action::NewChat));
         v.push(("?", "help", Action::Help));
         v.push(("q", "leave", Action::Leave));
         v
@@ -660,6 +662,7 @@ impl App {
             Action::NewWindow("claude") if self.current_review().is_some() => self.start_review(),
             Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
             Action::NewWindow(kind) => self.new_window(kind),
+            Action::NewChat => self.new_chat(),
             Action::Close => self.close(),
             Action::Rename => {
                 if let Some(ws) = self.current_workspace() {
@@ -812,6 +815,25 @@ impl App {
         };
         let spare = spare.cloned();
         let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
+        self.finish(r);
+    }
+
+    /// Open Claude in the chats workspace, for questions that belong to no repo.
+    fn new_chat(&mut self) {
+        let path = self.cfg.chat_dir.clone();
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            return self.notify(format!("Could not create {}: {e}", shorten(&path)), true);
+        }
+        let spare = self.snap.claude_spares.get(&path).cloned();
+        let real = tmux::canonical(&path);
+        let r = match self.snap.workspaces.iter().find(|w| tmux::canonical(&w.path) == real) {
+            Some(ws) => tmux::new_window(&ws.name, &path, "claude", Some("claude"), spare.as_deref()),
+            None => {
+                let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
+                let name = tmux::unique_session_name(&basename(&path), &taken);
+                tmux::create_workspace(&name, &path, "claude", Some("claude"), spare.as_deref())
+            }
+        };
         self.finish(r);
     }
 
@@ -1149,6 +1171,7 @@ impl App {
             KeyCode::Char(c @ '1'..='4') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
+            KeyCode::Char('C') => self.act(Action::NewChat),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
             KeyCode::Char('e') => self.act(Action::NewWindow("nvim")),
             KeyCode::Char('x') => self.act(Action::Close),
