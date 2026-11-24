@@ -396,6 +396,8 @@ pub fn remove_checkout(dir: &str) -> Result<(), String> {
 pub struct Inbox {
     pub reviews: Vec<Mr>,
     pub issues: Vec<Issue>,
+    /// The first fetch has finished, whether it worked or not.
+    pub loaded: bool,
 }
 
 /// MRs to review and issues assigned to you, refreshed in the background like `MrCache`.
@@ -423,7 +425,7 @@ impl InboxCache {
                 let mut state = me.state.lock().unwrap();
                 // Keep the old lists when GitLab is unreachable; try again after the TTL either way.
                 let old = std::mem::take(&mut state.1);
-                *state = (Some(Instant::now()), Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues) });
+                *state = (Some(Instant::now()), Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues), loaded: true });
                 *me.busy.lock().unwrap() = false;
             });
         }

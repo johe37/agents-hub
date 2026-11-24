@@ -288,6 +288,11 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             let chevron = if app.section_open(title) { "  ▾ " } else { "  ▸ " };
             (vec![s(chevron, fg(colors().muted)), s("✓ ", fg(colors().success)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
         }
+        Row::Header(title, _) if app.loading(title) => {
+            let chevron = if app.section_open(title) { "▾ " } else { "▸ " };
+            let spin = SPINNER[(t / 80) as usize % SPINNER.len()];
+            (vec![s(chevron, fg(colors().muted)), s(format!("{title} · "), fg(colors().muted).bold()), s(format!("{spin} loading"), fg(colors().muted))], vec![])
+        }
         Row::Header(title, n) if foldable(title) => {
             let chevron = if app.section_open(title) { "▾ " } else { "▸ " };
             (vec![s(chevron, fg(colors().muted)), s(format!("{title} · {n}"), fg(colors().muted).bold())], vec![])
@@ -975,7 +980,12 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             let inner = block.inner(area).inner(Margin::new(2, 1));
             f.render_widget(block, area);
             let verb = if app.section_open(title) { "hide" } else { "show" };
-            f.render_widget(Paragraph::new(s(format!("{n} in this section. Press space or Enter to {verb} them."), fg(colors().muted))), inner);
+            let text = if app.loading(title) {
+                "Fetching from GitLab…".to_string()
+            } else {
+                format!("{n} in this section. Press space or Enter to {verb} them.")
+            };
+            f.render_widget(Paragraph::new(s(text, fg(colors().muted))), inner);
             app.hits.detail = Rect::default();
             return;
         }

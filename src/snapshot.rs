@@ -124,6 +124,8 @@ pub struct Snapshot {
     pub reviews: Vec<crate::gitlab::Mr>,
     /// Open issues assigned to you.
     pub issues: Vec<crate::gitlab::Issue>,
+    /// The reviews and issues are not fetched yet.
+    pub inbox_loading: bool,
     pub usage: Option<crate::usage::Usage>,
 }
 
@@ -409,6 +411,7 @@ impl Collector {
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
             reviews: inbox.reviews,
             issues: inbox.issues,
+            inbox_loading: !inbox.loaded,
             usage: crate::usage::load(),
         }
     }

@@ -347,6 +347,7 @@ impl App {
 
     fn animating(&self) -> bool {
         !self.loaded
+            || self.snap.inbox_loading
             || self.toast.is_some()
             || self.changed.values().any(|t| t.elapsed() < FLASH)
             || self.snap.agents.iter().any(|a| matches!(a.status, Status::Working | Status::Waiting))
@@ -532,6 +533,11 @@ impl App {
                 rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
                 self.push_reviews(&mut rows, approved, self.section_open(APPROVED));
             }
+        } else if self.loading(REVIEWS) {
+            if !rows.is_empty() {
+                rows.push((String::new(), Row::Gap));
+            }
+            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
         }
         let issues: Vec<usize> = (0..self.snap.issues.len())
             .filter(|&i| {
@@ -547,6 +553,11 @@ impl App {
             if self.section_open(ISSUES) {
                 rows.extend(issues.into_iter().map(|i| (format!("issue:{}#{}", self.snap.issues[i].project, self.snap.issues[i].iid), Row::Issue(i))));
             }
+        } else if self.loading(ISSUES) {
+            if !rows.is_empty() {
+                rows.push((String::new(), Row::Gap));
+            }
+            rows.push((section_key(ISSUES), Row::Header(ISSUES, 0)));
         }
         let (outside, closed) = (section(true), section(false));
         if !outside.is_empty() {
@@ -948,6 +959,11 @@ impl App {
             }
         };
         self.finish(r);
+    }
+
+    /// The section waits for its first fetch from GitLab.
+    pub fn loading(&self, title: &str) -> bool {
+        matches!(title, REVIEWS | ISSUES) && self.snap.inbox_loading && self.filter.text.is_empty()
     }
 
     /// A filter shows every match, folded or not.
