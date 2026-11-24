@@ -74,9 +74,12 @@ prewarm_claude = true        # keep started Claudes ready for the last selected 
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
 chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
+# The sections to show, in this order.
+sections = ["workspaces", "gitlab-reviews", "gitlab-issues", "other-sessions", "closed-sessions"]
 ```
 
-All keys are optional. The default for `roots` is `~/repos`.
+All keys are optional. The default for `roots` is `~/repos`. Leave out both GitLab sections
+and the hub does not call `glab` for reviews and issues.
 
 ## Run
 

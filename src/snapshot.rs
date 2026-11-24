@@ -402,7 +402,7 @@ impl Collector {
             self.adopt_claudes(&all_panes, &workspaces);
         }
         self.fill_claude(&all_panes, &started);
-        let inbox = self.inbox.get(seen);
+        let inbox = if self.cfg.gitlab() { self.inbox.get(seen) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
         Snapshot {
             workspaces,
             agents,

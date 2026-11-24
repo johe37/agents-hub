@@ -38,6 +38,17 @@ pub fn shorten(path: &str) -> String {
     }
 }
 
+/// A section of the hub's list. The GitLab sections are named for their host, so GitHub can join later.
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum Section {
+    Workspaces,
+    GitlabReviews,
+    GitlabIssues,
+    OtherSessions,
+    ClosedSessions,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
@@ -50,6 +61,14 @@ pub struct Config {
     pub hub_key: String,
     pub theme: String,
     pub chat_dir: String,
+    /// The sections to show, in this order.
+    pub sections: Vec<Section>,
+}
+
+impl Config {
+    pub fn gitlab(&self) -> bool {
+        self.sections.iter().any(|s| matches!(s, Section::GitlabReviews | Section::GitlabIssues))
+    }
 }
 
 impl Default for Config {
@@ -64,6 +83,7 @@ impl Default for Config {
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
             chat_dir: "~/chats".into(),
+            sections: vec![Section::Workspaces, Section::GitlabReviews, Section::GitlabIssues, Section::OtherSessions, Section::ClosedSessions],
         }
     }
 }
@@ -83,4 +103,19 @@ pub fn load() -> Config {
         eprintln!("claude-hub: {e}");
     }
     cfg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_sections_in_order() {
+        let cfg: Config = toml::from_str(r#"sections = ["gitlab-reviews", "workspaces"]"#).unwrap();
+        assert_eq!(cfg.sections, [Section::GitlabReviews, Section::Workspaces]);
+        assert!(cfg.gitlab());
+        let cfg: Config = toml::from_str(r#"sections = ["workspaces"]"#).unwrap();
+        assert!(!cfg.gitlab());
+        assert!(toml::from_str::<Config>(r#"sections = ["reviews"]"#).is_err());
+    }
 }

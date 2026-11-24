@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Position, Rect};
 use ratatui::text::Line;
 
-use crate::config::{Config, shorten};
+use crate::config::{Config, Section, shorten};
 use crate::input::Input;
 use crate::picker::{self, Picker};
 use crate::screens::ScreenCache;
@@ -456,13 +456,13 @@ impl App {
             }
         }
 
-        let mut rows = vec![];
+        let mut ws_rows = vec![];
         if !sections.is_empty() {
-            rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, sections.len())));
+            ws_rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, sections.len())));
         } else if self.snap.workspaces.is_empty() && self.filter.text.is_empty() {
-            rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, 0)));
+            ws_rows.push((section_key(WORKSPACES), Row::Header(WORKSPACES, 0)));
             if self.section_open(WORKSPACES) {
-                rows.push(("new-workspace".into(), Row::NewWorkspace));
+                ws_rows.push(("new-workspace".into(), Row::NewWorkspace));
             }
         }
         if !self.section_open(WORKSPACES) {
@@ -475,15 +475,15 @@ impl App {
                 terminals.clear();
                 threads.clear();
             }
-            rows.push((format!("ws:{}", self.snap.workspaces[wi].name), Row::Workspace(wi)));
+            ws_rows.push((format!("ws:{}", self.snap.workspaces[wi].name), Row::Workspace(wi)));
             for ai in agents {
-                rows.push((self.snap.agents[ai].key.clone(), Row::Agent(ai)));
+                ws_rows.push((self.snap.agents[ai].key.clone(), Row::Agent(ai)));
             }
             for ti in terminals {
-                rows.push((format!("term:{}", self.snap.workspaces[wi].windows[ti].window_id), Row::Terminal(wi, ti)));
+                ws_rows.push((format!("term:{}", self.snap.workspaces[wi].windows[ti].window_id), Row::Terminal(wi, ti)));
             }
             for ti in threads {
-                rows.push((format!("thread:{}", self.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti].id), Row::Thread(wi, ti)));
+                ws_rows.push((format!("thread:{}", self.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti].id), Row::Thread(wi, ti)));
             }
         }
         let section = |alive: bool| -> Vec<usize> {
@@ -519,25 +519,20 @@ impl App {
             }
             reviews.push((i, agents, terminals));
         }
+        let mut review_rows = vec![];
         if !reviews.is_empty() {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
-            }
             // A review with a workspace is work in progress, approved or not, so it stays on top.
             let (approved, mut todo): (Vec<_>, Vec<_>) = reviews.into_iter().partition(|r| self.in_approved(r.0));
             todo.sort_by_key(|r| self.review_ws[r.0].is_none());
-            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, todo.len())));
+            review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, todo.len())));
             let open = self.section_open(REVIEWS);
-            self.push_reviews(&mut rows, todo, open);
+            self.push_reviews(&mut review_rows, todo, open);
             if open && !approved.is_empty() {
-                rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
-                self.push_reviews(&mut rows, approved, self.section_open(APPROVED));
+                review_rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
+                self.push_reviews(&mut review_rows, approved, self.section_open(APPROVED));
             }
         } else if self.loading(REVIEWS) {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
-            }
-            rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
+            review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
         }
         let issues: Vec<usize> = (0..self.snap.issues.len())
             .filter(|&i| {
@@ -545,38 +540,43 @@ impl App {
                 self.matches(&[Some(&is.title), Some(&is.project), Some(&is.labels.join(" "))])
             })
             .collect();
+        let mut issue_rows = vec![];
         if !issues.is_empty() {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
-            }
-            rows.push((section_key(ISSUES), Row::Header(ISSUES, issues.len())));
+            issue_rows.push((section_key(ISSUES), Row::Header(ISSUES, issues.len())));
             if self.section_open(ISSUES) {
-                rows.extend(issues.into_iter().map(|i| (format!("issue:{}#{}", self.snap.issues[i].project, self.snap.issues[i].iid), Row::Issue(i))));
+                issue_rows.extend(issues.into_iter().map(|i| (format!("issue:{}#{}", self.snap.issues[i].project, self.snap.issues[i].iid), Row::Issue(i))));
             }
         } else if self.loading(ISSUES) {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
-            }
-            rows.push((section_key(ISSUES), Row::Header(ISSUES, 0)));
+            issue_rows.push((section_key(ISSUES), Row::Header(ISSUES, 0)));
         }
         let (outside, closed) = (section(true), section(false));
+        let mut other_rows = vec![];
         if !outside.is_empty() {
-            if !rows.is_empty() {
-                rows.push((String::new(), Row::Gap));
-            }
-            rows.push((section_key(OTHER), Row::Header(OTHER, outside.len())));
+            other_rows.push((section_key(OTHER), Row::Header(OTHER, outside.len())));
             if self.section_open(OTHER) {
-                rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+                other_rows.extend(outside.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
             }
         }
+        let mut closed_rows = vec![];
         if !closed.is_empty() {
-            if !rows.is_empty() {
+            closed_rows.push((section_key(CLOSED), Row::Header(CLOSED, closed.len())));
+            if self.section_open(CLOSED) {
+                closed_rows.extend(closed.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
+            }
+        }
+        let mut rows = vec![];
+        for section in &self.cfg.sections {
+            let block = std::mem::take(match section {
+                Section::Workspaces => &mut ws_rows,
+                Section::GitlabReviews => &mut review_rows,
+                Section::GitlabIssues => &mut issue_rows,
+                Section::OtherSessions => &mut other_rows,
+                Section::ClosedSessions => &mut closed_rows,
+            });
+            if !block.is_empty() && !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
             }
-            rows.push((section_key(CLOSED), Row::Header(CLOSED, closed.len())));
-            if self.section_open(CLOSED) {
-                rows.extend(closed.into_iter().map(|i| (self.snap.agents[i].key.clone(), Row::Agent(i))));
-            }
+            rows.extend(block);
         }
         self.rows = rows;
         let fallback = owner.and_then(|k| self.rows.iter().position(|(key, _)| *key == k));
