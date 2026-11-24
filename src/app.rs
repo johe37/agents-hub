@@ -27,8 +27,8 @@ pub enum Row {
     Agent(usize),
     /// (workspace, window) indexes.
     Terminal(usize, usize),
-    /// (workspace, thread) indexes: an unresolved review thread on the workspace's merge request.
-    Thread(usize, usize),
+    /// An unresolved thread on an MR of yours: (list, MR, thread) indexes.
+    Thread(Mine, usize, usize),
     /// An open MR where you are a requested reviewer, by index into the snapshot's reviews.
     Review(usize),
     /// An open issue assigned to you, by index into the snapshot's issues.
@@ -411,18 +411,13 @@ impl App {
 
     /// The row key that takes the selection when a fold hides the selected row: its workspace or section.
     fn owner(&self) -> Option<String> {
-        if !matches!(self.current(), Some(Row::Review(_))) {
-            if let Some(ri) = self.current_workspace().and_then(|ws| self.review_of(&ws.name)) {
-                return Some(review_key(&self.snap.reviews[ri]));
-            }
-        }
         match self.current() {
             Some(Row::Review(i)) if self.in_approved(i) && self.section_open(REVIEWS) => Some(section_key(APPROVED)),
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
             Some(Row::Issue(_)) => Some(section_key(ISSUES)),
-            Some(Row::Mr(Mine::Authored, _)) => Some(section_key(MRS)),
-            Some(Row::Mr(Mine::Assigned, _)) => Some(section_key(ASSIGNED)),
-            Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
+            Some(Row::Mr(list, _) | Row::Thread(list, ..)) if !self.section_open(mine_title(list)) => Some(section_key(mine_title(list))),
+            Some(Row::Thread(list, i, _)) => self.mine(list).get(i).map(|m| mr_key(list, m)),
+            Some(Row::Workspace(_) | Row::Terminal(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_some() && !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() => Some(section_key(if self.snap.agents[i].status.alive() { OTHER } else { CLOSED })),
             _ => self.current_workspace().map(|w| format!("ws:{}", w.name)),
@@ -441,34 +436,21 @@ impl App {
                 paths.iter().position(|p| *p == dir)
             })
             .collect();
-        let mut sections: Vec<(usize, Vec<usize>, Vec<usize>, Vec<usize>)> = vec![];
+        let mut sections: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
-            // A review's workspace shows under its review instead.
-            if self.review_ws.contains(&Some(wi)) {
-                continue;
-            }
             let agents = self.agents_of(ws);
             let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_claude()).collect();
-            let threads: Vec<usize> = (0..ws.mr.as_ref().map_or(0, |m| m.threads.len())).collect();
             let branch = ws.git.as_ref().and_then(|g| g.branch.as_deref());
             if self.matches(&[Some(&ws.name), Some(&ws.path), branch]) {
-                sections.push((wi, agents, terminals, threads));
+                sections.push((wi, agents, terminals));
             } else {
                 let agents: Vec<usize> = agents.into_iter().filter(|&i| self.agent_matches(&self.snap.agents[i])).collect();
                 let terminals: Vec<usize> = terminals
                     .into_iter()
                     .filter(|&i| self.matches(&[Some(&ws.windows[i].name), Some(&ws.windows[i].command)]))
                     .collect();
-                let threads: Vec<usize> = threads
-                    .into_iter()
-                    .filter(|&i| {
-                        let th = &ws.mr.as_ref().unwrap().threads[i];
-                        let first = th.notes.first();
-                        self.matches(&[th.path.as_deref(), first.map(|n| n.author.as_str()), first.map(|n| n.body.as_str())])
-                    })
-                    .collect();
-                if !agents.is_empty() || !terminals.is_empty() || !threads.is_empty() {
-                    sections.push((wi, agents, terminals, threads));
+                if !agents.is_empty() || !terminals.is_empty() {
+                    sections.push((wi, agents, terminals));
                 }
             }
         }
@@ -485,12 +467,11 @@ impl App {
         if !self.section_open(WORKSPACES) {
             sections.clear();
         }
-        for (wi, mut agents, mut terminals, mut threads) in sections {
+        for (wi, mut agents, mut terminals) in sections {
             // A filter shows every match. Agents that wait for you show even when folded.
             if self.filter.text.is_empty() && self.folded.contains(&self.snap.workspaces[wi].name) {
                 agents.retain(|&i| self.snap.agents[i].status == Status::Waiting);
                 terminals.clear();
-                threads.clear();
             }
             ws_rows.push((format!("ws:{}", self.snap.workspaces[wi].name), Row::Workspace(wi)));
             for ai in agents {
@@ -498,9 +479,6 @@ impl App {
             }
             for ti in terminals {
                 ws_rows.push((format!("term:{}", self.snap.workspaces[wi].windows[ti].window_id), Row::Terminal(wi, ti)));
-            }
-            for ti in threads {
-                ws_rows.push((format!("thread:{}", self.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti].id), Row::Thread(wi, ti)));
             }
         }
         let section = |alive: bool| -> Vec<usize> {
@@ -515,65 +493,73 @@ impl App {
             }
             v
         };
-        let mut reviews: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
-        for (i, m) in self.snap.reviews.iter().enumerate() {
-            let ws = self.review_ws[i].map(|wi| &self.snap.workspaces[wi]);
-            let mut agents = ws.map(|ws| self.agents_of(ws)).unwrap_or_default();
-            let mut terminals: Vec<usize> = ws.map(|ws| (0..ws.windows.len()).filter(|&t| !ws.windows[t].is_claude()).collect()).unwrap_or_default();
-            if !self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)]) {
-                agents.retain(|&a| self.agent_matches(&self.snap.agents[a]));
-                terminals.retain(|&t| {
-                    let w = &ws.unwrap().windows[t];
-                    self.matches(&[Some(&w.name), Some(&w.command)])
-                });
-                if agents.is_empty() && terminals.is_empty() {
-                    continue;
-                }
-            }
-            if self.filter.text.is_empty() && ws.is_some_and(|ws| self.folded.contains(&ws.name)) {
-                agents.retain(|&a| self.snap.agents[a].status == Status::Waiting);
-                terminals.clear();
-            }
-            reviews.push((i, agents, terminals));
-        }
+        let reviews: Vec<usize> = (0..self.snap.reviews.len())
+            .filter(|&i| {
+                let m = &self.snap.reviews[i];
+                self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
+            })
+            .collect();
+        let review_row = |i: usize| (review_key(&self.snap.reviews[i]), Row::Review(i));
         let mut review_rows = vec![];
         if !reviews.is_empty() {
             // A review with a workspace is work in progress, approved or not, so it stays on top.
-            let (approved, mut todo): (Vec<_>, Vec<_>) = reviews.into_iter().partition(|r| self.in_approved(r.0));
-            todo.sort_by_key(|r| self.review_ws[r.0].is_none());
+            let (approved, mut todo): (Vec<_>, Vec<_>) = reviews.into_iter().partition(|&i| self.in_approved(i));
+            todo.sort_by_key(|&i| self.review_ws[i].is_none());
             review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, todo.len())));
-            let open = self.section_open(REVIEWS);
-            self.push_reviews(&mut review_rows, todo, open);
-            if open && !approved.is_empty() {
-                review_rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
-                self.push_reviews(&mut review_rows, approved, self.section_open(APPROVED));
+            if self.section_open(REVIEWS) {
+                review_rows.extend(todo.into_iter().map(review_row));
+                if !approved.is_empty() {
+                    review_rows.push((section_key(APPROVED), Row::Header(APPROVED, approved.len())));
+                    if self.section_open(APPROVED) {
+                        review_rows.extend(approved.into_iter().map(review_row));
+                    }
+                }
             }
         } else if self.placeholder(REVIEWS) {
             review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
         }
-        let mine_rows = |list: Mine, title: &'static str| -> Vec<(String, Row)> {
-            let mrs = self.mine(list);
-            let shown: Vec<usize> = (0..mrs.len())
-                .filter(|&i| {
-                    let m = &mrs[i];
-                    // An MR you opened and are assigned to shows once, with the ones you opened.
-                    let yours = list == Mine::Assigned && self.snap.authored.iter().any(|a| a.project_id == m.project_id && a.iid == m.iid);
-                    !yours && self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
-                })
-                .collect();
+        let mine_rows = |list: Mine| -> Vec<(String, Row)> {
+            let title = mine_title(list);
+            let mut shown: Vec<(usize, Vec<usize>)> = vec![];
+            for (i, m) in self.mine(list).iter().enumerate() {
+                // An MR you opened and are assigned to shows once, with the ones you opened.
+                if list == Mine::Assigned && self.snap.authored.iter().any(|a| a.project_id == m.project_id && a.iid == m.iid) {
+                    continue;
+                }
+                let threads = &self.mine_fresh(list, i).unwrap_or(m).threads;
+                let mut open: Vec<usize> = (0..threads.len()).collect();
+                if !self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)]) {
+                    open.retain(|&t| {
+                        let first = threads[t].notes.first();
+                        self.matches(&[threads[t].path.as_deref(), first.map(|n| n.author.as_str()), first.map(|n| n.body.as_str())])
+                    });
+                    if open.is_empty() {
+                        continue;
+                    }
+                }
+                if self.filter.text.is_empty() && self.folded.contains(&mr_key(list, m)) {
+                    open.clear();
+                }
+                shown.push((i, open));
+            }
             let mut rows = vec![];
             if !shown.is_empty() {
                 rows.push((section_key(title), Row::Header(title, shown.len())));
                 if self.section_open(title) {
-                    rows.extend(shown.into_iter().map(|i| (format!("mr:{title}:{}!{}", mrs[i].project, mrs[i].iid), Row::Mr(list, i))));
+                    for (i, open) in shown {
+                        let m = &self.mine(list)[i];
+                        rows.push((mr_key(list, m), Row::Mr(list, i)));
+                        let threads = &self.mine_fresh(list, i).unwrap_or(m).threads;
+                        rows.extend(open.into_iter().map(|t| (format!("thread:{}", threads[t].id), Row::Thread(list, i, t))));
+                    }
                 }
             } else if self.placeholder(title) {
                 rows.push((section_key(title), Row::Header(title, 0)));
             }
             rows
         };
-        let mut authored_rows = mine_rows(Mine::Authored, MRS);
-        let mut assigned_rows = mine_rows(Mine::Assigned, ASSIGNED);
+        let mut authored_rows = mine_rows(Mine::Authored);
+        let mut assigned_rows = mine_rows(Mine::Assigned);
         let issues: Vec<usize> = (0..self.snap.issues.len())
             .filter(|&i| {
                 let is = &self.snap.issues[i];
@@ -643,11 +629,11 @@ impl App {
         }
     }
 
-    pub fn current_thread(&self) -> Option<(&Workspace, &crate::gitlab::Mr, &crate::gitlab::Thread)> {
-        let Some(Row::Thread(wi, ti)) = self.current() else { return None };
-        let ws = self.snap.workspaces.get(wi)?;
-        let mr = ws.mr.as_ref()?;
-        Some((ws, mr, mr.threads.get(ti)?))
+    /// The selected thread, its MR and the workspace that has the MR's branch, if one is open.
+    pub fn current_thread(&self) -> Option<(Option<&Workspace>, &crate::gitlab::Mr, &crate::gitlab::Thread)> {
+        let Some(Row::Thread(list, i, ti)) = self.current() else { return None };
+        let mr = self.mine_fresh(list, i)?;
+        Some((self.mr_workspace(mr), mr, mr.threads.get(ti)?))
     }
 
     pub fn current_review(&self) -> Option<&crate::gitlab::Mr> {
@@ -692,8 +678,18 @@ impl App {
     /// The MR at i in list. A workspace refreshes its MR more often, so that copy wins, with the list's approvals.
     pub fn mine_at(&self, list: Mine, i: usize) -> Option<crate::gitlab::Mr> {
         let m = self.mine(list).get(i)?;
-        let Some(fresh) = self.mr_workspace(m).and_then(|ws| ws.mr.as_ref()) else { return Some(m.clone()) };
+        let fresh = self.mine_fresh(list, i)?;
         Some(crate::gitlab::Mr { approved_by: m.approved_by.clone(), approved: m.approved, ..fresh.clone() })
+    }
+
+    pub fn mr_folded(&self, list: Mine, i: usize) -> bool {
+        self.mine(list).get(i).is_some_and(|m| self.folded.contains(&mr_key(list, m)))
+    }
+
+    /// The workspace's copy of the MR at i in list when a workspace has its branch, else the list's.
+    pub fn mine_fresh(&self, list: Mine, i: usize) -> Option<&crate::gitlab::Mr> {
+        let m = self.mine(list).get(i)?;
+        Some(self.mr_workspace(m).and_then(|ws| ws.mr.as_ref()).unwrap_or(m))
     }
 
     /// The workspace whose branch has the MR.
@@ -728,32 +724,14 @@ impl App {
         self.snap.reviews[review].approved && self.review_ws.get(review).copied().flatten().is_none()
     }
 
-    fn push_reviews(&self, rows: &mut Vec<(String, Row)>, reviews: Vec<(usize, Vec<usize>, Vec<usize>)>, open: bool) {
-        for (i, agents, terminals) in reviews {
-            let Some(wi) = self.review_ws[i] else {
-                if open {
-                    rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
-                }
-                continue;
-            };
-            rows.push((review_key(&self.snap.reviews[i]), Row::Review(i)));
-            rows.extend(agents.into_iter().map(|a| (self.snap.agents[a].key.clone(), Row::Agent(a))));
-            rows.extend(terminals.into_iter().map(|t| (format!("term:{}", self.snap.workspaces[wi].windows[t].window_id), Row::Terminal(wi, t))));
-        }
-    }
-
-    /// The review whose checkout the named workspace holds.
-    pub fn review_of(&self, ws: &str) -> Option<usize> {
-        self.review_ws.iter().position(|w| w.is_some_and(|wi| self.snap.workspaces[wi].name == ws))
-    }
-
     pub fn review_workspace(&self, review: usize) -> Option<&Workspace> {
         self.review_ws.get(review).copied().flatten().and_then(|wi| self.snap.workspaces.get(wi))
     }
 
     fn current_workspace(&self) -> Option<&Workspace> {
         let name = match self.current()? {
-            Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
+            Row::Workspace(i) | Row::Terminal(i, _) => return self.snap.workspaces.get(i),
+            Row::Thread(list, i, _) => return self.mr_workspace(self.mine(list).get(i)?),
             Row::Review(i) => return self.review_workspace(i),
             Row::Mr(list, i) => return self.mr_workspace(self.mine(list).get(i)?),
             Row::Agent(i) => self.snap.agents[i].workspace.clone()?,
@@ -883,7 +861,7 @@ impl App {
             Action::FoldAll => self.toggle_fold_all(),
             Action::Resolve => {
                 let Some((ws, _, _)) = self.current_thread() else { return };
-                let text = crate::gitlab::head(&ws.path).map_or(String::new(), |sha| format!("Fixed in {sha}."));
+                let text = ws.and_then(|ws| crate::gitlab::head(&ws.path)).map_or(String::new(), |sha| format!("Fixed in {sha}."));
                 self.reply.set(&text);
                 self.resolving = true;
                 self.focus = Focus::Reply;
@@ -1085,10 +1063,12 @@ impl App {
             }
             return self.build_rows();
         }
-        if matches!(self.current(), Some(Row::Mr(..))) {
-            return;
-        }
-        let Some(name) = self.current_workspace().map(|w| w.name.clone()) else { return };
+        let name = match self.current() {
+            Some(Row::Mr(list, i) | Row::Thread(list, i, _)) => self.mine(list).get(i).map(|m| mr_key(list, m)),
+            Some(Row::Review(_)) => None,
+            _ => self.current_workspace().map(|w| w.name.clone()),
+        };
+        let Some(name) = name else { return };
         if !self.folded.remove(&name) {
             self.folded.insert(name);
         }
@@ -1097,7 +1077,10 @@ impl App {
 
     /// Fold every workspace and section, or unfold them all when all are folded.
     fn toggle_fold_all(&mut self) {
-        let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
+        let mut names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
+        for list in [Mine::Authored, Mine::Assigned] {
+            names.extend(self.mine(list).iter().filter(|m| !m.threads.is_empty()).map(|m| mr_key(list, m)));
+        }
         // The workspaces section stays open so that the folded workspaces still show.
         let sections = [REVIEWS, APPROVED, MRS, ASSIGNED, ISSUES, OTHER, CLOSED];
         if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
@@ -1255,7 +1238,8 @@ impl App {
     fn thread_note(&mut self, text: String, resolve: bool) {
         let Some((ws, mr, th)) = self.current_thread() else { return };
         let done = if resolve { format!("Resolved the thread at {} on !{}", th.place(), mr.iid) } else { format!("Replied on !{} at {}", mr.iid, th.place()) };
-        let cmd = Cmd::ThreadNote { path: ws.path.clone(), mr: Box::new(mr.clone()), thread: th.id.clone(), text, resolve, done };
+        let path = ws.map_or_else(|| crate::config::home().display().to_string(), |ws| ws.path.clone());
+        let cmd = Cmd::ThreadNote { path, mr: Box::new(mr.clone()), thread: th.id.clone(), text, resolve, done };
         let _ = self.cmd.send(cmd);
         self.notify(if resolve { "Resolving the thread…" } else { "Posting the reply…" }, false);
     }
@@ -1301,6 +1285,9 @@ impl App {
     /// It does not press Enter: you edit the prompt or send it yourself.
     fn forward(&mut self) {
         let Some((ws, mr, th)) = self.current_thread() else { return };
+        let Some(ws) = ws else {
+            return self.notify(format!("No workspace has the branch of !{}. Press c on the merge request to check it out.", mr.iid), true);
+        };
         let prompt = th.as_prompt(mr);
         let agents = self.agents_of(ws);
         let pick = agents.iter().map(|&i| &self.snap.agents[i]).filter(|a| a.target.is_some() && a.status.alive()).min_by_key(|a| a.status != Status::Idle).cloned();
@@ -1644,7 +1631,7 @@ impl App {
                         }
                         let foldable_row = match self.rows[i].1 {
                             Row::Workspace(_) | Row::Header(..) => true,
-                            Row::Review(r) => self.review_workspace(r).is_some(),
+                            Row::Mr(list, r) => self.mine_fresh(list, r).is_some_and(|m| !m.threads.is_empty()),
                             _ => false,
                         };
                         let indent = if matches!(self.rows[i].1, Row::Header(APPROVED, _)) { 2 } else { 0 };
@@ -1686,6 +1673,18 @@ pub fn gitlab_section(title: &str) -> Option<Section> {
     GITLAB.into_iter().find(|s| s.title() == title)
 }
 
+fn mine_title(list: Mine) -> &'static str {
+    match list {
+        Mine::Authored => MRS,
+        Mine::Assigned => ASSIGNED,
+    }
+}
+
+/// The MR's row key; folding an MR keeps this in `folded`, next to workspace names.
+fn mr_key(list: Mine, m: &crate::gitlab::Mr) -> String {
+    format!("mr:{}:{}!{}", mine_title(list), m.project, m.iid)
+}
+
 fn review_key(m: &crate::gitlab::Mr) -> String {
     format!("review:{}!{}", m.project, m.iid)
 }
@@ -1724,6 +1723,44 @@ mod tests {
         assert!(rx.try_recv().is_err(), "a click on the title only selects it");
         app.on_mouse(click(59));
         assert!(matches!(rx.try_recv(), Ok(Cmd::ForgetInbox(Section::GitlabIssues))));
+    }
+
+    #[test]
+    fn threads_show_under_the_mr_and_workspaces_stay_local() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut app = App::new(Config::default(), tx, Default::default());
+        let thread = |id: &str| crate::gitlab::Thread { id: id.into(), path: None, line: None, notes: vec![] };
+        let mr = |iid, threads| crate::gitlab::Mr { project_id: 11, iid, project: "acme/pay".into(), threads, ..Default::default() };
+        let ws = |name: &str, path: String, mr| Workspace { name: name.into(), path, windows: vec![], git: None, mr };
+        let review = crate::gitlab::Mr { project_id: 13, iid: 311, project: "acme/billing".into(), ..Default::default() };
+        app.snap.authored = vec![mr(142, vec![])];
+        app.snap.workspaces = vec![
+            ws("pay", "/x/pay".into(), Some(mr(142, vec![thread("a1"), thread("a2")]))),
+            ws("review-billing-311", review.review_dir().display().to_string(), None),
+        ];
+        app.snap.reviews = vec![review];
+        app.open_sections.extend([MRS, REVIEWS]);
+        app.build_rows();
+        let keys: Vec<&str> = app.rows.iter().map(|(k, _)| k.as_str()).filter(|k| !k.is_empty()).collect();
+        assert_eq!(
+            keys,
+            [
+                "section:WORKSPACES",
+                "ws:pay",
+                "ws:review-billing-311",
+                "section:REVIEWS",
+                "review:acme/billing!311",
+                "section:MERGE REQUESTS",
+                "mr:MERGE REQUESTS:acme/pay!142",
+                "thread:a1",
+                "thread:a2"
+            ]
+        );
+        app.selected = app.rows.iter().position(|(k, _)| k == "thread:a2").unwrap();
+        assert_eq!(app.current_thread().map(|(ws, _, th)| (ws.map(|w| w.name.as_str()), th.id.as_str())), Some((Some("pay"), "a2")));
+        app.toggle_fold();
+        assert!(!app.rows.iter().any(|(k, _)| k.starts_with("thread:")), "folding the MR hides its threads");
+        assert_eq!(app.rows[app.selected].0, "mr:MERGE REQUESTS:acme/pay!142", "the selection moves to the MR");
     }
 
     #[test]

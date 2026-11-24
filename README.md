@@ -124,7 +124,7 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
-| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** and **Other sessions** start open; the GitLab sections and **Closed sessions** start folded |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace, merge request or section. Agents that wait for you still show. **Workspaces** and **Other sessions** start open; the GitLab sections and **Closed sessions** start folded |
 | Hub | `z` | Fold every workspace and every section except **Workspaces**, or unfold them all when all are folded |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
@@ -152,12 +152,15 @@ Quick answers do not need the trip. Press `r`, type a message and press `Enter`:
 it into the agent's terminal for you. When an agent asks for permission, `y` approves and `d`
 denies, and the panel shows the tool call it wants to run.
 
-**Merge requests.** When a workspace's branch has a GitLab merge request, its row shows
-`!140 ✓  2`: the MR, its pipeline (✓ passed, ✗ failed, ⟳ running) and its unresolved review
-threads. Each thread is listed under the workspace. Select one to read it, `r` to reply in
-GitLab, `f` to put it in the workspace's Claude prompt and jump there (edit it, then `Enter` sends), `Enter` to open it in the browser. This
-uses `glab`, so run `glab auth login` once. MR data refreshes every minute in the background,
-every 10 seconds while a pipeline runs. `Ctrl+R` on a workspace fetches it right away.
+**Merge requests.** **WORKSPACES** is always local: tmux sessions with their agents and
+terminals. GitLab shows in its own sections. When a workspace's branch has a merge request, its
+row shows `!140 ✓`: the MR and its pipeline (✓ passed, ✗ failed, ⟳ running). The MR's unresolved
+review threads are listed under the MR in **MERGE REQUESTS** or **ASSIGNED MERGE REQUESTS**.
+Select one to read it, `r` to reply in GitLab, `f` to put it in the Claude prompt of the
+workspace that has the branch and jump there (edit it, then `Enter` sends), `Enter` to open it
+in the browser. This uses `glab`, so run `glab auth login` once. A workspace's MR refreshes every
+minute in the background, every 10 seconds while a pipeline runs. `Ctrl+R` on a workspace fetches
+it right away.
 
 To close the loop: `f` sends a comment to Claude, `p` pushes the fix (and opens a draft MR the
 first time), `v` resolves the thread with a "Fixed in <commit>" reply you can edit. The **Pipeline** tab (`4`) shows each stage and job
@@ -169,11 +172,10 @@ description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c
 code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
 then press `Enter`. `t` and `e` check it out the same way, with a shell or nvim instead of
-Claude. Your own checkout is never touched. The review's workspace shows under its
-MR in **REVIEWS**, with its agents and terminals, even when the section is folded. `Enter` on
-the MR then goes to a shell in the checkout (a new one if none is open), and `x` closes the
-workspace and deletes the checkout. When the MR leaves your review list, its workspace moves
-to **WORKSPACES**. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
+Claude. Your own checkout is never touched. The review's workspace shows in **WORKSPACES**,
+and the MR's row in **REVIEWS** names it (`▪ review-api-311`). `Enter` on the MR then goes to a
+shell in the checkout (a new one if none is open), and `x` closes the workspace and deletes the
+checkout. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
 workspace moves to a folded **✓ APPROVED** group at the end; close the workspace with `x` to
 send it there. If the author pushes and GitLab drops your approval, the MR moves back. The GitLab lists refresh every two minutes; `Ctrl+R` on a GitLab row or title, or a click on the `↻` at the end of a title, refreshes that list now. A spinner takes the place of `↻` while a list loads.
 Until the first fetch is done, each GitLab section shows its title with a spinner. If a fetch

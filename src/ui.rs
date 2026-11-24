@@ -274,14 +274,6 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
             _ => Span::raw(" "),
         },
-        Row::Review(ri) => match app.review_workspace(ri).and_then(|ws| app.worst(&app.agents_of(ws))) {
-            Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
-            _ => Span::raw(" "),
-        },
-        Row::Mr(list, i) => match app.mr_workspace(&app.mine(list)[i]).and_then(|ws| app.worst(&app.agents_of(ws))) {
-            Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
-            _ => Span::raw(" "),
-        },
         _ => Span::raw(" "),
     };
     let w = width.saturating_sub(1);
@@ -345,10 +337,6 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
                 } else {
                     r.push(s(mr.state.clone(), fg(colors().dim)));
                 }
-                if !mr.threads.is_empty() {
-                    // Nerd Font icons can draw wider than one cell, so the count gets a space of its own.
-                    r.push(s(format!("  {COMMENT} {}", mr.threads.len()), fg(colors().warning)));
-                }
             }
             (l, r)
         }
@@ -396,26 +384,19 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         Row::NewWorkspace => (vec![s("╰─ ", fg(colors().border).bold()), s("+ Open a workspace", fg(colors().accent).bold())], vec![s(" n ", fg(colors().bg).bg(colors().accent).bold())]),
         Row::Review(i) => {
             let m = &app.snap.reviews[i];
-            let mut l = match app.review_workspace(i) {
-                Some(ws) => {
-                    let chevron = if app.folded.contains(&ws.name) { "▸ " } else { "▾ " };
-                    let symbol = match app.worst(&app.agents_of(ws)) {
-                        Some(st) => status_symbol(st, t),
-                        None => s("▪", fg(colors().dim)),
-                    };
-                    let mut l = vec![s(chevron, fg(colors().muted)), symbol, Span::raw(" ")];
-                    if m.approved {
-                        l.push(s("✓ ", fg(colors().success)));
-                    }
-                    l
-                }
+            let mut l = match () {
                 // Indented under the APPROVED header, which carries the ✓.
-                None if m.approved => vec![Span::raw("      ")],
-                None => vec![Span::raw("    ")],
+                _ if app.in_approved(i) => vec![Span::raw("    ")],
+                _ if m.approved => vec![s("✓ ", fg(colors().success))],
+                _ => vec![],
             };
             let (name, title) = if app.in_approved(i) { (fg(colors().dim).bold(), fg(colors().dim)) } else { (fg(colors().fg).bold(), fg(colors().fg)) };
             l.extend([s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), name), s(format!("  {}", m.title), title)]);
-            let mut r = vec![s(m.author.clone(), fg(colors().dim))];
+            let mut r = vec![];
+            if let Some(ws) = app.review_workspace(i) {
+                r.push(s(format!("▪ {} ", ws.name), fg(colors().accent)));
+            }
+            r.push(s(m.author.clone(), fg(colors().dim)));
             if m.draft {
                 r.push(s(" draft", fg(colors().dim)));
             }
@@ -431,7 +412,12 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         }
         Row::Mr(list, i) => {
             let m = &app.mine_at(list, i).unwrap_or_default();
-            let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
+            let chevron = match () {
+                _ if m.threads.is_empty() => "  ",
+                _ if app.mr_folded(list, i) => "▸ ",
+                _ => "▾ ",
+            };
+            let l = vec![s(chevron, fg(colors().muted)), s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
             let mut r = vec![];
             match app.mr_workspace(m) {
                 Some(ws) => r.push(s(format!("▪ {}", ws.name), fg(colors().accent))),
@@ -461,8 +447,8 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             r.push(s(format!(" {:>3}", age(is.updated)), fg(colors().dim)));
             (l, r)
         }
-        Row::Thread(wi, ti) => {
-            let th = &app.snap.workspaces[wi].mr.as_ref().unwrap().threads[ti];
+        Row::Thread(list, i, ti) => {
+            let th = &app.mine_fresh(list, i).unwrap().threads[ti];
             let mut l = vec![s(branch, fg(colors().border).bold()), s(format!("{COMMENT} "), fg(colors().warning))];
             if let Some(n) = th.notes.first() {
                 l.push(s(n.author.clone(), fg(colors().fg).bold()));
@@ -873,7 +859,7 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     if let Some(mr) = &ws.mr {
         let status = [mr.pipeline.as_deref().map(|p| format!("pipeline {p}")), mr.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
         banner.push(Line::from(vec![s(format!("!{} ", mr.iid), fg(colors().accent).bold()), s(mr.title.clone(), fg(colors().fg))]));
-        banner.push(Line::from(vec![pipeline_symbol(mr.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted)), s(format!("  ·  {} open thread{}", mr.threads.len(), plural(mr.threads.len())), fg(colors().dim))]));
+        banner.push(Line::from(vec![pipeline_symbol(mr.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]));
     }
     if let Some(g) = &ws.git {
         let branch = g.branch.as_deref().unwrap_or_default();
@@ -1461,7 +1447,10 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
     let [head, body_area, reply_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(1), Constraint::Length(3)]).areas(inner);
-    let hint = Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · v resolves", fg(colors().dim))]);
+    let hint = match ws {
+        Some(ws) => Line::from(vec![s(format!("{}  ", ws.name), fg(colors().fg).bold()), s("f puts it in Claude's prompt · v resolves", fg(colors().dim))]),
+        None => Line::from(s("No workspace has its branch; c on the merge request checks it out · v resolves", fg(colors().dim))),
+    };
     let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
     f.render_widget(Paragraph::new(vec![Line::default(), hint, Line::from(s("↗ Open the thread in GitLab (Ctrl+click)", fg(colors().accent)))]), head);
     link_row(f, Rect { y: head.y + 2, height: 1, ..head }, &url);
@@ -1618,7 +1607,7 @@ const HELP: &[(&str, &str)] = &[
     ("/", "filter, Esc clears"),
     ("q", "leave (everything keeps running)"),
     ("", ""),
-    ("", "Merge request threads (listed under a workspace)"),
+    ("", "Merge request threads (listed under your merge requests)"),
     ("Enter", "open the thread in GitLab (over SSH: Ctrl+click its link in the panel)"),
     ("r", "reply in the thread"),
     ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
