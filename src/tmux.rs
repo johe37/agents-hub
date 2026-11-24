@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 13] = [
+const FIELDS: [&str; 14] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -34,6 +34,7 @@ const FIELDS: [&str; 13] = [
     "pane_pipe",
     "pane_width",
     "pane_height",
+    "@spare",
 ];
 
 #[derive(Clone, Debug)]
@@ -50,6 +51,8 @@ pub struct Pane {
     pub piped: bool,
     pub width: u16,
     pub height: u16,
+    /// Pool windows of a pre-started Claude: "<unix start time> <branch> <commit>".
+    pub spare: String,
 }
 
 /// Why a tmux action did not complete in place.
@@ -239,6 +242,7 @@ pub fn list_all_panes() -> Vec<Pane> {
                 piped: p[10] == "1",
                 width: p[11].parse().unwrap_or(80),
                 height: p[12].parse().unwrap_or(24),
+                spare: p[13].into(),
             })
         })
         .collect()
@@ -273,6 +277,9 @@ pub struct ClaudeWindow {
     pub pane_id: String,
     /// Still starting to replace the spare for path.
     pub next: bool,
+    /// Unix time it started, and (branch, commit) then, kept in the window so a restarted hub can take it over.
+    pub started: Option<u64>,
+    pub checkout: (Option<String>, Option<String>),
 }
 
 /// All Claudes in the pool, ready or starting.
@@ -285,9 +292,24 @@ pub fn claude_pool(panes: &[Pane]) -> Vec<ClaudeWindow> {
                 Some(path) => (path, false),
                 None => (p.window_name.strip_prefix(CLAUDE_NEXT)?, true),
             };
-            Some(ClaudeWindow { path: path.to_string(), window_id: p.window_id.clone(), pane_id: p.pane_id.clone(), next })
+            let mut meta = p.spare.split(' ');
+            let started = meta.next().and_then(|t| t.parse().ok());
+            let mut field = || meta.next().filter(|v| !v.is_empty()).map(String::from);
+            let checkout = (field(), field());
+            Some(ClaudeWindow { path: path.to_string(), window_id: p.window_id.clone(), pane_id: p.pane_id.clone(), next, started, checkout })
         })
         .collect()
+}
+
+/// The pre-started window for path that runs command, looked up fresh: the snapshot may miss one started a moment ago.
+pub fn spare_for(path: &str, command: Option<&str>) -> Option<String> {
+    let pool = list_all_panes();
+    let spares = match command {
+        None => spares(&pool),
+        Some("claude") => claude_spares(&pool),
+        Some(_) => return None,
+    };
+    spares.into_iter().find(|(p, _)| p == path).map(|(_, w)| w)
 }
 
 pub fn spawn_spare(path: &str) {
@@ -295,9 +317,13 @@ pub fn spawn_spare(path: &str) {
 }
 
 /// Start Claude in the pool, and return its window id. A next one waits for promote_claude before anyone takes it.
-pub fn spawn_claude_spare(path: &str, next: bool) -> Option<String> {
+pub fn spawn_claude_spare(path: &str, next: bool, checkout: &(Option<String>, Option<String>)) -> Option<String> {
     let prefix = if next { CLAUDE_NEXT } else { CLAUDE_SPARE };
-    spawn_in_pool(&format!("{prefix}{path}"), path, Some("claude"))
+    let id = spawn_in_pool(&format!("{prefix}{path}"), path, Some("claude"))?;
+    let (branch, commit) = (checkout.0.as_deref().unwrap_or(""), checkout.1.as_deref().unwrap_or(""));
+    let meta = format!("{} {branch} {commit}", crate::state::now());
+    run(&["set-option", "-w", "-t", &id, "@spare", &meta]);
+    Some(id)
 }
 
 /// Make a starting Claude the spare to take for path.
@@ -315,11 +341,13 @@ fn spawn_in_pool(name: &str, path: &str, command: Option<&str>) -> Option<String
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Whether a client shows the hub. Without a hub session, the hub runs in some terminal and counts as shown.
-pub fn hub_visible() -> bool {
-    run(&["display-message", "-p", "-t", &format!("={HUB_SESSION}:"), "#{session_attached}"])
-        .filter(|o| o.status.success())
-        .is_none_or(|o| String::from_utf8_lossy(&o.stdout).trim() != "0")
+/// Whether a client is attached to any hub session, the hub view or a workspace.
+/// Without a hub session, the hub runs in some terminal and counts as in use.
+pub fn hub_in_use() -> bool {
+    let Some(out) = run(&["list-sessions", "-F", "#{session_name} #{session_attached}"]).filter(|o| o.status.success()) else { return true };
+    let sessions: Vec<(String, String)> =
+        String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.rsplit_once(' ')).map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    !sessions.iter().any(|(s, _)| s == HUB_SESSION) || sessions.iter().any(|(_, n)| n != "0")
 }
 
 /// Pane ids on any tmux server, given its socket path, as (pane_id, session_name).
@@ -692,6 +720,29 @@ mod tests {
         assert_eq!(k(KeyCode::Char('x'), KeyModifiers::ALT), Some(Err("M-x".into())));
         assert_eq!(k(KeyCode::Left, KeyModifiers::CONTROL), Some(Err("C-Left".into())));
         assert_eq!(k(KeyCode::Esc, KeyModifiers::NONE), Some(Err("Escape".into())));
+    }
+
+    #[test]
+    fn claude_pool_reads_spare_metadata() {
+        let pane = |name: &str, spare: &str| Pane {
+            session: POOL_SESSION.into(),
+            workspace_path: String::new(),
+            session_path: String::new(),
+            window_index: 1,
+            window_name: name.into(),
+            window_id: "@1".into(),
+            pane_id: "%1".into(),
+            active: true,
+            command: "claude".into(),
+            piped: false,
+            width: 80,
+            height: 24,
+            spare: spare.into(),
+        };
+        let pool = claude_pool(&[pane("claude:/r", "100 main abc"), pane("claude-next:/r", "200  abc"), pane("claude:/old", "")]);
+        assert_eq!((pool[0].started, pool[0].checkout.clone(), pool[0].next), (Some(100), (Some("main".into()), Some("abc".into())), false));
+        assert_eq!((pool[1].started, pool[1].checkout.clone(), pool[1].next), (Some(200), (None, Some("abc".into())), true));
+        assert_eq!((pool[2].started, pool[2].checkout.clone()), (None, (None, None)));
     }
 
     #[test]

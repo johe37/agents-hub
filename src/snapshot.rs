@@ -117,8 +117,6 @@ pub struct Snapshot {
     pub workspaces: Vec<Workspace>,
     pub agents: Vec<Agent>,
     pub recent_dirs: Vec<String>,
-    pub spares: HashMap<String, String>,
-    pub claude_spares: HashMap<String, String>,
     pub dirs: Arc<Vec<(String, bool)>>,
     /// Results of background jobs since the last snapshot, as (text, is_error), for toasts.
     pub notices: Vec<(String, bool)>,
@@ -138,7 +136,7 @@ const CLAUDE_KEEP: Duration = Duration::from_secs(5 * 60);
 const CLAUDE_PAUSE: Duration = Duration::from_secs(60);
 /// Count a Claude as started after this long, even without a SessionStart event, as hooks may be missing.
 const CLAUDE_START: Duration = Duration::from_secs(30);
-/// Drop the pre-started Claudes and stop polling GitLab when nobody looked at the hub for this long.
+/// Drop the pre-started Claudes and stop polling GitLab when no client was attached to the hub for this long.
 const UNSEEN: Duration = Duration::from_secs(15 * 60);
 
 struct ClaudeSpare {
@@ -195,8 +193,10 @@ struct Collector {
     claude_spares: Vec<ClaudeSpare>,
     /// When a spare for a path last exited or failed to start.
     claude_pause: HashMap<String, Instant>,
-    /// Last time a client showed the hub.
+    /// Last time a client was attached to the hub.
     hub_seen: Instant,
+    /// Whether the Claudes a previous hub left in the pool were taken over.
+    adopted: bool,
     dirs: Arc<Vec<(String, bool)>>,
     need_scan: bool,
     /// Transcripts of live agents. Claude writes its replies there without a hook event.
@@ -220,6 +220,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
             claude_spares: vec![],
             claude_pause: HashMap::new(),
             hub_seen: Instant::now(),
+            adopted: false,
             git: Default::default(),
             mrs: Default::default(),
             inbox: Default::default(),
@@ -339,7 +340,7 @@ impl Collector {
     }
 
     fn collect(&mut self) -> Snapshot {
-        if tmux::hub_visible() {
+        if tmux::hub_in_use() {
             self.hub_seen = Instant::now();
         }
         let seen = self.hub_seen.elapsed() < UNSEEN;
@@ -394,15 +395,16 @@ impl Collector {
             self.fill_pool(paths, &all_panes);
         }
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
+        if !self.adopted {
+            self.adopted = true;
+            self.adopt_claudes(&all_panes, &workspaces);
+        }
         self.fill_claude(&all_panes, &started);
-        let pool = tmux::list_all_panes();
         let inbox = self.inbox.get(seen);
         Snapshot {
             workspaces,
             agents,
             recent_dirs: recent,
-            spares: tmux::spares(&pool).into_iter().collect(),
-            claude_spares: tmux::claude_spares(&pool).into_iter().collect(),
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
             reviews: inbox.reviews,
@@ -655,11 +657,39 @@ impl Collector {
         }
     }
 
+    /// Take over the Claudes a previous hub left in the pool, and aim at their paths, or else at the
+    /// workspaces with the latest Claude activity, so a restarted hub has Claudes ready at once.
+    fn adopt_claudes(&mut self, all_panes: &[Pane], workspaces: &[Workspace]) {
+        let now = crate::state::now();
+        let mut pool = tmux::claude_pool(all_panes);
+        pool.sort_by_key(|w| std::cmp::Reverse(w.started));
+        for w in pool {
+            let Some(ts) = w.started else { continue };
+            let started = Instant::now().checked_sub(Duration::from_secs(now.saturating_sub(ts))).unwrap_or_else(Instant::now);
+            if !w.next && !self.claude_targets.contains(&w.path) {
+                self.claude_targets.push(w.path.clone());
+            }
+            self.claude_spares.push(ClaudeSpare { window_id: w.window_id, path: w.path, started, checkout: w.checkout });
+        }
+        let mut recent: Vec<(u64, &str)> = workspaces
+            .iter()
+            .filter_map(|ws| Some((ws.windows.iter().filter_map(|w| w.claude.as_ref().map(|s| s.timestamp)).max()?, ws.path.as_str())))
+            .collect();
+        recent.sort_by_key(|(ts, _)| std::cmp::Reverse(*ts));
+        for (_, path) in recent {
+            if !self.claude_targets.iter().any(|p| p == path) {
+                self.claude_targets.push(path.to_string());
+            }
+        }
+        let extra = self.claude_targets.split_off(CLAUDE_TARGETS.min(self.claude_targets.len()));
+        self.claude_dropped = extra.into_iter().take(CLAUDE_TARGETS).map(|p| (p, Instant::now())).collect();
+    }
+
     fn spawn_claude(&mut self, path: &str, checkout: (Option<String>, Option<String>), next: bool) {
         if self.claude_pause.get(path).is_some_and(|at| at.elapsed() < CLAUDE_PAUSE) {
             return;
         }
-        match tmux::spawn_claude_spare(path, next) {
+        match tmux::spawn_claude_spare(path, next, &checkout) {
             Some(window_id) => self.claude_spares.push(ClaudeSpare { window_id, path: path.to_string(), started: Instant::now(), checkout }),
             None => {
                 self.claude_pause.insert(path.to_string(), Instant::now());

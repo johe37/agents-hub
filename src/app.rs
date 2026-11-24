@@ -172,7 +172,7 @@ pub struct Selection {
 pub const FLASH: Duration = Duration::from_millis(1500);
 /// How long a workspace must stay selected before a Claude starts for it. Each start costs a few hundred MB,
 /// so moving through the list must not start one for every row passed.
-const CLAUDE_DWELL: Duration = Duration::from_secs(2);
+const CLAUDE_DWELL: Duration = Duration::from_millis(700);
 
 const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
 
@@ -884,7 +884,7 @@ impl App {
             Some(Row::Review(i)) => match self.review_workspace(i) {
                 Some(ws) => match ws.windows.iter().find(|w| !w.is_claude() && is_shell(&w.command)) {
                     Some(w) => tmux::jump_to_window(&ws.name, &w.window_id),
-                    None => tmux::new_window(&ws.name, &ws.path, "shell", None, self.snap.spares.get(&ws.path).map(|s| s.as_str())),
+                    None => tmux::new_window(&ws.name, &ws.path, "shell", None, tmux::spare_for(&ws.path, None).as_deref()),
                 },
                 None => {
                     let Some(url) = self.current_review().map(|m| m.url.clone()) else { return };
@@ -926,12 +926,7 @@ impl App {
             return;
         };
         let command = window_command(kind);
-        let spare = match command {
-            None => self.snap.spares.get(&ws.path),
-            Some("claude") => self.snap.claude_spares.get(&ws.path),
-            Some(_) => None,
-        };
-        let spare = spare.cloned();
+        let spare = tmux::spare_for(&ws.path, command);
         let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
         self.finish(r);
     }
@@ -942,7 +937,7 @@ impl App {
         if let Err(e) = std::fs::create_dir_all(&path) {
             return self.notify(format!("Could not create {}: {e}", shorten(&path)), true);
         }
-        let spare = self.snap.claude_spares.get(&path).cloned();
+        let spare = tmux::spare_for(&path, Some("claude"));
         let real = tmux::canonical(&path);
         let r = match self.snap.workspaces.iter().find(|w| tmux::canonical(&w.path) == real) {
             Some(ws) => tmux::new_window(&ws.name, &path, "claude", Some("claude"), spare.as_deref()),
@@ -1200,14 +1195,7 @@ impl App {
             return self.finish(r);
         }
         let command = window_command(kind);
-        // Look up the pool fresh: the picker may have started a spare for this path a moment ago.
-        let pool = tmux::list_all_panes();
-        let spares = match command {
-            None => tmux::spares(&pool),
-            Some("claude") => tmux::claude_spares(&pool),
-            Some(_) => vec![],
-        };
-        let spare = spares.into_iter().find(|(p, _)| *p == path).map(|(_, w)| w);
+        let spare = tmux::spare_for(&path, command);
         let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         let name = tmux::unique_session_name(&basename(&path), &taken);
         let r = tmux::create_workspace(&name, &path, kind, command, spare.as_deref());
