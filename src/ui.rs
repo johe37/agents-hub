@@ -62,12 +62,13 @@ fn status_color(status: Status) -> Color {
 /// How long the agent has waited for you, warming from yellow to red over 15 minutes.
 fn waiting_timer(since: u64) -> Span<'static> {
     let mins = crate::state::now().saturating_sub(since) as f32 / 60.0;
-    s(format!("⏳ {}", age(since)), fg(lerp(colors().warning, colors().error, mins / 15.0)).bold())
+    s(format!("◉ {}", age(since)), fg(lerp(colors().warning, colors().error, mins / 15.0)).bold())
 }
 
 /// Text in a rounded pill; caps need a Nerd Font, which the user's prompt already relies on.
-fn pill(text: String, fg_c: Color, bg_c: Color, on: Color) -> Vec<Span<'static>> {
-    vec![s("\u{e0b6}", fg(bg_c).bg(on)), s(text, fg(fg_c).bg(bg_c).bold()), s("\u{e0b4}", fg(bg_c).bg(on))]
+/// A square, padded status block, styled like a tmux window tab.
+fn pill(text: String, style: Style) -> Span<'static> {
+    s(format!(" {text} "), style)
 }
 
 fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
@@ -160,29 +161,24 @@ fn side_visible(area: Rect) -> bool {
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
     let t = tick(app);
-    let title = "Claude Hub";
-    let n = title.chars().count() as f32;
-    let mut left = vec![s(" ✻ ", fg(gradient(&[colors().claude, colors().purple, colors().info], t as f32 / 4000.0)).bold())];
-    // A slow shimmer across the title.
-    left.extend(title.chars().enumerate().map(|(i, c)| s(c.to_string(), fg(gradient(&[colors().claude, colors().purple, colors().info], i as f32 / n / 2.0 - t as f32 / 4000.0)).bold())));
+    let mut left = vec![s(" Claude Hub", fg(colors().bright).bold())];
     left.push(s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(colors().dim)));
     let left = Line::from(left);
     let count = |st: Status| app.snap.agents.iter().filter(|a| a.status == st).count();
     let mut right = vec![];
     let waiting = count(Status::Waiting);
     if waiting > 0 {
-        let pulse = ((t as f32 / 600.0 * std::f32::consts::PI).sin() + 1.0) / 2.0;
-        right.extend(pill(format!("◉ {waiting} need you"), colors().bg, lerp(lerp(colors().warning, colors().bg, 0.4), colors().warning, pulse), colors().bar));
+        right.push(pill(format!("◉ {waiting} need you"), fg(colors().warning).bg(colors().panel).bold()));
         right.push(Span::raw(" "));
     }
     let working = count(Status::Working);
     if working > 0 {
-        right.extend(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), colors().on_accent, colors().accent, colors().bar));
+        right.push(pill(format!("{} {working} working", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().on_accent).bg(colors().accent).bold()));
         right.push(Span::raw(" "));
     }
     let idle = count(Status::Idle);
     if idle > 0 {
-        right.extend(pill(format!("○ {idle} idle"), colors().on_accent, colors().success, colors().bar));
+        right.push(pill(format!("○ {idle} idle"), fg(colors().muted).bg(colors().panel)));
         right.push(Span::raw(" "));
     }
     let n = app.snap.workspaces.len();
@@ -307,7 +303,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             let terms = ws.windows.iter().filter(|w| !w.is_claude()).count();
             let mut r = vec![];
             if !agents.is_empty() {
-                r.push(s(format!("✻{}", agents.len()), fg(colors().dim)));
+                r.push(s(format!("◆{}", agents.len()), fg(colors().dim)));
             }
             if terms > 0 {
                 r.push(s(format!(" ❯{terms}"), fg(colors().dim)));
@@ -607,12 +603,12 @@ fn you_card(prompt: &str, width: u16) -> Vec<Line<'static>> {
 
 fn claude_card(text: &str, max_lines: usize, width: u16) -> Vec<Line<'static>> {
     let all: Vec<&str> = text.lines().collect();
-    let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold()))];
+    let mut claude = vec![Line::from(s("Claude", fg(colors().info).bold()))];
     if all.len() > max_lines {
         claude.push(Line::from(s("…", fg(colors().dim))));
     }
     claude.extend(markdown(&all[all.len().saturating_sub(max_lines)..].join("\n")));
-    card(claude, width, tint(colors().claude, colors().bg, 0.10))
+    card(claude, width, tint(colors().info, colors().bg, 0.10))
 }
 
 fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
@@ -631,11 +627,11 @@ fn chat_lines(app: &App, a: &Agent, width: u16) -> Vec<Line<'static>> {
     }
     let reply = if sent.is_some() { None } else { t.last_text.as_ref() };
     if reply.is_none() && (sent.is_some() || a.status == Status::Working) {
-        let mut claude = vec![Line::from(s("✻ Claude", fg(colors().claude).bold())), Line::from(s("Working on a reply…", fg(colors().muted).italic()))];
+        let mut claude = vec![Line::from(s("Claude", fg(colors().info).bold())), Line::from(s("Working on a reply…", fg(colors().muted).italic()))];
         if let Some(tool) = a.session.as_ref().and_then(|s| s.tool.clone()).filter(|_| sent.is_none()) {
             claude.push(Line::from(s(tool, fg(colors().dim))));
         }
-        out.extend(card(claude, width, tint(colors().claude, colors().bg, 0.10)));
+        out.extend(card(claude, width, tint(colors().info, colors().bg, 0.10)));
     }
     if let Some(text) = reply {
         if text.lines().count() > MAX_MESSAGE_LINES {
@@ -1052,7 +1048,7 @@ fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option
         if y >= area.bottom() {
             break;
         }
-        let kind = if w.is_claude() { s("✻ ", fg(colors().claude)) } else { s("❯ ", fg(colors().muted)) };
+        let kind = if w.is_claude() { s("◆ ", fg(colors().info)) } else { s("❯ ", fg(colors().muted)) };
         let mut spans = vec![s(format!("{} ", w.index), fg(colors().dim)), kind, s(w.name.clone(), fg(colors().info).underlined())];
         if w.command != w.name && w.command != "claude" {
             spans.push(s(format!("  {}", w.command), fg(colors().dim)));
@@ -1540,7 +1536,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let block = modal_block("Confirm").border_style(fg(colors().warning));
             let inner = block.inner(rect);
             f.render_widget(block, rect);
-            let text = vec![Line::from(s("⚠  Are you sure?", fg(colors().warning).bold())), Line::default(), Line::from(s(question.clone(), fg(colors().fg)))];
+            let text = vec![Line::from(s("Are you sure?", fg(colors().warning).bold())), Line::default(), Line::from(s(question.clone(), fg(colors().fg)))];
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
             let by = inner.bottom() - 1;
             let no_rect = Rect::new(inner.right().saturating_sub(9), by, 8, 1);

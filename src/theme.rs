@@ -26,7 +26,6 @@ pub struct Theme {
     pub panel: Color,
     pub hover: Color,
     pub code: Color,
-    pub claude: Color,
 }
 
 pub const fn hex(s: &str) -> Color {
@@ -40,8 +39,6 @@ pub const fn hex(s: &str) -> Color {
     }
     Color::Rgb(n(b[1]) * 16 + n(b[2]), n(b[3]) * 16 + n(b[4]), n(b[5]) * 16 + n(b[6]))
 }
-
-const CLAUDE: Color = hex("#D97757");
 
 pub const THEMES: &[(&str, Theme)] = &[
     (
@@ -67,7 +64,6 @@ pub const THEMES: &[(&str, Theme)] = &[
             panel: hex("#222222"),
             hover: hex("#2A2D2E"),
             code: hex("#CE9178"),
-            claude: CLAUDE,
         },
     ),
     (
@@ -93,7 +89,6 @@ pub const THEMES: &[(&str, Theme)] = &[
             panel: hex("#F8F8F8"),
             hover: hex("#F0F0F0"),
             code: hex("#A31515"),
-            claude: CLAUDE,
         },
     ),
     (
@@ -119,7 +114,6 @@ pub const THEMES: &[(&str, Theme)] = &[
             panel: hex("#181825"),
             hover: hex("#313244"),
             code: hex("#FAB387"),
-            claude: CLAUDE,
         },
     ),
     (
@@ -145,7 +139,6 @@ pub const THEMES: &[(&str, Theme)] = &[
             panel: hex("#32302F"),
             hover: hex("#32302F"),
             code: hex("#FE8019"),
-            claude: CLAUDE,
         },
     ),
     (
@@ -171,7 +164,32 @@ pub const THEMES: &[(&str, Theme)] = &[
             panel: hex("#1F2335"),
             hover: hex("#292E42"),
             code: hex("#FF9E64"),
-            claude: CLAUDE,
+        },
+    ),
+    (
+        "oxocarbon",
+        // Oxocarbon has no yellow or orange: warning is pink, modified is cyan.
+        Theme {
+            bg: hex("#161616"),
+            bar: hex("#131313"),
+            border: hex("#393939"),
+            fg: hex("#D0D0D0"),
+            bright: hex("#FFFFFF"),
+            muted: hex("#989898"),
+            dim: hex("#525252"),
+            accent: hex("#78A9FF"),
+            on_accent: hex("#161616"),
+            info: hex("#33B1FF"),
+            warning: hex("#FF7EB6"),
+            error: hex("#EE5396"),
+            success: hex("#42BE65"),
+            purple: hex("#BE95FF"),
+            modified: hex("#3DDBD9"),
+            selection: hex("#393939"),
+            input: hex("#262626"),
+            panel: hex("#262626"),
+            hover: hex("#262626"),
+            code: hex("#08BDBA"),
         },
     ),
 ];
@@ -207,13 +225,6 @@ pub fn lerp(a: Color, b: Color, t: f32) -> Color {
     Color::Rgb(m(r1, r2), m(g1, g2), m(b1, b2))
 }
 
-/// Color at t (wraps at 1.0) along a closed loop of stops.
-pub fn gradient(stops: &[Color], t: f32) -> Color {
-    let t = t.rem_euclid(1.0) * stops.len() as f32;
-    let i = t as usize % stops.len();
-    lerp(stops[i], stops[(i + 1) % stops.len()], t.fract())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,7 +235,6 @@ mod tests {
         assert_eq!(lerp(a, b, 0.0), a);
         assert_eq!(lerp(a, b, 1.0), b);
         assert_eq!(lerp(a, b, 0.5), Color::Rgb(100, 50, 25));
-        assert_eq!(gradient(&[a, b], 1.0), a);
     }
 
     #[test]

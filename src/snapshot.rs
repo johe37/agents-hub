@@ -687,7 +687,7 @@ fn write_summary(sessions: &[Session]) {
     let text = if waiting > 0 {
         let c = colors();
         let (warning, bg, bar, fg) = (css(c.warning), css(c.bg), css(c.bar), css(c.fg));
-        format!("#[bg={warning},fg={bg},bold] ⏳ {waiting} waiting #[bg={bar},fg={fg},nobold]")
+        format!("#[bg={warning},fg={bg},bold] ◉ {waiting} waiting #[bg={bar},fg={fg},nobold]")
     } else {
         String::new()
     };
