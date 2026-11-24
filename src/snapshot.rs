@@ -173,6 +173,8 @@ pub enum Cmd {
     /// Check out an MR from the clone at repo and open it for a review with Claude.
     /// Check out the MR and open it in a workspace with a window of this kind: claude, shell or nvim.
     StartReview { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
+    /// Check out the branch of your MR next to the clone at repo, and open it with a window of this kind.
+    StartMine { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
     /// Open Claude in the workspace of the clone at repo, with the issue in its prompt.
     StartIssue { issue: Box<crate::gitlab::Issue>, repo: String },
 }
@@ -306,8 +308,15 @@ impl Collector {
                     let notices = Arc::clone(&self.notices);
                     std::thread::spawn(move || {
                         let name = format!("review-{}-{}", mr.repo(), mr.iid);
-                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_review(&dir, &name, kind, crate::app::window_command(kind), &mr.review_prompt()));
+                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_checkout(&dir, &name, kind, crate::app::window_command(kind), Some(&mr.review_prompt())));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
+                    });
+                }
+                Ok(Cmd::StartMine { mr, repo, kind }) => {
+                    let notices = Arc::clone(&self.notices);
+                    std::thread::spawn(move || {
+                        let r = crate::gitlab::checkout_branch(&repo, &mr, &mr.branch_dir()).and_then(|dir| tmux::open_checkout(&dir, &basename(&dir), kind, crate::app::window_command(kind), None));
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not check out !{}: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }
                 Ok(Cmd::StartIssue { issue, repo }) => {

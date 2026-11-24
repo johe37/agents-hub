@@ -480,7 +480,8 @@ pub fn ensure_workspace(path: &str) -> Result<String, String> {
 
 /// Open a review checkout as a workspace with window in it, and switch to it. For Claude, the review prompt is typed but not sent.
 /// A checkout that already has a workspace is only switched to.
-pub fn open_review(dir: &str, name: &str, window: &str, command: Option<&str>, prompt: &str) -> Result<String, String> {
+/// Go to the workspace for dir, or open one named name with a window of this kind; Claude gets prompt typed in, if any.
+pub fn open_checkout(dir: &str, name: &str, window: &str, command: Option<&str>, prompt: Option<&str>) -> Result<String, String> {
     let real = canonical(dir);
     let open = list_all_panes()
         .into_iter()
@@ -488,16 +489,16 @@ pub fn open_review(dir: &str, name: &str, window: &str, command: Option<&str>, p
         .find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real);
     if let Some(p) = open {
         let _ = switch_client(&p.session);
-        return Ok(format!("Opened the review in {}", p.session));
+        return Ok(format!("Opened {}", p.session));
     }
     let name = unique_session_name(name, &list_sessions());
     let args = chain(&create_commands(&name, dir, window, command, None));
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     check(run(&refs))?;
     let _ = switch_client(&name);
-    if command != Some("claude") {
-        return Ok(format!("Opened the review in {name}"));
-    }
+    let Some(prompt) = prompt.filter(|_| command == Some("claude")) else {
+        return Ok(format!("Opened {name}"));
+    };
     let pane = list_all_panes().into_iter().find(|p| p.session == name).map(|p| p.pane_id).ok_or("Claude exited at once in the review")?;
     if !wait_for_claude(&pane) {
         return Ok(format!("Opened {name}, but Claude took too long to start, so the review prompt is not typed in"));

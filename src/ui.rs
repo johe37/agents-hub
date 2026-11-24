@@ -961,12 +961,12 @@ fn mine_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
         Line::from(vec![pipeline_symbol(m.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]),
         match ws {
             Some(ws) => Line::from(s(format!("Its branch is open in workspace {}.", ws.name), fg(colors().dim))),
-            None => Line::from(s("No open workspace has its branch.", fg(colors().dim))),
+            None => Line::from(s("No open workspace has its branch. c, t and e check it out in a worktree of your clone.", fg(colors().dim))),
         },
     ];
     let buttons = match ws {
         Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
-        None => vec![("↵", "open in GitLab", colors().accent, Action::Open)],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "check out with Claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
     let (tabs, body, body_links) = mr_tabs(app, m, t);
     Side {
@@ -1634,7 +1634,8 @@ const HELP: &[(&str, &str)] = &[
     ("", "Merge requests (yours, and the ones assigned to you)"),
     ("Enter", "go to the workspace that has its branch, or open it in GitLab"),
     ("Ctrl+R", "on a GitLab row or title, or click ↻: refresh that list now"),
-    ("c t e", "Claude, a shell or nvim in that workspace"),
+    ("c t e", "Claude, a shell or nvim in that workspace; without one, check out the branch first"),
+    ("x", "on a checkout of the branch: close it and remove the worktree"),
     ("", ""),
     ("", "Issues (open issues assigned to you)"),
     ("Enter", "open the issue in GitLab"),

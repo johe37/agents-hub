@@ -38,6 +38,10 @@ pub struct Mr {
     pub updated: u64,
     pub description: String,
     pub draft: bool,
+    /// The branch it merges.
+    pub branch: String,
+    /// The project that branch is in, when GraphQL told: another one for an MR from a fork.
+    pub source_project: String,
     /// Usernames; not fetched for a workspace's MR.
     pub approved_by: Vec<String>,
     /// You are among approved_by.
@@ -93,6 +97,11 @@ impl Mr {
     /// Where its code is checked out for a review.
     pub fn review_dir(&self) -> PathBuf {
         reviews_dir().join(format!("{}-{}", self.repo(), self.iid))
+    }
+
+    /// Where the hub checks out the branch of your own MR.
+    pub fn branch_dir(&self) -> PathBuf {
+        branches_dir().join(format!("{}-{}", self.repo(), self.iid))
     }
 
     /// The prompt that starts a review; one line, so typing it does not send it.
@@ -203,6 +212,8 @@ fn parse_mr(v: &Value) -> Option<Mr> {
         updated: v["updated_at"].as_str().and_then(epoch).unwrap_or(0),
         description: v["description"].as_str().unwrap_or_default().to_string(),
         draft: v["draft"] == true,
+        branch: v["source_branch"].as_str().unwrap_or_default().to_string(),
+        source_project: String::new(),
         approved_by: vec![],
         approved: false,
     })
@@ -319,6 +330,7 @@ fn fill(cwd: &str, mr: &mut Mr, v: &Value) {
 /// What a list of MRs asks GraphQL for. Thread texts are left out: they take most of the time, so
 /// they come over REST, and only for the MRs that have unresolved threads.
 const MR_FIELDS: &str = "iid title webUrl state draft updatedAt description detailedMergeStatus author { username } \
+    sourceBranch sourceProject { fullPath } \
     project { id fullPath } approvedBy { nodes { username } } resolvableDiscussionsCount resolvedDiscussionsCount \
     headPipeline { status path jobs { nodes { id name status allowFailure duration webPath stage { name } } } }";
 
@@ -393,6 +405,8 @@ fn parse_graphql_mr(n: &Value, user: &str) -> Option<(Mr, i64)> {
         updated: n["updatedAt"].as_str().and_then(epoch).unwrap_or(0),
         description: n["description"].as_str().unwrap_or_default().to_string(),
         draft: n["draft"] == true,
+        branch: n["sourceBranch"].as_str().unwrap_or_default().to_string(),
+        source_project: n["sourceProject"]["fullPath"].as_str().unwrap_or_default().to_string(),
         approved: approved_by.iter().any(|u| u == user),
         approved_by,
     };
@@ -425,6 +439,10 @@ fn api_list(cwd: &str, path: &str) -> Result<Vec<Value>, String> {
 
 pub fn reviews_dir() -> PathBuf {
     crate::config::cache_dir().join("reviews")
+}
+
+pub fn branches_dir() -> PathBuf {
+    crate::config::cache_dir().join("mrs")
 }
 
 /// The local clone of project among the scanned dirs: one whose remote is the project, else one with its name.
@@ -460,6 +478,60 @@ pub fn checkout(repo: &str, mr: &Mr) -> Result<String, String> {
         run(repo, 60, "git", &["worktree", "add", "--detach", &d, &sha])?;
     }
     Ok(d)
+}
+
+/// A directory with the MR's own branch checked out, ready to commit and push: the one that has it
+/// already, else a new worktree of the clone at repo in dir, such as `branch_dir`. The clone itself is never switched.
+pub fn checkout_branch(repo: &str, mr: &Mr, dir: &Path) -> Result<String, String> {
+    if mr.branch.is_empty() {
+        return Err("GitLab gave no branch for it".into());
+    }
+    if let Some(dir) = worktree_with(&run(repo, 5, "git", &["worktree", "list", "--porcelain"])?, &mr.branch) {
+        return Ok(dir);
+    }
+    let source = if mr.source_project.is_empty() { &mr.project } else { &mr.source_project };
+    // The URLs as configured: `git remote -v` shows them after any insteadOf rewrite.
+    let remotes = run(repo, 5, "git", &["config", "--get-regexp", r"^remote\..*\.url$"])?;
+    let remote = remote_for(&remotes, source).ok_or_else(|| format!("{} has no remote for {source}. Add one with git remote add, then try again.", crate::config::shorten(repo)))?;
+    run(repo, 120, "git", &["fetch", &remote, &mr.branch])?;
+    if dir.exists() {
+        return Err(format!("{} is in the way", crate::config::shorten(&dir.display().to_string())));
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let dir = dir.display().to_string();
+    let local = run(repo, 5, "git", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}", mr.branch)]).is_ok();
+    if local {
+        run(repo, 60, "git", &["worktree", "add", &dir, &mr.branch])?;
+    } else {
+        run(repo, 60, "git", &["worktree", "add", "--track", "-b", &mr.branch, &dir, &format!("{remote}/{}", mr.branch)])?;
+    }
+    Ok(dir)
+}
+
+/// The worktree, in `git worktree list --porcelain` output, that has branch checked out.
+fn worktree_with(porcelain: &str, branch: &str) -> Option<String> {
+    let want = format!("branch refs/heads/{branch}");
+    porcelain.split("\n\n").find(|w| w.lines().any(|l| l == want))?.lines().find_map(|l| l.strip_prefix("worktree ")).map(String::from)
+}
+
+/// The remote that points at project, from `remote.<name>.url <url>` lines.
+fn remote_for(remotes: &str, project: &str) -> Option<String> {
+    remotes.lines().find_map(|l| {
+        let (key, url) = l.split_once(' ')?;
+        let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
+        let path = match url.split_once("://") {
+            Some((_, rest)) => rest.split_once('/')?.1,
+            None => url.split_once(':')?.1,
+        };
+        (path.trim_end_matches('/').trim_end_matches(".git") == project).then(|| name.to_string())
+    })
+}
+
+/// Remove the worktree of your MR's branch. Git refuses while it has uncommitted changes; commits stay on the branch.
+pub fn remove_branch_checkout(dir: &str) -> Result<(), String> {
+    run(dir, 30, "git", &["worktree", "remove", dir]).map(|_| ())
 }
 
 /// Delete a review checkout, including anything changed in it.
@@ -729,6 +801,57 @@ mod tests {
         assert!(mr.draft && mr.approved);
         let jobs: Vec<_> = mr.jobs.iter().map(|j| (j.name.as_str(), j.stage.as_str(), j.status.as_str(), j.duration, j.url.as_str())).collect();
         assert_eq!(jobs, [("build", "build", "success", None, "https://git.x/a/b/-/jobs/11"), ("lint", "test", "warning", Some(4.0), "https://git.x/a/b/-/jobs/12")]);
+    }
+
+    #[test]
+    fn finds_the_worktree_and_remote_of_a_branch() {
+        let porcelain = "worktree /r/app\nHEAD 1\nbranch refs/heads/master\n\nworktree /r/app-fix\nHEAD 2\nbranch refs/heads/fix/x\n";
+        assert_eq!(worktree_with(porcelain, "fix/x").as_deref(), Some("/r/app-fix"));
+        assert_eq!(worktree_with(porcelain, "fix"), None);
+        let remotes = "remote.origin.url git@git.x:acme/app.git\nremote.fork.url https://git.x/johe/app\n";
+        assert_eq!(remote_for(remotes, "acme/app").as_deref(), Some("origin"));
+        assert_eq!(remote_for(remotes, "johe/app").as_deref(), Some("fork"));
+        assert_eq!(remote_for(remotes, "anna/app"), None);
+        assert_eq!(remote_for(remotes, "app"), None);
+        assert_eq!(remote_for("remote.up.url ssh://git@git.x:22/other/acme/app.git\n", "acme/app"), None);
+    }
+
+    #[test]
+    fn checks_out_the_branch_next_to_the_clone() {
+        let dir = std::env::temp_dir().join(format!("claude-hub-mine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sh = |cwd: &Path, args: &[&str]| {
+            let out = Command::new("git").current_dir(cwd).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let up = dir.join("up");
+        std::fs::create_dir_all(&up).unwrap();
+        sh(&up, &["init", "-q", "-b", "master"]);
+        sh(&up, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        sh(&up, &["branch", "fix/refunds"]);
+        sh(&dir, &["clone", "-q", up.to_str().unwrap(), "app"]);
+        let app = dir.join("app");
+        // The remote points at GitLab; insteadOf sends it to the local repo.
+        sh(&app, &["remote", "set-url", "origin", "git@git.x:acme/app.git"]);
+        sh(&app, &["config", &format!("url.{}.insteadOf", up.display()), "git@git.x:acme/app.git"]);
+        let mr = Mr { project: "acme/app".into(), branch: "fix/refunds".into(), ..Default::default() };
+        let repo = app.to_str().unwrap();
+        let at = dir.join("cache/app-7");
+        let wt = checkout_branch(repo, &mr, &at).unwrap();
+        assert_eq!(wt, at.display().to_string());
+        assert_eq!(run(&wt, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "fix/refunds");
+        assert_eq!(run(&wt, 5, "git", &["rev-parse", "--abbrev-ref", "@{u}"]).unwrap().trim(), "origin/fix/refunds");
+        assert_eq!(run(repo, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "master", "the clone is not switched");
+        assert_eq!(checkout_branch(repo, &mr, &at).unwrap(), wt, "a second time finds the worktree");
+        std::fs::write(Path::new(&wt).join("new.txt"), "x").unwrap();
+        assert!(remove_branch_checkout(&wt).is_err(), "uncommitted work stops the removal");
+        std::fs::remove_file(Path::new(&wt).join("new.txt")).unwrap();
+        remove_branch_checkout(&wt).unwrap();
+        assert!(!Path::new(&wt).exists());
+        let fork = Mr { source_project: "johe/app".into(), ..mr };
+        assert!(checkout_branch(repo, &Mr { branch: "other".into(), ..fork }, &at).unwrap_err().contains("no remote for johe/app"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

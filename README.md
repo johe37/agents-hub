@@ -185,7 +185,12 @@ gitlab.com, set it once, or the list stays empty: `glab config set --global host
 assigned to you under **ASSIGNED MERGE REQUESTS**. An MR that is both yours and assigned to you
 shows only under **MERGE REQUESTS**. Each row shows pipeline, open threads and approvals, and
 the workspace that has its branch, if one is open. `Enter` goes to that workspace, and `c`, `t`
-and `e` open Claude, a shell or nvim in it. Without a workspace, `Enter` opens the MR in GitLab.
+and `e` open Claude, a shell or nvim in it. Without a workspace, `Enter` opens the MR in GitLab,
+and `c`, `t` and `e` first check out the MR's branch in a git worktree of your local clone (under
+`~/.cache/claude-hub/mrs/`), so you can commit and push with `p`. Your own checkout is never
+switched. For an MR from a fork, the clone needs a remote for the fork. `x` closes the workspace
+and removes the worktree; git refuses while it has uncommitted changes, and commits stay on the
+branch.
 
 **Your issues.** Open issues assigned to you are listed under **ISSUES**, newest activity
 first, with labels. The panel shows the description. `Enter` opens the issue in GitLab. `c`

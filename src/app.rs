@@ -666,6 +666,17 @@ impl App {
         let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo, kind });
     }
 
+    /// Check out the selected MR's branch next to its clone and open it with a window of kind.
+    fn start_mine(&mut self, kind: &'static str) {
+        let Some(mr) = self.current_mr().cloned() else { return };
+        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
+            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
+            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
+        };
+        self.notify(format!("Checking out {} from {}…", mr.branch, shorten(&repo)), false);
+        let _ = self.cmd.send(Cmd::StartMine { mr: Box::new(mr), repo, kind });
+    }
+
     pub fn mine(&self, list: Mine) -> &[crate::gitlab::Mr] {
         match list {
             Mine::Authored => &self.snap.authored,
@@ -857,6 +868,7 @@ impl App {
             Action::NewWindow("claude") if self.current_review().is_some() => self.start_review("claude"),
             Action::NewWindow(kind) if self.current_review().is_some() && self.current_workspace().is_none() => self.start_review(kind),
             Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
+            Action::NewWindow(kind) if self.current_mr().is_some() && self.current_workspace().is_none() => self.start_mine(kind),
             Action::NewWindow(kind) => self.new_window(kind),
             Action::NewChat => self.new_chat(),
             Action::Close => self.close(),
@@ -1147,6 +1159,10 @@ impl App {
     fn close(&mut self) {
         let row = match self.current() {
             Some(Row::Review(i)) => self.review_ws.get(i).copied().flatten().map(Row::Workspace),
+            Some(Row::Mr(list, i)) => {
+                let ws = self.mine(list).get(i).and_then(|m| self.mr_workspace(m)).map(|w| w.name.clone());
+                ws.and_then(|n| self.snap.workspaces.iter().position(|w| w.name == n)).map(Row::Workspace)
+            }
             r => r,
         };
         let (question, then): (String, Box<dyn Fn() -> Res>) = match row {
@@ -1177,6 +1193,13 @@ impl App {
                         crate::gitlab::remove_checkout(&path).map_err(Fail::Error)
                     };
                     (format!("Close review workspace '{}' and delete its checkout of the merge request?", ws.name), Box::new(close))
+                } else if std::path::Path::new(&path).starts_with(crate::gitlab::branches_dir()) {
+                    // Removing first keeps the workspace open when git refuses because of uncommitted changes.
+                    let close = move || {
+                        crate::gitlab::remove_branch_checkout(&path).map_err(Fail::Error)?;
+                        tmux::kill_session(&name)
+                    };
+                    (format!("Close workspace '{}' and remove its worktree? Commits stay on the branch; uncommitted changes stop it.", ws.name), Box::new(close))
                 } else {
                     (format!("Close workspace '{name}' and all its {} window(s)?", ws.windows.len()), Box::new(move || tmux::kill_session(&name)))
                 }
