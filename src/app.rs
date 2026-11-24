@@ -141,6 +141,8 @@ pub struct App {
     pub review_ws: Vec<Option<usize>>,
     last_click: Option<(Instant, usize)>,
     prewarm_pending: Option<(Instant, String)>,
+    /// A count typed before j/k, vim style, and when its last digit came.
+    pub count: Option<(usize, Instant)>,
     /// The workspace selected last, and since when; its Claude is started once the selection rests.
     claude_target: Option<(Instant, String)>,
     claude_sent: Option<String>,
@@ -207,6 +209,7 @@ impl App {
             review_ws: vec![],
             last_click: None,
             prewarm_pending: None,
+            count: None,
             claude_target: None,
             claude_sent: None,
             rescanning: false,
@@ -222,7 +225,7 @@ impl App {
         while !self.quit {
             term.draw(|f| crate::ui::draw(f, self))?;
             // Fast ticks only while something animates, faster still while typing so echo feels immediate.
-            let timeout = if self.focus == Focus::Terminal {
+            let timeout = if self.focus == Focus::Terminal || self.count.is_some() {
                 Duration::from_millis(30)
             } else if self.animating() {
                 Duration::from_millis(80)
@@ -248,6 +251,9 @@ impl App {
             if last_request_check.elapsed() > Duration::from_millis(300) {
                 last_request_check = Instant::now();
                 self.check_request();
+            }
+            if self.count.is_some_and(|(_, at)| at.elapsed() > COUNT_TIMEOUT) {
+                self.flush_count();
             }
             if let Some((at, path)) = &self.prewarm_pending {
                 if at.elapsed() > Duration::from_millis(150) {
@@ -672,6 +678,33 @@ impl App {
             self.selected = index;
             self.detail_scroll = 0;
             self.sel = None;
+        }
+    }
+
+    /// A lone 1–4 that no j/k followed switches the panel tab, as it did before counts.
+    fn flush_count(&mut self) {
+        if let Some((n @ 1..=4, _)) = self.count.take() {
+            self.act(Action::Tab(n - 1));
+        }
+    }
+
+    /// Move n selectable rows, so a count skips gaps and never lands between sections.
+    fn move_steps(&mut self, dir: isize, n: usize) {
+        for _ in 0..n {
+            self.move_by(dir);
+        }
+    }
+
+    /// Jump to the next or previous workspace, review or section title.
+    fn jump_group(&mut self, dir: isize) {
+        let n = self.rows.len() as isize;
+        let mut i = self.selected as isize + dir;
+        while (0..n).contains(&i) {
+            let r = &self.rows[i as usize].1;
+            if matches!(r, Row::Workspace(_) | Row::Review(_) | Row::Header(..)) && selectable(r) {
+                return self.select(i as usize);
+            }
+            i += dir;
         }
     }
 
@@ -1241,9 +1274,28 @@ impl App {
             Focus::List => {}
         }
         let page = self.hits.list.height.max(2) as isize - 1;
+        let plain = !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if let KeyCode::Char(c @ '0'..='9') = k.code {
+            if plain && (c != '0' || self.count.is_some()) {
+                let n = self.count.map_or(0, |(n, _)| n).saturating_mul(10).saturating_add(c as usize - '0' as usize);
+                self.count = Some((n.min(9999), Instant::now()));
+                return;
+            }
+        }
+        let n = match k.code {
+            KeyCode::Down | KeyCode::Up | KeyCode::Char('j' | 'k' | 'J' | 'K') => self.count.take().map_or(1, |(n, _)| n),
+            _ => {
+                self.flush_count();
+                1
+            }
+        };
         match k.code {
-            KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_steps(1, n),
+            KeyCode::Up | KeyCode::Char('k') => self.move_steps(-1, n),
+            KeyCode::Char('J') => (0..n).for_each(|_| self.jump_group(1)),
+            KeyCode::Char('K') => (0..n).for_each(|_| self.jump_group(-1)),
+            KeyCode::Char('d') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(page / 2 + 1),
+            KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(-(page / 2 + 1)),
             KeyCode::Char('g') | KeyCode::Home => self.move_by(-(self.rows.len() as isize)),
             KeyCode::Char('G') | KeyCode::End => self.move_by(self.rows.len() as isize),
             KeyCode::Char('f') if k.modifiers.contains(KeyModifiers::CONTROL) => self.move_by(page),
@@ -1258,7 +1310,6 @@ impl App {
             KeyCode::Enter => self.act(Action::Open),
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.act(Action::Tab((self.tab + 1) % 4)),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.act(Action::Tab((self.tab + 3) % 4)),
-            KeyCode::Char(c @ '1'..='4') => self.act(Action::Tab(c as usize - '1' as usize)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
             KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
             KeyCode::Char('C') => self.act(Action::NewChat),
@@ -1477,6 +1528,7 @@ impl App {
     }
 }
 
+const COUNT_TIMEOUT: Duration = Duration::from_millis(400);
 const WORKSPACES: &str = "WORKSPACES";
 const REVIEWS: &str = "REVIEWS";
 pub const APPROVED: &str = "APPROVED";

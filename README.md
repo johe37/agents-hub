@@ -107,8 +107,9 @@ picker after you clone a new repo.
 | Where | Key | Action |
 |---|---|---|
 | Anywhere | `Alt+Q` or click **◀ Claude Hub** | Back to the hub |
-| Hub | `j` / `k` or `↓` / `↑` | Move down / up |
-| Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F` | First / last row, page up / down |
+| Hub | `j` / `k` or `↓` / `↑` | Move down / up. A count first moves that many rows: `4j` |
+| Hub | `J` / `K` | Jump to the next / previous workspace, review or section |
+| Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F`, `Ctrl+U` / `Ctrl+D` | First / last row, page up / down, half a page up / down |
 | Hub | `Enter` | Go to the agent, the terminal or the workspace |
 | Hub | `n` | Open a workspace: fuzzy search or type a path |
 | Hub | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
@@ -122,7 +123,7 @@ picker after you clone a new repo.
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
 | Hub | `w` | Jump to the next agent waiting for you |
-| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel |
+| Hub | `h` `l` / `←` `→` / `Tab` or `1`–`4` | Switch the tab in the detail panel. A digit waits 0.4 s for a `j`/`k` before it switches |
 | Thread | `Enter` / `r` / `f` | Open in GitLab / reply in the thread / put it in Claude's prompt |
 | Thread | `v` | Resolve the thread, posting an optional reply first (pre-filled with `Fixed in <commit>.`) |
 | Hub | `p` | Push the workspace's branch; opens a draft merge request when it has none |
