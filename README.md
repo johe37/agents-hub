@@ -75,11 +75,14 @@ hub_key = "M-q"              # tmux key that brings you back to the hub from any
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
 chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 # The sections to show, in this order.
-sections = ["workspaces", "gitlab-reviews", "gitlab-issues", "other-sessions", "closed-sessions"]
+sections = ["workspaces", "gitlab-reviews", "gitlab-merge-requests",
+            "gitlab-assigned-merge-requests", "gitlab-issues", "other-sessions", "closed-sessions"]
 ```
 
-All keys are optional. The default for `roots` is `~/repos`. Leave out both GitLab sections
-and the hub does not call `glab` for reviews and issues.
+All keys are optional. The default for `roots` is `~/repos`. A section's title is its name
+without `gitlab-`, in capitals: `gitlab-issues` is **ISSUES**. The hub fetches only the GitLab
+sections in the list; leave them all out and it does not call `glab` for them. An unknown name is
+skipped, and the hub shows a warning when it starts.
 
 ## Run
 
@@ -121,7 +124,7 @@ picker after you clone a new repo.
 | Hub | `R` | Rename the workspace |
 | Hub | `r` | Reply: type a message, `Enter` sends it to the agent |
 | Hub | `y` / `d` | Approve / deny a permission prompt |
-| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** and **Other sessions** start open; **Reviews**, **My issues** and **Closed sessions** start folded |
+| Hub | `Space` or click `▸`/`▾` | Fold or unfold the workspace or section. Agents that wait for you still show. **Workspaces** and **Other sessions** start open; the GitLab sections and **Closed sessions** start folded |
 | Hub | `z` | Fold every workspace and every section except **Workspaces**, or unfold them all when all are folded |
 | Hub | `m` | Mark the agent as done, so it stops showing as waiting |
 | Hub | `a` | Adopt an agent that runs outside the hub |
@@ -172,11 +175,19 @@ the MR then goes to a shell in the checkout (a new one if none is open), and `x`
 workspace and deletes the checkout. When the MR leaves your review list, its workspace moves
 to **WORKSPACES**. Reviews in progress come first, marked ✓ once you approve them. An approved MR without a
 workspace moves to a folded **✓ APPROVED** group at the end; close the workspace with `x` to
-send it there. If the author pushes and GitLab drops your approval, the MR moves back. The list refreshes every two minutes; `Ctrl+R` on it refreshes now.
+send it there. If the author pushes and GitLab drops your approval, the MR moves back. The GitLab lists refresh every two minutes; `Ctrl+R` on one refreshes them now.
+Until the first fetch is done, each GitLab section shows its title with a spinner. If a fetch
+fails, the title stays and says why, for example `⚠ glab is not installed`.
 The list is fetched outside any repo, so `glab` asks its default host. If your GitLab is not
 gitlab.com, set it once, or the list stays empty: `glab config set --global host git.example.com`.
 
-**Your issues.** Open issues assigned to you are listed under **MY ISSUES**, newest activity
+**Your merge requests.** Open MRs you opened are listed under **MERGE REQUESTS**, and open MRs
+assigned to you under **ASSIGNED MERGE REQUESTS**. An MR that is both yours and assigned to you
+shows only under **MERGE REQUESTS**. Each row shows pipeline, open threads and approvals, and
+the workspace that has its branch, if one is open. `Enter` goes to that workspace, and `c`, `t`
+and `e` open Claude, a shell or nvim in it. Without a workspace, `Enter` opens the MR in GitLab.
+
+**Your issues.** Open issues assigned to you are listed under **ISSUES**, newest activity
 first, with labels. The panel shows the description. `Enter` opens the issue in GitLab. `c`
 opens Claude in a new window of the workspace for your local clone, with a prompt that names
 the issue typed in but not sent. The prompt asks Claude to make a branch first. The list

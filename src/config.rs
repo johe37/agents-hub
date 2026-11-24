@@ -43,9 +43,30 @@ pub fn shorten(path: &str) -> String {
 pub enum Section {
     Workspaces,
     GitlabReviews,
+    GitlabMergeRequests,
+    GitlabAssignedMergeRequests,
     GitlabIssues,
     OtherSessions,
     ClosedSessions,
+}
+
+impl Section {
+    /// The name without its host, in capitals: `gitlab-issues` is ISSUES.
+    pub const fn title(self) -> &'static str {
+        match self {
+            Section::Workspaces => "WORKSPACES",
+            Section::GitlabReviews => "REVIEWS",
+            Section::GitlabMergeRequests => "MERGE REQUESTS",
+            Section::GitlabAssignedMergeRequests => "ASSIGNED MERGE REQUESTS",
+            Section::GitlabIssues => "ISSUES",
+            Section::OtherSessions => "OTHER SESSIONS",
+            Section::ClosedSessions => "CLOSED SESSIONS",
+        }
+    }
+
+    pub fn gitlab(self) -> bool {
+        matches!(self, Section::GitlabReviews | Section::GitlabMergeRequests | Section::GitlabAssignedMergeRequests | Section::GitlabIssues)
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -68,9 +89,11 @@ pub struct Config {
     pub warnings: Vec<String>,
 }
 
-const SECTIONS: [(&str, Section); 5] = [
+const SECTIONS: [(&str, Section); 7] = [
     ("workspaces", Section::Workspaces),
     ("gitlab-reviews", Section::GitlabReviews),
+    ("gitlab-merge-requests", Section::GitlabMergeRequests),
+    ("gitlab-assigned-merge-requests", Section::GitlabAssignedMergeRequests),
     ("gitlab-issues", Section::GitlabIssues),
     ("other-sessions", Section::OtherSessions),
     ("closed-sessions", Section::ClosedSessions),
@@ -78,7 +101,7 @@ const SECTIONS: [(&str, Section); 5] = [
 
 impl Config {
     pub fn gitlab(&self) -> bool {
-        self.sections.iter().any(|s| matches!(s, Section::GitlabReviews | Section::GitlabIssues))
+        self.sections.iter().any(|s| s.gitlab())
     }
 }
 
@@ -152,6 +175,14 @@ mod tests {
         assert_eq!(cfg.sections, [Section::GitlabReviews, Section::Workspaces]);
         assert!(cfg.gitlab() && cfg.warnings.is_empty());
         assert!(!parse(r#"sections = ["workspaces"]"#).gitlab());
+    }
+
+    #[test]
+    fn titles_follow_the_names() {
+        for (name, section) in SECTIONS {
+            let name = name.strip_prefix("gitlab-").unwrap_or(name);
+            assert_eq!(section.title(), name.to_uppercase().replace('-', " "));
+        }
     }
 
     #[test]

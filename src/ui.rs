@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{APPROVED, Action, App, FLASH, Focus, Modal, Row, foldable, selectable};
+use crate::app::{APPROVED, Action, App, FLASH, Focus, Mine, Modal, Row, foldable, selectable};
 use crate::config::shorten;
 use crate::git::GitStatus;
 use crate::gitlab;
@@ -278,6 +278,10 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
             _ => Span::raw(" "),
         },
+        Row::Mr(list, i) => match app.mr_workspace(&app.mine(list)[i]).and_then(|ws| app.worst(&app.agents_of(ws))) {
+            Some(st @ (Status::Waiting | Status::Working)) => s("▎", fg(status_color(st))),
+            _ => Span::raw(" "),
+        },
         _ => Span::raw(" "),
     };
     let w = width.saturating_sub(1);
@@ -416,6 +420,31 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             }
             if !m.threads.is_empty() {
                 r.push(s(format!("  {COMMENT} {}", m.threads.len()), fg(colors().warning)));
+            }
+            r.push(s(format!(" {:>3}", age(m.updated)), fg(colors().dim)));
+            (l, r)
+        }
+        Row::Mr(list, i) => {
+            let m = &app.mine(list)[i];
+            let l = vec![s(format!("!{} ", m.iid), fg(colors().muted)), s(m.repo().to_string(), fg(colors().fg).bold()), s(format!("  {}", m.title), fg(colors().fg))];
+            let mut r = vec![];
+            match app.mr_workspace(m) {
+                Some(ws) => r.push(s(format!("▪ {}", ws.name), fg(colors().accent))),
+                None if list == Mine::Assigned => r.push(s(m.author.clone(), fg(colors().dim))),
+                None => {}
+            }
+            if m.draft {
+                r.push(s(" draft", fg(colors().dim)));
+            }
+            if m.pipeline.is_some() {
+                r.push(Span::raw(" "));
+                r.push(pipeline_symbol(m.pipeline.as_deref()));
+            }
+            if !m.threads.is_empty() {
+                r.push(s(format!("  {COMMENT} {}", m.threads.len()), fg(colors().warning)));
+            }
+            if !m.approved_by.is_empty() {
+                r.push(s(format!("  ✓{}", m.approved_by.len()), fg(colors().success)));
             }
             r.push(s(format!(" {:>3}", age(m.updated)), fg(colors().dim)));
             (l, r)
@@ -904,6 +933,52 @@ fn review_side(app: &App, i: usize, t: u128) -> Side {
         Some(_) => vec![("↵", "shell in the checkout", colors().accent, Action::Open), ("x", "close", colors().accent, Action::Close)],
         None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
+    let (tabs, body, body_links) = mr_tabs(app, m, t);
+    Side {
+        title: m.title.clone(),
+        meta: Line::from(s(format!(" {} ", m.project), fg(colors().dim))),
+        color: if m.threads.is_empty() { colors().info } else { colors().warning },
+        banner,
+        buttons,
+        tabs,
+        body,
+        link: Some((0, m.url.clone())),
+        body_links,
+    }
+}
+
+/// The MR as you see it on a list of your own MRs.
+fn mine_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
+    let ws = app.mr_workspace(m);
+    let status = [m.draft.then(|| "draft".to_string()), m.pipeline.as_ref().map(|p| format!("pipeline {p}")), m.merge_status.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let banner = vec![
+        Line::from(vec![s(format!("!{} ", m.iid), fg(colors().accent).bold()), s(format!("by {}", m.author), fg(colors().fg)), s(format!("  ·  updated {} ago", age(m.updated)), fg(colors().dim))]),
+        Line::from(vec![pipeline_symbol(m.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]),
+        match ws {
+            Some(ws) => Line::from(s(format!("Its branch is open in workspace {}.", ws.name), fg(colors().dim))),
+            None => Line::from(s("No open workspace has its branch.", fg(colors().dim))),
+        },
+    ];
+    let buttons = match ws {
+        Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open)],
+    };
+    let (tabs, body, body_links) = mr_tabs(app, m, t);
+    Side {
+        title: m.title.clone(),
+        meta: Line::from(s(format!(" {} ", m.project), fg(colors().dim))),
+        color: if m.threads.is_empty() { colors().info } else { colors().warning },
+        banner,
+        buttons,
+        tabs,
+        body,
+        link: Some((0, m.url.clone())),
+        body_links,
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn mr_tabs(app: &App, m: &gitlab::Mr, t: u128) -> (Vec<(&'static str, usize)>, Vec<Line<'static>>, Vec<BodyLink>) {
     let mut body_links = vec![];
     let body = match app.tab {
         0 if m.description.trim().is_empty() => vec![Line::from(s("No description.", fg(colors().muted)))],
@@ -927,17 +1002,7 @@ fn review_side(app: &App, i: usize, t: u128) -> Side {
             lines
         }
     };
-    Side {
-        title: m.title.clone(),
-        meta: Line::from(s(format!(" {} ", m.project), fg(colors().dim))),
-        color: if m.threads.is_empty() { colors().info } else { colors().warning },
-        banner,
-        buttons,
-        tabs: vec![("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())],
-        body,
-        link: Some((0, m.url.clone())),
-        body_links,
-    }
+    (vec![("Overview", 0), ("Threads", m.threads.len()), ("Approvals", m.approved_by.len()), ("Pipeline", m.jobs.len())], body, body_links)
 }
 
 fn issue_side(is: &gitlab::Issue) -> Side {
@@ -979,6 +1044,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
         Some(Row::Workspace(wi)) => (Some(wi), workspace_side(app, &app.snap.workspaces[wi], t)),
         Some(Row::Review(i)) => (None, review_side(app, i, t)),
         Some(Row::Issue(i)) => (None, issue_side(&app.snap.issues[i])),
+        Some(Row::Mr(list, i)) => (None, mine_side(app, &app.mine(list)[i], t)),
         Some(Row::Header(title, n)) => {
             let block = panel(Line::from(s(format!(" {title} "), fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
@@ -1556,7 +1622,11 @@ const HELP: &[(&str, &str)] = &[
     ("x", "on a review workspace: close it and delete its checkout"),
     ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
     ("", ""),
-    ("", "My issues (open issues assigned to you)"),
+    ("", "Merge requests (yours, and the ones assigned to you)"),
+    ("Enter", "go to the workspace that has its branch, or open it in GitLab"),
+    ("c t e", "Claude, a shell or nvim in that workspace"),
+    ("", ""),
+    ("", "Issues (open issues assigned to you)"),
     ("Enter", "open the issue in GitLab"),
     ("c", "open Claude in the repo's workspace with the issue in its prompt (not sent)"),
     ("", ""),
@@ -1718,5 +1788,57 @@ mod tests {
         assert!(buf[(2, 0)].symbol().contains(' '), "the space inside the link is linked too");
         assert_eq!(buf[(4, 0)].symbol(), " ", "nothing after the text is linked");
         assert_eq!(buf[(0, 0)].diff_option, CellDiffOption::ForcedWidth(std::num::NonZeroU16::MIN));
+    }
+
+    fn mr(project_id: u64, iid: u64, title: &str) -> gitlab::Mr {
+        gitlab::Mr { project_id, iid, title: title.into(), project: format!("acme/p{project_id}"), author: "anna".into(), ..Default::default() }
+    }
+
+    fn screen(app: &mut App) -> String {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 30)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer();
+        (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n").collect()
+    }
+
+    fn test_app() -> App {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut app = App::new(crate::config::Config::default(), tx, Default::default());
+        app.loaded = true;
+        app
+    }
+
+    #[test]
+    fn lists_your_merge_requests_once() {
+        let mut app = test_app();
+        app.snap.authored = vec![mr(11, 142, "Send refund webhooks")];
+        app.snap.assigned = vec![mr(11, 142, "Send refund webhooks"), mr(15, 9, "Move staging to the new VPC")];
+        app.open_sections.extend(["MERGE REQUESTS", "ASSIGNED MERGE REQUESTS"]);
+        app.build_rows();
+        let rows: Vec<Row> = app.rows.iter().map(|(_, r)| *r).filter(|r| matches!(r, Row::Mr(..) | Row::Header(..))).collect();
+        assert!(matches!(
+            rows[..],
+            [Row::Header("WORKSPACES", _), Row::Header("MERGE REQUESTS", 1), Row::Mr(Mine::Authored, 0), Row::Header("ASSIGNED MERGE REQUESTS", 1), Row::Mr(Mine::Assigned, 1)]
+        ));
+        let text = screen(&mut app);
+        assert!(text.contains("Move staging to the new VPC"), "{text}");
+    }
+
+    #[test]
+    fn shows_gitlab_titles_while_loading_and_after_a_failure() {
+        let mut app = test_app();
+        app.snap.inbox_loading = true;
+        app.build_rows();
+        let text = screen(&mut app);
+        for title in ["REVIEWS", "MERGE REQUESTS", "ISSUES"] {
+            assert!(text.contains(&format!("{title} · ")), "{title} in {text}");
+        }
+        assert!(text.contains("loading"));
+        app.snap.inbox_loading = false;
+        app.snap.inbox_errors = vec![(crate::config::Section::GitlabIssues, "glab is not installed".into())];
+        app.build_rows();
+        let text = screen(&mut app);
+        assert!(text.contains("ISSUES · 0  ⚠ glab is not installed"), "{text}");
+        assert!(!text.contains("REVIEWS"), "{text}");
     }
 }

@@ -316,10 +316,10 @@ fn fill(cwd: &str, mr: &mut Mr, v: &Value) {
     }
 }
 
-/// Open MRs where user is a requested reviewer, newest activity first.
-fn fetch_reviews(user: &str) -> Result<Vec<Mr>, String> {
+/// The open MRs that query lists, newest activity first; approved means user approved.
+fn fetch_mrs(query: &str, user: &str) -> Result<Vec<Mr>, String> {
     let home = crate::config::home().display().to_string();
-    let list = api_list(&home, &format!("merge_requests?scope=all&state=opened&reviewer_username={user}&per_page=50"))?;
+    let list = api_list(&home, &format!("merge_requests?{query}&state=opened&per_page=50"))?;
     let ids: Vec<(u64, u64)> = list.iter().filter_map(|m| Some((m["project_id"].as_u64()?, m["iid"].as_u64()?))).collect();
     // The list leaves out the pipeline, so fetch each MR; in parallel, since they are independent.
     let mut mrs: Vec<Mr> = std::thread::scope(|s| {
@@ -407,6 +407,10 @@ pub fn remove_checkout(dir: &str) -> Result<(), String> {
 #[derive(Clone, Default)]
 pub struct Inbox {
     pub reviews: Vec<Mr>,
+    /// Open MRs you opened.
+    pub authored: Vec<Mr>,
+    /// Open MRs assigned to you.
+    pub assigned: Vec<Mr>,
     pub issues: Vec<Issue>,
     /// The first fetch has finished, whether it worked or not.
     pub loaded: bool,
@@ -414,7 +418,7 @@ pub struct Inbox {
     pub errors: Vec<(Section, String)>,
 }
 
-/// MRs to review and issues assigned to you, refreshed in the background like `MrCache`.
+/// MRs to review, your own and assigned MRs, and issues assigned to you, refreshed in the background like `MrCache`.
 #[derive(Default)]
 pub struct InboxCache {
     state: Mutex<(Option<Instant>, Inbox)>,
@@ -423,10 +427,13 @@ pub struct InboxCache {
 }
 
 impl InboxCache {
-    pub fn get(self: &Arc<Self>, refresh: bool) -> Inbox {
+    /// Fetches only the given sections.
+    pub fn get(self: &Arc<Self>, refresh: bool, sections: &[Section]) -> Inbox {
         let (at, inbox) = self.state.lock().unwrap().clone();
         if refresh && at.is_none_or(|at| at.elapsed() > INBOX_TTL) && !std::mem::replace(&mut *self.busy.lock().unwrap(), true) {
             let me = Arc::clone(self);
+            let on = |s| sections.contains(&s);
+            let wanted = [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues].map(on);
             std::thread::spawn(move || {
                 let home = crate::config::home().display().to_string();
                 let user = match me.user.lock().unwrap().clone() {
@@ -437,22 +444,38 @@ impl InboxCache {
                     }),
                 };
                 *me.user.lock().unwrap() = user.clone().ok();
-                let reviews = user.and_then(|u| fetch_reviews(&u));
-                let issues = fetch_issues();
+                let mrs = |on: bool, query: &str| on.then(|| user.clone().and_then(|u| fetch_mrs(&query.replace("{user}", &u), &u)));
+                let (reviews, authored, assigned, issues) = std::thread::scope(|s| {
+                    let reviews = s.spawn(|| mrs(wanted[0], "scope=all&reviewer_username={user}"));
+                    let authored = s.spawn(|| mrs(wanted[1], "scope=created_by_me"));
+                    let assigned = s.spawn(|| mrs(wanted[2], "scope=assigned_to_me"));
+                    let issues = wanted[3].then(fetch_issues);
+                    (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues)
+                });
                 let mut errors = vec![];
-                if let Err(e) = &reviews {
-                    errors.push((Section::GitlabReviews, e.clone()));
-                }
-                if let Err(e) = &issues {
-                    errors.push((Section::GitlabIssues, e.clone()));
-                }
                 let mut state = me.state.lock().unwrap();
                 // Keep the old lists when GitLab is unreachable; try again after the TTL either way.
                 let old = std::mem::take(&mut state.1);
-                *state = (
-                    Some(Instant::now()),
-                    Inbox { reviews: reviews.unwrap_or(old.reviews), issues: issues.unwrap_or(old.issues), loaded: true, errors },
-                );
+                let mut keep = |section, new: Option<Result<Vec<Mr>, String>>, old: Vec<Mr>| match new {
+                    Some(Ok(list)) => list,
+                    Some(Err(e)) => {
+                        errors.push((section, e));
+                        old
+                    }
+                    None => vec![],
+                };
+                let reviews = keep(Section::GitlabReviews, reviews, old.reviews);
+                let authored = keep(Section::GitlabMergeRequests, authored, old.authored);
+                let assigned = keep(Section::GitlabAssignedMergeRequests, assigned, old.assigned);
+                let issues = match issues {
+                    Some(Ok(list)) => list,
+                    Some(Err(e)) => {
+                        errors.push((Section::GitlabIssues, e));
+                        old.issues
+                    }
+                    None => vec![],
+                };
+                *state = (Some(Instant::now()), Inbox { reviews, authored, assigned, issues, loaded: true, errors });
                 *me.busy.lock().unwrap() = false;
             });
         }

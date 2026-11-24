@@ -33,6 +33,12 @@ REVIEWS = {
                  "not_approved", 2400, "Stores the account screen in local storage."),
 }
 
+ASSIGNED = {
+    (15, 9): mr(15, 9, "acme/infra-terraform", "Move staging to the new VPC", "erik.s", "success", 9005,
+                "mergeable", 7200, "Erik started it; you take it over the line."),
+}
+ALL = {**{(m["project_id"], m["iid"]): m for m in OWN.values()}, **REVIEWS, **ASSIGNED}
+
 ISSUES = [
     {"iid": 204, "title": "Refunds over 10 000 SEK need a second approval", "labels": ["backend", "priority::high"],
      "milestone": {"title": "Q4"}, "author": {"username": "maria.k"}, "updated_at": iso(5400),
@@ -74,6 +80,7 @@ def jobs(pid):
                ("e2e", "test", "skipped", None)],
         9003: [("build", "build", "success", 55), ("test", "test", "success", 140), ("audit", "test", "success", 12)],
         9004: [("build", "build", "success", 210), ("test", "test", "running", None)],
+        9005: [("plan", "build", "success", 48), ("validate", "test", "success", 20)],
     }[pid]
     return [{"id": pid * 10 + i, "name": n, "stage": s, "status": st, "duration": d, "allow_failure": False,
              "web_url": f"https://gitlab.example.com/jobs/{pid * 10 + i}"} for i, (n, s, st, d) in enumerate(plan)]
@@ -92,14 +99,21 @@ def main(args):
     if path.startswith("issues?"):
         return ISSUES
     if path.startswith("merge_requests?"):
-        return [{"project_id": p, "iid": i} for p, i in REVIEWS]
+        if "scope=created_by_me" in path:
+            ids = [(m["project_id"], m["iid"]) for m in OWN.values()]
+        elif "scope=assigned_to_me" in path:
+            # GitLab assigns your own MRs to you too.
+            ids = [(m["project_id"], m["iid"]) for m in OWN.values()] + list(ASSIGNED)
+        else:
+            ids = list(REVIEWS)
+        return [{"project_id": p, "iid": i} for p, i in ids]
     parts = path.split("?")[0].split("/")
     if parts[0] == "projects" and parts[2] == "pipelines":
         return jobs(int(parts[3]))
     if parts[0] == "projects" and parts[2] == "merge_requests":
         project, iid = int(parts[1]), int(parts[3])
         if len(parts) == 4:
-            return REVIEWS[(project, iid)]
+            return ALL[(project, iid)]
         if parts[4] == "discussions":
             return THREADS.get(iid, [])
         if parts[4] == "approvals":

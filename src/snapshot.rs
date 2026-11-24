@@ -122,9 +122,13 @@ pub struct Snapshot {
     pub notices: Vec<(String, bool)>,
     /// Open MRs where you are a requested reviewer.
     pub reviews: Vec<crate::gitlab::Mr>,
+    /// Open MRs you opened.
+    pub authored: Vec<crate::gitlab::Mr>,
+    /// Open MRs assigned to you.
+    pub assigned: Vec<crate::gitlab::Mr>,
     /// Open issues assigned to you.
     pub issues: Vec<crate::gitlab::Issue>,
-    /// The reviews and issues are not fetched yet.
+    /// The GitLab lists are not fetched yet.
     pub inbox_loading: bool,
     pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub usage: Option<crate::usage::Usage>,
@@ -403,7 +407,7 @@ impl Collector {
             self.adopt_claudes(&all_panes, &workspaces);
         }
         self.fill_claude(&all_panes, &started);
-        let inbox = if self.cfg.gitlab() { self.inbox.get(seen) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
+        let inbox = if self.cfg.gitlab() { self.inbox.get(seen, &self.cfg.sections) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
         Snapshot {
             workspaces,
             agents,
@@ -411,6 +415,8 @@ impl Collector {
             dirs: self.dirs.clone(),
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
             reviews: inbox.reviews,
+            authored: inbox.authored,
+            assigned: inbox.assigned,
             issues: inbox.issues,
             inbox_loading: !inbox.loaded,
             inbox_errors: inbox.errors,

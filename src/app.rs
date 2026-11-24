@@ -33,8 +33,16 @@ pub enum Row {
     Review(usize),
     /// An open issue assigned to you, by index into the snapshot's issues.
     Issue(usize),
+    /// An open MR you opened or are assigned to, by index into that list.
+    Mr(Mine, usize),
     /// Stands in for the workspaces until there are any, so a new user sees how to open one.
     NewWorkspace,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Mine {
+    Authored,
+    Assigned,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -410,6 +418,8 @@ impl App {
             Some(Row::Review(i)) if self.in_approved(i) && self.section_open(REVIEWS) => Some(section_key(APPROVED)),
             Some(Row::Review(_)) => Some(section_key(REVIEWS)),
             Some(Row::Issue(_)) => Some(section_key(ISSUES)),
+            Some(Row::Mr(Mine::Authored, _)) => Some(section_key(MRS)),
+            Some(Row::Mr(Mine::Assigned, _)) => Some(section_key(ASSIGNED)),
             Some(Row::Workspace(_) | Row::Terminal(..) | Row::Thread(..)) if !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_some() && !self.section_open(WORKSPACES) => Some(section_key(WORKSPACES)),
             Some(Row::Agent(i)) if self.snap.agents[i].workspace.is_none() => Some(section_key(if self.snap.agents[i].status.alive() { OTHER } else { CLOSED })),
@@ -539,6 +549,29 @@ impl App {
         } else if self.placeholder(REVIEWS) {
             review_rows.push((section_key(REVIEWS), Row::Header(REVIEWS, 0)));
         }
+        let mine_rows = |list: Mine, title: &'static str| -> Vec<(String, Row)> {
+            let mrs = self.mine(list);
+            let shown: Vec<usize> = (0..mrs.len())
+                .filter(|&i| {
+                    let m = &mrs[i];
+                    // An MR you opened and are assigned to shows once, with the ones you opened.
+                    let yours = list == Mine::Assigned && self.snap.authored.iter().any(|a| a.project_id == m.project_id && a.iid == m.iid);
+                    !yours && self.matches(&[Some(&m.title), Some(&m.project), Some(&m.author)])
+                })
+                .collect();
+            let mut rows = vec![];
+            if !shown.is_empty() {
+                rows.push((section_key(title), Row::Header(title, shown.len())));
+                if self.section_open(title) {
+                    rows.extend(shown.into_iter().map(|i| (format!("mr:{title}:{}!{}", mrs[i].project, mrs[i].iid), Row::Mr(list, i))));
+                }
+            } else if self.placeholder(title) {
+                rows.push((section_key(title), Row::Header(title, 0)));
+            }
+            rows
+        };
+        let mut authored_rows = mine_rows(Mine::Authored, MRS);
+        let mut assigned_rows = mine_rows(Mine::Assigned, ASSIGNED);
         let issues: Vec<usize> = (0..self.snap.issues.len())
             .filter(|&i| {
                 let is = &self.snap.issues[i];
@@ -574,6 +607,8 @@ impl App {
             let block = std::mem::take(match section {
                 Section::Workspaces => &mut ws_rows,
                 Section::GitlabReviews => &mut review_rows,
+                Section::GitlabMergeRequests => &mut authored_rows,
+                Section::GitlabAssignedMergeRequests => &mut assigned_rows,
                 Section::GitlabIssues => &mut issue_rows,
                 Section::OtherSessions => &mut other_rows,
                 Section::ClosedSessions => &mut closed_rows,
@@ -627,6 +662,23 @@ impl App {
         };
         self.notify(format!("Checking out !{} from {}…", mr.iid, shorten(&repo)), false);
         let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo, kind });
+    }
+
+    pub fn mine(&self, list: Mine) -> &[crate::gitlab::Mr] {
+        match list {
+            Mine::Authored => &self.snap.authored,
+            Mine::Assigned => &self.snap.assigned,
+        }
+    }
+
+    pub fn current_mr(&self) -> Option<&crate::gitlab::Mr> {
+        let Some(Row::Mr(list, i)) = self.current() else { return None };
+        self.mine(list).get(i)
+    }
+
+    /// The workspace whose branch has the MR.
+    pub fn mr_workspace(&self, m: &crate::gitlab::Mr) -> Option<&Workspace> {
+        self.snap.workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| wm.project_id == m.project_id && wm.iid == m.iid))
     }
 
     pub fn current_issue(&self) -> Option<&crate::gitlab::Issue> {
@@ -683,6 +735,7 @@ impl App {
         let name = match self.current()? {
             Row::Workspace(i) | Row::Terminal(i, _) | Row::Thread(i, _) => return self.snap.workspaces.get(i),
             Row::Review(i) => return self.review_workspace(i),
+            Row::Mr(list, i) => return self.mr_workspace(self.mine(list).get(i)?),
             Row::Agent(i) => self.snap.agents[i].workspace.clone()?,
             _ => return None,
         };
@@ -744,6 +797,9 @@ impl App {
         if !side_visible && self.current_review().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
             v.push(("c", "review with Claude", Action::NewWindow("claude")));
+        }
+        if !side_visible && let Some(m) = self.current_mr() {
+            v.push(("↵", if self.mr_workspace(m).is_some() { "go to workspace" } else { "open in GitLab" }, Action::Open));
         }
         if !side_visible && self.current_issue().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
@@ -911,6 +967,16 @@ impl App {
                 let Some(url) = self.current_issue().map(|is| is.url.clone()) else { return };
                 return self.open_url(&url);
             }
+            Some(Row::Mr(..)) => {
+                let Some(m) = self.current_mr() else { return };
+                match self.mr_workspace(m) {
+                    Some(ws) => tmux::switch_client(&ws.name),
+                    None => {
+                        let url = m.url.clone();
+                        return self.open_url(&url);
+                    }
+                }
+            }
             Some(Row::Thread(..)) => {
                 let Some((_, mr, th)) = self.current_thread() else { return };
                 let url = format!("{}#note_{}", mr.url, th.notes.first().map_or(0, |n| n.id));
@@ -968,16 +1034,12 @@ impl App {
 
     /// The section waits for its first fetch from GitLab.
     pub fn loading(&self, title: &str) -> bool {
-        matches!(title, REVIEWS | ISSUES) && self.snap.inbox_loading && self.filter.text.is_empty()
+        gitlab_section(title).is_some() && self.snap.inbox_loading && self.filter.text.is_empty()
     }
 
     /// Why the section's last fetch failed.
     pub fn fetch_error(&self, title: &str) -> Option<&str> {
-        let section = match title {
-            REVIEWS => Section::GitlabReviews,
-            ISSUES => Section::GitlabIssues,
-            _ => return None,
-        };
+        let section = gitlab_section(title)?;
         self.snap.inbox_errors.iter().find(|(s, _)| *s == section).map(|(_, e)| e.as_str())
     }
 
@@ -998,6 +1060,9 @@ impl App {
             }
             return self.build_rows();
         }
+        if matches!(self.current(), Some(Row::Mr(..))) {
+            return;
+        }
         let Some(name) = self.current_workspace().map(|w| w.name.clone()) else { return };
         if !self.folded.remove(&name) {
             self.folded.insert(name);
@@ -1009,7 +1074,7 @@ impl App {
     fn toggle_fold_all(&mut self) {
         let names: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         // The workspaces section stays open so that the folded workspaces still show.
-        let sections = [REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
+        let sections = [REVIEWS, APPROVED, MRS, ASSIGNED, ISSUES, OTHER, CLOSED];
         if sections.iter().all(|t| !self.open_sections.contains(t)) && names.iter().all(|n| self.folded.contains(n)) {
             self.folded.clear();
             self.open_sections.extend(sections);
@@ -1178,9 +1243,14 @@ impl App {
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
     fn refresh_mr(&mut self) {
-        if self.current_review().is_some() || self.current_issue().is_some() || matches!(self.current(), Some(Row::Header(REVIEWS | ISSUES | APPROVED, _))) {
+        let inbox_row = match self.current() {
+            Some(Row::Review(_) | Row::Issue(_) | Row::Mr(..)) => true,
+            Some(Row::Header(title, _)) => title == APPROVED || gitlab_section(title).is_some(),
+            _ => false,
+        };
+        if inbox_row {
             let _ = self.cmd.send(Cmd::ForgetInbox);
-            return self.notify("Refreshing the reviews and issues…", false);
+            return self.notify("Refreshing the GitLab lists…", false);
         }
         let Some(ws) = self.current_workspace() else { return };
         let (path, text) = (ws.path.clone(), format!("Refreshing the merge request of {}…", ws.name));
@@ -1553,16 +1623,23 @@ impl App {
 }
 
 const COUNT_TIMEOUT: Duration = Duration::from_millis(400);
-const WORKSPACES: &str = "WORKSPACES";
-const REVIEWS: &str = "REVIEWS";
+const WORKSPACES: &str = Section::Workspaces.title();
+const REVIEWS: &str = Section::GitlabReviews.title();
 pub const APPROVED: &str = "APPROVED";
-const ISSUES: &str = "MY ISSUES";
-const OTHER: &str = "OTHER SESSIONS";
-const CLOSED: &str = "CLOSED SESSIONS";
-const FOLDABLE: [&str; 6] = [WORKSPACES, REVIEWS, APPROVED, ISSUES, OTHER, CLOSED];
+const MRS: &str = Section::GitlabMergeRequests.title();
+const ASSIGNED: &str = Section::GitlabAssignedMergeRequests.title();
+const ISSUES: &str = Section::GitlabIssues.title();
+const OTHER: &str = Section::OtherSessions.title();
+const CLOSED: &str = Section::ClosedSessions.title();
+const FOLDABLE: [&str; 8] = [WORKSPACES, REVIEWS, APPROVED, MRS, ASSIGNED, ISSUES, OTHER, CLOSED];
+const GITLAB: [Section; 4] = [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues];
 
 fn is_shell(command: &str) -> bool {
     matches!(command, "bash" | "zsh" | "fish" | "sh" | "dash" | "ksh" | "nu")
+}
+
+fn gitlab_section(title: &str) -> Option<Section> {
+    GITLAB.into_iter().find(|s| s.title() == title)
 }
 
 fn review_key(m: &crate::gitlab::Mr) -> String {
