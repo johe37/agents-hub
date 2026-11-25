@@ -5,7 +5,7 @@ import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
 import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
-import { JobMark, Pipeline as PipelineTab, Stages, setPipeJob } from "./MrPipeline";
+import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
 import { Badge, Button, Edge, Empty, IconButton } from "./ui";
 import { focus, showList, toggleList } from "../layout";
@@ -178,7 +178,7 @@ const DETAIL_TABS: { id: DetailTab; label: string; key: string }[] = [
   { id: "overview", label: "Overview", key: "Esc" },
   { id: "commits", label: "Commits", key: "L" },
   { id: "changes", label: "Changes", key: "D" },
-  { id: "pipeline", label: "Pipeline", key: "P" },
+  { id: "pipeline", label: "Pipelines", key: "P" },
 ];
 
 function MrDetail(p: { mr: Mr }) {
@@ -203,9 +203,11 @@ function MrDetail(p: { mr: Mr }) {
           <Badge>Draft</Badge>
         </Show>
         <Show when={m().pipeline}>
-          <Badge tone={pipelineTone(m().pipeline)}>
-            <Pipeline size={11} /> {m().pipeline}
-          </Badge>
+          <button onClick={() => setDetailTab("pipeline")} title="Show the pipelines">
+            <Badge tone={pipelineTone(m().pipeline)} class="hover:brightness-110">
+              <Pipeline size={11} /> {m().pipeline}
+            </Badge>
+          </button>
         </Show>
         <Show when={m().merge_status}>
           <Badge>{m().merge_status!.replace(/_/g, " ")}</Badge>
@@ -288,19 +290,6 @@ function Overview(p: { mr: Mr }) {
   const m = () => p.mr;
   return (
     <>
-      <Show when={m().jobs.length}>
-        <Section
-          title="Pipeline"
-          actions={
-            <button class="text-[12px] text-fg-2 hover:text-fg" onClick={() => setDetailTab("pipeline")}>
-              Logs
-            </button>
-          }
-        >
-          <Stages mr={m()} onPick={(j) => (setPipeJob(j.id), setDetailTab("pipeline"))} />
-        </Section>
-      </Show>
-
       <Section title={`Open threads ${m().threads.length ? m().threads.length : ""}`}>
         <Show when={m().threads.length} fallback={<div class="rounded-xl border border-dashed border-line px-4 py-5 text-center text-fg-3">No open threads.</div>}>
           <div class="flex flex-col gap-3">

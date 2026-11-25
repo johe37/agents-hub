@@ -677,6 +677,96 @@ pub fn retry_job(url: &str, id: u64) -> Result<(), String> {
     glab(&home, &["api", "-X", "POST", &format!("projects/{project}/jobs/{id}/retry")]).map(|_| ())
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pipeline {
+    pub id: u64,
+    /// The full path of the project it ran in: a fork's pipeline runs in the fork.
+    pub project: String,
+    pub status: String,
+    pub sha: String,
+    /// The title of its commit.
+    pub title: String,
+    pub user: String,
+    /// Seconds since the epoch.
+    pub created: u64,
+    pub duration: Option<f64>,
+    pub url: String,
+    /// Names and statuses, in stage order.
+    pub stages: Vec<(String, String)>,
+}
+
+impl Pipeline {
+    fn api(&self, rest: &str) -> String {
+        format!("projects/{}/pipelines/{}{rest}", self.project.replace('/', "%2F"), self.id)
+    }
+}
+
+/// The MR's pipelines, newest first.
+pub fn mr_pipelines(mr: &Mr) -> Result<Vec<Pipeline>, String> {
+    let home = crate::config::home().display().to_string();
+    let quote = |s: &str| serde_json::to_string(s).unwrap_or_default();
+    let query = format!(
+        "query {{ project(fullPath: {}) {{ mergeRequest(iid: {}) {{ pipelines(first: 20) {{ nodes {{ \
+         id status sha path createdAt duration user {{ username }} commit {{ title }} project {{ fullPath }} \
+         stages {{ nodes {{ name status }} }} }} }} }} }} }}",
+        quote(&mr.project),
+        quote(&mr.iid.to_string()),
+    );
+    let v: Value = serde_json::from_str(&glab(&home, &["api", "graphql", "-f", &format!("query={query}")])?).map_err(|_| "glab gave an unexpected answer".to_string())?;
+    if let Some(e) = v["errors"][0]["message"].as_str() {
+        return Err(e.to_string());
+    }
+    let host = mr.url.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+    Ok(parse_pipelines(&v["data"]["project"]["mergeRequest"]["pipelines"]["nodes"], &host, &mr.project))
+}
+
+fn parse_pipelines(nodes: &Value, host: &str, project: &str) -> Vec<Pipeline> {
+    nodes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| {
+            Some(Pipeline {
+                id: gid(&n["id"])?,
+                project: n["project"]["fullPath"].as_str().unwrap_or(project).to_string(),
+                status: lower(&n["status"])?,
+                sha: n["sha"].as_str().unwrap_or_default().to_string(),
+                title: n["commit"]["title"].as_str().unwrap_or_default().to_string(),
+                user: n["user"]["username"].as_str().unwrap_or_default().to_string(),
+                created: n["createdAt"].as_str().and_then(epoch).unwrap_or(0),
+                duration: n["duration"].as_f64(),
+                url: n["path"].as_str().map(|p| format!("{host}{p}")).unwrap_or_default(),
+                stages: n["stages"]["nodes"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| Some((s["name"].as_str()?.to_string(), lower(&s["status"]).unwrap_or_default())))
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+pub fn pipeline_jobs(p: &Pipeline) -> Result<Vec<Job>, String> {
+    let home = crate::config::home().display().to_string();
+    Ok(parse_jobs(&serde_json::from_str(&glab(&home, &["api", &p.api("/jobs?per_page=100")])?).map_err(|_| "glab gave an unexpected answer".to_string())?))
+}
+
+pub fn retry_pipeline(p: &Pipeline) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &p.api("/retry")]).map(|_| ())
+}
+
+pub fn cancel_pipeline(p: &Pipeline) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &p.api("/cancel")]).map(|_| ())
+}
+
+pub fn run_pipeline(mr: &Mr) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &mr_path(mr, "pipelines")]).map(|_| ())
+}
+
 pub fn reviews_dir() -> PathBuf {
     crate::config::cache_dir().join("reviews")
 }
@@ -1142,5 +1232,21 @@ mod tests {
             "milestone": {"title": "v2"}, "references": {"full": "acme/tools/acme-cli#12"}})).unwrap();
         assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("acme/tools/acme-cli", "acme-cli", 2, Some("v2")));
     }
-}
 
+    #[test]
+    fn parses_pipelines_with_their_stages() {
+        let v = serde_json::json!([
+            {"id": "gid://gitlab/Ci::Pipeline/9", "status": "FAILED", "sha": "abc123", "path": "/fork/b/-/pipelines/9",
+             "createdAt": "2026-11-18T13:42:24Z", "duration": 252, "user": {"username": "anna"}, "commit": {"title": "Fix parser"},
+             "project": {"fullPath": "fork/b"}, "stages": {"nodes": [{"name": "build", "status": "success"}, {"name": "test", "status": "failed"}]}},
+            {"id": "gid://gitlab/Ci::Pipeline/8", "status": "SUCCESS", "sha": "def456", "path": null, "stages": {"nodes": []}}
+        ]);
+        let list = parse_pipelines(&v, "https://git.x", "a/b");
+        assert_eq!(list.len(), 2);
+        assert_eq!((list[0].id, list[0].status.as_str(), list[0].project.as_str()), (9, "failed", "fork/b"));
+        assert_eq!(list[0].url, "https://git.x/fork/b/-/pipelines/9");
+        assert_eq!(list[0].stages, vec![("build".into(), "success".into()), ("test".into(), "failed".into())]);
+        assert_eq!(list[0].api("/retry"), "projects/fork%2Fb/pipelines/9/retry");
+        assert_eq!((list[1].project.as_str(), list[1].duration), ("a/b", None));
+    }
+}

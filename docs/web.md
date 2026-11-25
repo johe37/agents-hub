@@ -37,7 +37,7 @@ is: it does not restart it, also after an update.
   you, waiting, ready to merge, drafts) and **Issues**; `1`, `2` and `3` switch, `/` filters,
   and a click on a group title folds it. The count in the menu is what needs you: new reviews,
   and your MRs with a failed pipeline or open threads. Each item has a detail pane: the
-  pipeline's jobs, the open review threads and the description. Reply in a thread or resolve
+  open review threads, the description and the MR's pipelines. Reply in a thread or resolve
   it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review
   prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
@@ -58,17 +58,20 @@ is: it does not restart it, also after an update.
 ## Reviewing a merge request
 
 An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** (`d`) and
-**Pipeline** (`p`). `Esc` goes back to the overview.
+**Pipelines** (`p`). `Esc` goes back to the overview.
 
 - **Changes** shows the diff as GitLab does, unified or side by side (`s`), with syntax
   colors. Pick one commit, or only the changes since your last review, in the list above the
   diff. A click on a commit in **Commits** also shows only its diff. `[` and `]` go to the
   previous and next file. Mark a file as viewed to fold it; it unfolds again when its diff
   changes.
-- **Pipeline** shows the stages and their jobs. Click a job to read the end of its log; the
-  log of a running job updates every few seconds. It opens on the first failed job. **Retry**
-  runs the job again, and **Ask Claude** on a failed job asks the Claude in the MR's checkout
-  to find the cause.
+- **Pipelines** shows the head pipeline first: a line on how it went, then its stages as
+  columns from left to right. Click a job to read the end of its log, and again to close it;
+  the log of a running job updates every few seconds. A failed job has its own **Log**,
+  **Retry** and **Ask Claude**; the last asks the Claude in the MR's checkout to find the
+  cause. **Retry** and **Cancel** above the stages act
+  on the whole pipeline, and **Run pipeline** starts a new one. Below, **Earlier pipelines**
+  lists the MR's older pipelines with their stages; click one to show its jobs and logs.
 - **Select lines.** Press a line number and drag to the last line you want; near the top or
   bottom the diff scrolls. Let go, and a bar under the lines offers **Ask Claude** and
   **Comment**. A click selects one line, Shift+click selects up to another line in the same

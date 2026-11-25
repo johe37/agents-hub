@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Json, Response};
 use serde_json::{Value, json};
 
 use super::Hub;
-use crate::gitlab::{self, FileDiff, Mr};
+use crate::gitlab::{self, FileDiff, Job, Mr, Pipeline};
 
 /// Diffs by commit: a commit never changes, so they never go stale.
 static DIFFS: LazyLock<Mutex<HashMap<String, Arc<Vec<FileDiff>>>>> = LazyLock::new(Mutex::default);
@@ -117,13 +117,93 @@ pub async fn mr_drafts(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<Stri
     }
 }
 
-/// A job of the MR's pipeline: its log, the last 512 kB.
+/// The pipelines last listed and the jobs of older pipelines last shown, by MR key.
+/// A job or a pipeline must be in them before the page may act on it.
+static PIPELINES: LazyLock<Mutex<HashMap<String, Vec<Pipeline>>>> = LazyLock::new(Mutex::default);
+static OLD_JOBS: LazyLock<Mutex<HashMap<String, Vec<Job>>>> = LazyLock::new(Mutex::default);
+
+fn remember<T>(map: &Mutex<HashMap<String, Vec<T>>>, key: &str, list: Vec<T>) {
+    let mut map = map.lock().unwrap();
+    if map.len() > 200 {
+        map.clear();
+    }
+    map.insert(key.to_string(), list);
+}
+
+fn listed(key: &str, id: u64) -> Option<Pipeline> {
+    PIPELINES.lock().unwrap().get(key)?.iter().find(|p| p.id == id).cloned()
+}
+
+/// A pipeline of the MR. A new one may not be listed yet, so ask GitLab again before giving up.
+pub(super) fn pipeline_of(mr: &Mr, key: &str, id: u64) -> Result<Pipeline, String> {
+    if let Some(p) = listed(key, id) {
+        return Ok(p);
+    }
+    remember(&PIPELINES, key, gitlab::mr_pipelines(mr)?);
+    listed(key, id).ok_or_else(|| "The pipeline is not in this merge request".to_string())
+}
+
+/// A job of the MR's head pipeline, or of the older pipeline last shown.
+pub(super) fn job_of(mr: &Mr, key: &str, id: u64) -> Option<Job> {
+    mr.jobs.iter().find(|j| j.id == id).cloned().or_else(|| OLD_JOBS.lock().unwrap().get(key)?.iter().find(|j| j.id == id).cloned())
+}
+
+/// The MR's pipelines, newest first, and which one is its head pipeline.
+pub async fn mr_pipelines(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let Some(key) = q.get("mr").cloned() else { return (StatusCode::BAD_REQUEST, "mr missing").into_response() };
+    let mr = match super::actions::find_mr(&hub, &key) {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e}))).into_response(),
+    };
+    let head = mr.pipeline_url.as_deref().and_then(|u| u.rsplit('/').next()?.parse::<u64>().ok());
+    match tokio::task::spawn_blocking(move || gitlab::mr_pipelines(&mr)).await {
+        Ok(Ok(list)) => {
+            let out: Vec<Value> = list
+                .iter()
+                .map(|p| {
+                    json!({
+                        "id": p.id, "status": p.status, "sha": p.sha, "title": p.title, "user": p.user,
+                        "created": p.created, "duration": p.duration, "url": p.url,
+                        "stages": p.stages.iter().map(|(name, status)| json!({"name": name, "status": status})).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            remember(&PIPELINES, &key, list);
+            Json(json!({"pipelines": out, "head": head})).into_response()
+        }
+        Ok(Err(e)) => (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+/// The jobs of one of the MR's pipelines.
+pub async fn mr_pipeline(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let (Some(key), Some(id)) = (q.get("mr").cloned(), q.get("id").and_then(|j| j.parse::<u64>().ok())) else {
+        return (StatusCode::BAD_REQUEST, "mr or id missing").into_response();
+    };
+    let mr = match super::actions::find_mr(&hub, &key) {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e}))).into_response(),
+    };
+    let jobs = tokio::task::spawn_blocking(move || {
+        let jobs = gitlab::pipeline_jobs(&pipeline_of(&mr, &key, id)?)?;
+        remember(&OLD_JOBS, &key, jobs.clone());
+        Ok::<_, String>(jobs)
+    });
+    match jobs.await {
+        Ok(Ok(jobs)) => Json(json!({"jobs": jobs.iter().map(super::model::job_json).collect::<Vec<_>>()})).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+/// A job of one of the MR's pipelines: its log, the last 512 kB.
 pub async fn mr_job(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
     let (Some(key), Some(id)) = (q.get("mr"), q.get("job").and_then(|j| j.parse::<u64>().ok())) else {
         return (StatusCode::BAD_REQUEST, "mr or job missing").into_response();
     };
-    let job = super::actions::find_mr(&hub, key).ok().and_then(|m| m.jobs.into_iter().find(|j| j.id == id));
-    let Some(job) = job else { return (StatusCode::NOT_FOUND, Json(json!({"error": "The job is not in this merge request's pipeline"}))).into_response() };
+    let job = super::actions::find_mr(&hub, key).ok().and_then(|m| job_of(&m, key, id));
+    let Some(job) = job else { return (StatusCode::NOT_FOUND, Json(json!({"error": "The job is not in this merge request's pipelines"}))).into_response() };
     match tokio::task::spawn_blocking(move || gitlab::job_log(&job.url, job.id, 512 * 1024)).await {
         Ok(Ok((log, truncated))) => Json(json!({"log": log, "truncated": truncated})).into_response(),
         Ok(Err(e)) => (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response(),

@@ -152,6 +152,8 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/mr/changes", get(review::mr_changes))
             .route("/api/mr/drafts", get(review::mr_drafts))
             .route("/api/mr/job", get(review::mr_job))
+            .route("/api/mr/pipelines", get(review::mr_pipelines))
+            .route("/api/mr/pipeline", get(review::mr_pipeline))
             .route("/api/term", get(term::upgrade))
             .fallback(asset)
             .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard))

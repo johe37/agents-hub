@@ -39,6 +39,19 @@ export interface Job {
   url: string;
 }
 
+export interface PipelineRun {
+  id: number;
+  status: string;
+  sha: string;
+  /** The title of its commit. */
+  title: string;
+  user: string;
+  created: number;
+  duration: number | null;
+  url: string;
+  stages: { name: string; status: string }[];
+}
+
 export interface Mr {
   key: string;
   project_id: number;
@@ -250,6 +263,9 @@ export type Action =
   | { type: "finish_review"; mr: string; summary: string; approve: boolean; head?: string }
   | { type: "mr_approve"; mr: string; approve: boolean; head?: string }
   | { type: "retry_job"; mr: string; job: number }
+  | { type: "retry_pipeline"; mr: string; pipeline: number }
+  | { type: "cancel_pipeline"; mr: string; pipeline: number }
+  | { type: "run_pipeline"; mr: string }
   | { type: "reopen_workspace"; id: string }
   | { type: "forget_closed"; id: string };
 

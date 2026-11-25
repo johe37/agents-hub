@@ -50,6 +50,9 @@ pub enum Action {
     FinishReview { mr: String, summary: String, approve: bool, head: Option<String> },
     MrApprove { mr: String, approve: bool, head: Option<String> },
     RetryJob { mr: String, job: u64 },
+    RetryPipeline { mr: String, pipeline: u64 },
+    CancelPipeline { mr: String, pipeline: u64 },
+    RunPipeline { mr: String },
     ReopenWorkspace { id: String },
     ForgetClosed { id: String },
 }
@@ -140,6 +143,12 @@ pub(super) fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
 fn clone_of(hub: &Hub, project: &str) -> Result<String, String> {
     let dirs = hub.snapshot().dirs.clone();
     crate::gitlab::find_clone(&dirs, project).ok_or_else(|| format!("No clone of {project} in your repo roots. Clone it there, then rescan."))
+}
+
+/// Fetch the MR again soon, also in the workspace that has it.
+fn forget_mr(hub: &Hub, key: &str) {
+    let path = hub.snapshot().workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| mr_key(wm) == key)).map(|w| w.path.clone());
+    forget_gitlab(hub, path.as_deref());
 }
 
 fn forget_gitlab(hub: &Hub, path: Option<&str>) {
@@ -474,11 +483,28 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
         }
         Action::RetryJob { mr: key, job } => {
             let m = find_mr(hub, &key)?;
-            let j = m.jobs.iter().find(|j| j.id == job).ok_or("The job is not in this merge request's pipeline")?;
+            let j = super::review::job_of(&m, &key, job).ok_or("The job is not in this merge request's pipelines")?;
             crate::gitlab::retry_job(&j.url, j.id)?;
-            let path = hub.snapshot().workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| mr_key(wm) == key)).map(|w| w.path.clone());
-            forget_gitlab(hub, path.as_deref());
+            forget_mr(hub, &key);
             Ok(said(format!("Retrying {}", j.name)))
+        }
+        Action::RetryPipeline { mr: key, pipeline } => {
+            let p = super::review::pipeline_of(&find_mr(hub, &key)?, &key, pipeline)?;
+            crate::gitlab::retry_pipeline(&p)?;
+            forget_mr(hub, &key);
+            Ok(said(format!("Retrying the failed jobs of pipeline #{}", p.id)))
+        }
+        Action::CancelPipeline { mr: key, pipeline } => {
+            let p = super::review::pipeline_of(&find_mr(hub, &key)?, &key, pipeline)?;
+            crate::gitlab::cancel_pipeline(&p)?;
+            forget_mr(hub, &key);
+            Ok(said(format!("Canceled pipeline #{}", p.id)))
+        }
+        Action::RunPipeline { mr: key } => {
+            let m = find_mr(hub, &key)?;
+            crate::gitlab::run_pipeline(&m)?;
+            forget_mr(hub, &key);
+            Ok(said(format!("Started a pipeline for !{}", m.iid)))
         }
         Action::GitlabRefresh => {
             let paths: Vec<String> = hub.snapshot().workspaces.iter().filter(|w| w.mr.is_some()).map(|w| w.path.clone()).collect();

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::config::{Config, shorten};
 use crate::git::GitStatus;
-use crate::gitlab::{Issue, Mr};
+use crate::gitlab::{Issue, Job, Mr};
 use crate::snapshot::{Agent, Snapshot, Workspace};
 use crate::state::Status;
 
@@ -35,6 +35,10 @@ fn git(g: &GitStatus) -> Value {
 }
 
 /// The key the page knows an MR by: unique across projects.
+pub fn job_json(j: &Job) -> Value {
+    json!({"key": j.id, "id": j.id, "name": j.name, "stage": j.stage, "status": j.status, "duration": j.duration, "url": j.url})
+}
+
 pub fn mr_key(m: &Mr) -> String {
     format!("{}!{}", m.project_id, m.iid)
 }
@@ -69,11 +73,7 @@ fn mr(m: &Mr, ws: Option<&Workspace>) -> Value {
             })
         })
         .collect();
-    let jobs: Vec<Value> = m
-        .jobs
-        .iter()
-        .map(|j| json!({"key": j.id, "id": j.id, "name": j.name, "stage": j.stage, "status": j.status, "duration": j.duration, "url": j.url}))
-        .collect();
+    let jobs: Vec<Value> = m.jobs.iter().map(job_json).collect();
     json!({
         "key": mr_key(m),
         "project_id": m.project_id,
