@@ -128,10 +128,26 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   };
   return (
     <div class="flex h-full w-full flex-col">
-      <div class="flex items-center gap-2 px-4 pb-2 pt-4">
-        <img src="/logo.png" alt="" class="size-7" />
-        <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
-        <span class={cls("ml-auto size-2 rounded-full", connection() === "live" ? "bg-idle" : connection() === "connecting" ? "bg-waiting" : "bg-danger")} title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"} />
+      <div class="flex items-center gap-2.5 px-4 pb-2 pt-4">
+        <img src="/logo.png" alt="" class="size-10" />
+        <span class="text-[16px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
+        <span
+          class={cls(
+            "ml-auto flex h-5 items-center gap-1.5 rounded-full text-[11px] font-medium",
+            connection() === "live" ? "px-1" : "px-2",
+            connection() === "connecting" && "bg-waiting-soft text-waiting",
+            connection() === "offline" && "bg-danger-soft text-danger",
+          )}
+          title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"}
+        >
+          <span class="relative flex size-2">
+            <Show when={connection() !== "live"}>
+              <span class="absolute inset-0 animate-ping rounded-full bg-current opacity-60" />
+            </Show>
+            <span class={cls("relative size-2 rounded-full", connection() === "live" ? "bg-idle" : "bg-current")} />
+          </span>
+          <Show when={connection() !== "live"}>{connection() === "connecting" ? "Connecting" : "Offline"}</Show>
+        </span>
         <IconButton
           label="Settings (,)"
           onClick={() => {

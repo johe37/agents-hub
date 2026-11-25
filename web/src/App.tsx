@@ -34,12 +34,12 @@ import { focus, showNav, toggleFocus, toggleNav } from "./layout";
 import { cls } from "./util";
 
 const logo = new Image();
-logo.src = "/favicon.png";
+logo.src = "/favicon.svg";
 
 function drawFavicon(waiting: number, fill: string, ring: string) {
   const link = document.getElementById("favicon") as HTMLLinkElement;
   if (!waiting) {
-    link.href = "/favicon.png";
+    link.href = "/favicon.svg";
     return;
   }
   if (!logo.complete) {
@@ -67,6 +67,7 @@ export function App() {
     const n = store.waiting().length;
     document.title = n ? `(${n}) jugglr` : "jugglr";
     drawFavicon(n, theme().vars.waiting, theme().vars.bg);
+    for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) m.content = theme().vars.bg;
   });
 
   // Single keys only act when nothing else wants the keyboard: inputs and terminals keep theirs.
