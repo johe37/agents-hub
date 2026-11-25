@@ -59,8 +59,10 @@ export function Confirm() {
                 ref={ok}
                 variant={c().danger ? "danger" : "primary"}
                 onClick={() => {
+                  // c() throws once the box is closed, so take the action first.
+                  const run = c().run;
                   close();
-                  c().run();
+                  run();
                 }}
               >
                 {c().confirm}
