@@ -122,7 +122,7 @@ export function Agents() {
             <Show
               when={waiting().length}
               fallback={
-                <Empty icon={<Check size={20} />} title="All balls in the air" class="rounded-2xl border border-dashed border-line py-8">
+                <Empty icon={<Check size={20} />} title={working() ? "All balls in the air" : "No balls to juggle…"} class="rounded-2xl border border-dashed border-line py-8">
                   Agents that ask for permission or wait for your reply show up here. Answer them without leaving this page.
                 </Empty>
               }
