@@ -70,6 +70,9 @@ An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** 
   bottom the diff scrolls. Let go, and a bar under the lines offers **Ask Claude** and
   **Comment**. A click selects one line, Shift+click selects up to another line in the same
   hunk, and `Esc` or **Cancel** clears the selection.
+- **A whole file.** In a file's header, the ✦ button asks Claude about the file, and the
+  speech bubble opens a comment on the file, like "Comment on this file" in GitLab. The comment
+  shows at the top of the file.
 - **Ask Claude** (`a`). The side panel opens with the Claude in the MR's checkout, and its
   reply box names the file, the lines and a git command that shows them. Write your question
   and press `Enter`. If no Claude runs there, the hub checks the code out and starts one.

@@ -231,6 +231,9 @@ function linesLabel(sel: DiffLine[]): string {
   return olds.length ? `lines ${span(news)} and removed lines ${span(olds)}` : `lines ${span(news)}`;
 }
 
+/** A selection from FILE to FILE is the whole file. */
+const FILE = -1;
+
 function askPrompt(mr: Mr, f: ParsedFile, sel: DiffLine[], mode: Mode, v: MrChanges["version"]): string {
   const s = (x: string) => x.slice(0, 12);
   const path = f.new_path || f.old_path;
@@ -241,13 +244,18 @@ function askPrompt(mr: Mr, f: ParsedFile, sel: DiffLine[], mode: Mode, v: MrChan
       : v
         ? `git diff ${s(v.base)} ${s(v.head)} -- ${path}`
         : `glab mr diff ${mr.iid}`;
-  return `About merge request !${mr.iid} in ${mr.project}: ${path}, ${linesLabel(sel)} (see \`${cmd}\`). `;
+  return `About merge request !${mr.iid} in ${mr.project}: ${path}${sel.length ? `, ${linesLabel(sel)}` : ""} (see \`${cmd}\`). `;
 }
 
 async function sha1(text: string): Promise<string | null> {
   if (!crypto.subtle) return null;
   const buf = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** GitLab's position for a comment on the whole file, like its "Comment on this file". */
+function filePosition(v: NonNullable<MrChanges["version"]>, f: ParsedFile): Record<string, unknown> {
+  return { position_type: "file", base_sha: v.base, start_sha: v.start, head_sha: v.head, old_path: f.old_path, new_path: f.new_path };
 }
 
 /** GitLab's position for a comment on lines a..b; it sits on the last one. */
@@ -448,9 +456,11 @@ interface FileCtx {
   form: () => { file: string; a: number; b: number; text: string } | null;
   setFormText: (t: string) => void;
   openForm: (f: ParsedFile) => void;
+  openFileForm: (f: ParsedFile) => void;
   closeForm: () => void;
   submit: (f: ParsedFile, draft: boolean) => void;
   ask: (f: ParsedFile) => void;
+  askFile: (f: ParsedFile) => void;
 }
 
 const lineKeys = (l: DiffLine) => (l.type === "del" ? [`o${l.old}`] : l.type === "add" ? [`n${l.new}`] : l.type === "ctx" ? [`n${l.new}`, `o${l.old}`] : []);
@@ -541,6 +551,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
   );
 
   const looseCount = () => placed().loose.threads.length + placed().loose.drafts.length;
+  const fileForm = () => form()?.a === FILE;
   return (
     <section ref={el} id={`mr-file-${p.index}`} class="scroll-mt-2 rounded-xl border border-line bg-panel">
       <header class="sticky top-0 z-[1] flex items-center gap-2 rounded-t-xl border-b border-line bg-raised/95 px-3 py-2 backdrop-blur">
@@ -561,6 +572,17 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
           <span class="shrink-0 text-[11.5px] text-fg-3">{p.drafts.length} draft</span>
         </Show>
         <span class="ml-auto" />
+        <button class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-accent" onClick={() => p.ctx.askFile(p.f)} title="Ask Claude about this file">
+          <Sparkles size={13} />
+        </button>
+        <button
+          class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+          disabled={!!p.ctx.review.mode()}
+          onClick={() => (p.onOpen(true), p.ctx.openFileForm(p.f))}
+          title={p.ctx.review.mode() ? "Comments go on all changes: switch to them first" : "Comment on this file"}
+        >
+          <Chat size={13} />
+        </button>
         <Counts added={p.f.added} removed={p.f.removed} />
         <label class="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-fg-2 hover:bg-hover">
           <input type="checkbox" checked={p.viewed} onChange={() => p.onViewed()} class="accent-[var(--accent)]" />
@@ -568,9 +590,19 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
         </label>
       </header>
       <Show when={p.open}>
-        <Show when={looseCount()}>
-          <div class="max-w-3xl border-b border-line p-3">
+        <Show when={looseCount() || fileForm()}>
+          <div class="flex max-w-3xl flex-col gap-2 border-b border-line p-3">
             <Notes g={placed().loose} />
+            <Show when={fileForm()}>
+              <CommentForm
+                label="the whole file"
+                text={form()?.text ?? ""}
+                onText={p.ctx.setFormText}
+                busy={isBusy(`note:${p.ctx.mr.key}`)}
+                onSubmit={(draft) => p.ctx.submit(p.f, draft)}
+                onCancel={p.ctx.closeForm}
+              />
+            </Show>
           </div>
         </Show>
         <Show
@@ -716,6 +748,11 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       const s = sel();
       if (s && s.file === f.name && !p.review.mode()) setForm({ ...s, text: form()?.text ?? "" });
     },
+    openFileForm: (f) => {
+      if (p.review.mode()) return;
+      setSel(null);
+      setForm({ file: f.name, a: FILE, b: FILE, text: form()?.text ?? "" });
+    },
     closeForm: () => (setForm(null), setSel(null)),
     submit: async (f, draft) => {
       const fm = form();
@@ -723,7 +760,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       if (!fm || !v) return;
       const a = Math.min(fm.a, fm.b);
       const b = Math.max(fm.a, fm.b);
-      const pos = await position(v, f, f.lines[a], f.lines[b]);
+      const pos = a === FILE ? filePosition(v, f) : await position(v, f, f.lines[a], f.lines[b]);
       const r = await act({ type: "mr_note", mr: p.mr.key, body: fm.text, position: pos, draft }, { key: `note:${p.mr.key}` });
       if (!r.ok) return;
       setForm(null);
@@ -737,6 +774,10 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       const b = Math.max(s.a, s.b);
       setLastAsk({ mr: p.mr.key, mode: p.review.mode(), file: f.name, a, b });
       void askClaude(p.mr, askPrompt(p.mr, f, f.lines.slice(a, b + 1), p.review.mode(), p.review.data()?.version));
+    },
+    askFile: (f) => {
+      setLastAsk({ mr: p.mr.key, mode: p.review.mode(), file: f.name, a: FILE, b: FILE });
+      void askClaude(p.mr, askPrompt(p.mr, f, [], p.review.mode(), p.review.data()?.version));
     },
   };
 
