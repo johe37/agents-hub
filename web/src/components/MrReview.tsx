@@ -443,6 +443,7 @@ interface FileCtx {
   thread: (t: Thread) => JSX.Element;
   sel: () => { file: string; a: number; b: number } | null;
   pick: (f: ParsedFile, i: number, extend: boolean) => void;
+  select: (f: ParsedFile, a: number, b: number) => void;
   clearSel: () => void;
   form: () => { file: string; a: number; b: number; text: string } | null;
   setFormText: (t: string) => void;
@@ -513,7 +514,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
     <div class="flex flex-col gap-2">
       <For each={groupsAt(i)}>{(g) => <Notes g={g} />}</For>
       <Show when={barAt(i)}>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2 animate-pop-in">
           <span class="text-[12px] text-fg-3">{mine() && label(mine()![0], mine()![1])}</span>
           <Button size="sm" variant="primary" onClick={() => p.ctx.ask(p.f)} kbd="A" title="Put these lines in a prompt for Claude in the MR's checkout">
             <Sparkles size={13} /> Ask Claude
@@ -594,7 +595,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
           }
         >
           <Show when={near()} fallback={<div style={{ height: `${p.f.lines.length * 19.2}px` }} />}>
-            <ReviewDiff lines={p.f.lines} html={html()} split={split()} sel={mine()} onPick={(i, extend) => p.ctx.pick(p.f, i, extend)} has={has} after={after} />
+            <ReviewDiff lines={p.f.lines} html={html()} split={split()} sel={mine()} onPick={(i, extend) => p.ctx.pick(p.f, i, extend)} onSelect={(a, b) => p.ctx.select(p.f, a, b)} has={has} after={after} />
           </Show>
         </Show>
       </Show>
@@ -707,6 +708,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       else if (s && s.file === f.name && s.a === i && s.b === i) setSel(null);
       else setSel({ file: f.name, a: i, b: i });
     },
+    select: (f, a, b) => setSel({ file: f.name, a, b }),
     clearSel: () => setSel(null),
     form,
     setFormText: (t) => setForm((x) => x && { ...x, text: t }),
@@ -714,7 +716,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       const s = sel();
       if (s && s.file === f.name && !p.review.mode()) setForm({ ...s, text: form()?.text ?? "" });
     },
-    closeForm: () => setForm(null),
+    closeForm: () => (setForm(null), setSel(null)),
     submit: async (f, draft) => {
       const fm = form();
       const v = p.review.data()?.version;
@@ -838,7 +840,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       <Show when={files()} fallback={<div class="flex items-center gap-2 py-10 text-fg-3"><Spinner size={14} /> Fetching the changes…</div>}>
         {(l) => (
           <Show when={l().length} fallback={<div class="rounded-xl border border-dashed border-line px-4 py-5 text-center text-fg-3">No changes.</div>}>
-            <div class="mb-2 text-[12px] text-fg-3">Click a line number to select the line, Shift+click to select up to it. Then ask Claude about it or comment.</div>
+            <div class="mb-2 text-[12px] text-fg-3">Press a line number and drag to select lines. Let go to ask Claude about them or comment.</div>
             <div class="grid items-start gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
               <nav class="sticky top-2 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-line bg-panel py-1 xl:block">
                 <For each={l()}>

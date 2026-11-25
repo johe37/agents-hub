@@ -66,8 +66,10 @@ An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** 
   log of a running job updates every few seconds. It opens on the first failed job. **Retry**
   runs the job again, and **Ask Claude** on a failed job asks the Claude in the MR's checkout
   to find the cause.
-- **Select lines.** Click a line number. Shift+click another line in the same hunk to select
-  up to it.
+- **Select lines.** Press a line number and drag to the last line you want; near the top or
+  bottom the diff scrolls. Let go, and a bar under the lines offers **Ask Claude** and
+  **Comment**. A click selects one line, Shift+click selects up to another line in the same
+  hunk, and `Esc` or **Cancel** clears the selection.
 - **Ask Claude** (`a`). The side panel opens with the Claude in the MR's checkout, and its
   reply box names the file, the lines and a git command that shows them. Write your question
   and press `Enter`. If no Claude runs there, the hub checks the code out and starts one.

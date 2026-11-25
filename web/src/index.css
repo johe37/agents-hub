@@ -211,3 +211,10 @@ textarea:focus-visible {
 .ansi-34 { color: var(--working); }
 .ansi-35 { color: var(--hl-keyword); }
 .ansi-36 { color: var(--hl-meta); }
+
+/* While lines are dragged in a diff: no text selection, and the drag cursor everywhere. */
+html.dragging-lines,
+html.dragging-lines * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
