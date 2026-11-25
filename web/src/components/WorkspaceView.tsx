@@ -5,7 +5,7 @@ import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Done, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Empty, IconButton, Kbd, StatusDot, StatusPill } from "./ui";
+import { Badge, Button, Empty, IconButton, StatusDot, StatusPill } from "./ui";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
 
@@ -418,16 +418,13 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                             </Button>
                           </Show>
                           <div class={cls("flex rounded-lg bg-hover p-0.5 text-[12px]", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")}>
+                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")} title="Chat (v)">
                               <Chat size={12} /> Chat
                             </button>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("terminal")}>
+                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("terminal")} title="Terminal (v)">
                               <TermIcon size={12} /> Terminal
                             </button>
                           </div>
-                          <span class="hidden xl:inline">
-                            <Kbd>v</Kbd>
-                          </span>
                         </div>
                       )}
                     </Show>
