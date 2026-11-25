@@ -133,6 +133,16 @@ export interface Agent {
   activity: number;
 }
 
+export interface ClosedWorkspace {
+  key: string;
+  id: string;
+  name: string;
+  path: string;
+  short_path: string;
+  closed_at: number;
+  windows: { kind: "agent" | "editor" | "shell"; name: string; resume: boolean }[];
+}
+
 export interface UsageWindow {
   used: number;
   resets_at: number;
@@ -151,6 +161,7 @@ export interface State {
     assigned: Mr[];
     issues: Issue[];
   };
+  closed: ClosedWorkspace[];
   chat_dir: string;
   home: string;
   warnings: string[];
@@ -189,7 +200,9 @@ export type Action =
   | { type: "find_clone"; project: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
-  | { type: "gitlab_refresh" };
+  | { type: "gitlab_refresh" }
+  | { type: "reopen_workspace"; id: string }
+  | { type: "forget_closed"; id: string };
 
 export interface ActionResult {
   ok: boolean;

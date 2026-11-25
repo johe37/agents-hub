@@ -37,6 +37,8 @@ pub enum Action {
     /// Push the workspace's branch, opening a draft merge request when it has none.
     Publish { workspace: String },
     GitlabRefresh,
+    ReopenWorkspace { id: String },
+    ForgetClosed { id: String },
 }
 
 #[derive(Default)]
@@ -249,6 +251,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
         Action::CloseWorkspace { workspace } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
             let p = std::path::Path::new(&ws.path);
+            let closed = crate::closed::snapshot(&ws);
             if p.starts_with(crate::gitlab::reviews_dir()) {
                 res(tmux::kill_session(&ws.name))?;
                 crate::gitlab::remove_checkout(&ws.path)?;
@@ -258,6 +261,10 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 res(tmux::kill_session(&ws.name))?;
             } else {
                 res(tmux::kill_session(&ws.name))?;
+            }
+            // Only a workspace that did close is worth reopening.
+            if let Err(e) = crate::closed::record(closed) {
+                return Ok(said(format!("Closed {}, but could not remember it: {e}", ws.name)));
             }
             Ok(said(format!("Closed {}", ws.name)))
         }
@@ -326,6 +333,26 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let r = crate::gitlab::publish(&ws.path, open_mr);
             forget_gitlab(hub, Some(&ws.path));
             Ok(said(r?))
+        }
+        Action::ReopenWorkspace { id } => {
+            let c = crate::closed::get(&id).ok_or("It is no longer in the list")?;
+            let dir = if std::path::Path::new(&c.path).is_dir() {
+                c.path.clone()
+            } else {
+                // A review or branch checkout is deleted on close: check the merge request out again.
+                let m = c.mr.as_ref().ok_or_else(|| format!("{} is gone", shorten(&c.path)))?;
+                match run(hub, Action::Checkout { mr: format!("{}!{}", m.project_id, m.iid) }) {
+                    Ok(Done { path: Some(p), .. }) => p,
+                    Ok(_) => return Err("The checkout gave no directory".into()),
+                    Err(e) => return Err(format!("{} is gone, and checking out !{} again failed: {e}", shorten(&c.path), m.iid)),
+                }
+            };
+            let session = crate::closed::reopen(&c, &dir)?;
+            Ok(Done { message: Some(format!("Reopened {session}")), workspace: Some(session), ..Done::default() })
+        }
+        Action::ForgetClosed { id } => {
+            crate::closed::forget(&id)?;
+            Ok(Done::default())
         }
         Action::GitlabRefresh => {
             let paths: Vec<String> = hub.snapshot().workspaces.iter().filter(|w| w.mr.is_some()).map(|w| w.path.clone()).collect();

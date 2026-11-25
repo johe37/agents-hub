@@ -1,4 +1,5 @@
 mod app;
+mod closed;
 mod config;
 mod fuzzy;
 mod git;

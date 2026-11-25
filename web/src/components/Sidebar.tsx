@@ -1,9 +1,28 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
-import { connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, openPalette, route, setHelpOpen, state, store, themePref } from "../store";
-import { MOD, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, Git, Inbox, Keyboard, Monitor, Moon, Plus, Search, Sun } from "./icons";
-import { IconButton, StatusDot } from "./ui";
+import { act, connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, themePref } from "../store";
+import { MOD, age, cls, until, worst } from "../util";
+import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Monitor, Moon, Plus, Search, Sun, Undo, X } from "./icons";
+import { IconButton, Spinner, StatusDot } from "./ui";
+
+function stored(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+const [showClosed, setShowClosedRaw] = createSignal(stored("show-closed", false));
+const setShowClosed = (v: boolean) => {
+  setShowClosedRaw(v);
+  try {
+    localStorage.setItem("show-closed", v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+};
 
 function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; count?: number; tone?: "waiting"; active: boolean; onNavigate?: () => void }) {
   return (
@@ -139,6 +158,51 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             );
           }}
         </For>
+        <Show when={state.closed.length}>
+          <button
+            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
+            onClick={() => setShowClosed(!showClosed())}
+            aria-expanded={showClosed()}
+          >
+            <ChevronDown size={12} class={cls("transition-transform", !showClosed() && "-rotate-90")} />
+            Recently closed <span class="ml-1 tabular-nums">{state.closed.length}</span>
+          </button>
+          <Show when={showClosed()}>
+            <For each={state.closed}>
+              {(c) => (
+                <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
+                  <button
+                    class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
+                    title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
+                    disabled={isBusy(`reopen:${c.id}`)}
+                    onClick={() => {
+                      p.onNavigate?.();
+                      void reopen(c.id);
+                    }}
+                  >
+                    <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                      <Spinner size={13} />
+                    </Show>
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{c.name}</div>
+                      <div class="truncate text-[11.5px] text-fg-3">
+                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · {age(c.closed_at, now())} ago
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                    onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
+                    aria-label={`Remove ${c.name} from the list`}
+                    title="Remove from the list"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </For>
+          </Show>
+        </Show>
       </div>
 
       <div class="border-t border-line px-4 py-3">

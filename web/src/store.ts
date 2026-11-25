@@ -9,6 +9,7 @@ const EMPTY: State = {
   agents: [],
   usage: null,
   gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [] },
+  closed: [],
   chat_dir: "~/chats",
   home: "",
   warnings: [],
@@ -259,6 +260,11 @@ export function cycleTheme() {
     /* ignore */
   }
   toast(`Theme: ${next}`);
+}
+
+export async function reopen(id: string) {
+  const r = await act({ type: "reopen_workspace", id }, { key: `reopen:${id}` });
+  if (r.ok && r.workspace) go({ view: "workspace", name: r.workspace, window: null });
 }
 
 // ---- Overlays

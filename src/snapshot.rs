@@ -37,6 +37,18 @@ impl Window {
         // An attach window shows a background agent that already has its own row.
         (self.claude.is_some() || self.command == "claude") && !self.name.starts_with(ATTACH_PREFIX)
     }
+
+    /// agent, editor, shell or process: what the window is for, from what runs in it.
+    pub fn kind(&self) -> &'static str {
+        if self.is_claude() {
+            return "agent";
+        }
+        match self.command.as_str() {
+            "nvim" | "vim" | "vi" | "hx" | "helix" | "emacs" | "nano" | "micro" | "kak" => "editor",
+            "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "xonsh" | "tcsh" | "ksh" => "shell",
+            _ => "process",
+        }
+    }
 }
 
 #[derive(Clone)]

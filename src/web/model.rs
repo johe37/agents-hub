@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::config::{Config, shorten};
 use crate::git::GitStatus;
 use crate::gitlab::{Issue, Mr};
-use crate::snapshot::{Agent, Snapshot, Window, Workspace};
+use crate::snapshot::{Agent, Snapshot, Workspace};
 use crate::state::Status;
 
 pub fn status(s: Status) -> &'static str {
@@ -123,17 +123,6 @@ fn issue(i: &Issue) -> Value {
     })
 }
 
-fn kind(w: &Window) -> &'static str {
-    if w.is_claude() {
-        return "agent";
-    }
-    match w.command.as_str() {
-        "nvim" | "vim" | "vi" | "hx" | "helix" | "emacs" | "nano" | "micro" | "kak" => "editor",
-        "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "xonsh" | "tcsh" | "ksh" => "shell",
-        _ => "process",
-    }
-}
-
 fn workspace(ws: &Workspace, snap: &Snapshot) -> Value {
     let windows: Vec<Value> = ws
         .windows
@@ -147,7 +136,7 @@ fn workspace(ws: &Workspace, snap: &Snapshot) -> Value {
                 "name": w.name,
                 "pane": w.pane_id,
                 "command": w.command,
-                "kind": kind(w),
+                "kind": w.kind(),
                 "agent": agent,
             })
         })
@@ -222,6 +211,15 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
             "assigned": snap.assigned.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
             "issues": snap.issues.iter().map(issue).collect::<Vec<_>>(),
         },
+        "closed": crate::closed::list().iter().map(|c| json!({
+            "key": c.id,
+            "id": c.id,
+            "name": c.name,
+            "path": c.path,
+            "short_path": shorten(&c.path),
+            "closed_at": c.closed_at,
+            "windows": c.windows.iter().map(|w| json!({"kind": w.kind, "name": w.name, "resume": w.session_id.is_some()})).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
         "chat_dir": cfg.chat_dir,
         "home": crate::config::home(),
         "warnings": cfg.warnings,

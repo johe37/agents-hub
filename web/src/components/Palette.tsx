@@ -9,6 +9,7 @@ import {
   paletteMode,
   paletteOpen,
   route,
+  reopen,
   setComposer,
   setHelpOpen,
   setPaletteOpen,
@@ -16,7 +17,7 @@ import {
 } from "../store";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Code, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Undo, Code, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
 
 interface Item {
@@ -136,6 +137,15 @@ export function Palette() {
         keywords: `${i.project} ${i.labels.join(" ")}`,
         icon: <Git size={15} />,
         run: () => (close(), go({ view: "gitlab", key: i.key })),
+      })),
+      ...state.closed.map((c) => ({
+        id: `closed:${c.id}`,
+        group: "Recently closed",
+        title: `Reopen ${c.name}`,
+        hint: c.short_path,
+        keywords: c.path,
+        icon: <Undo size={15} />,
+        run: () => (close(), void reopen(c.id)),
       })),
       { id: "theme", group: "Settings", title: "Change theme", hint: "System, dark, light", icon: <Sun size={15} />, run: () => cycleTheme() },
       { id: "notify", group: "Settings", title: "Turn on notifications", icon: <Bell size={15} />, run: () => (close(), enableNotifications()) },
