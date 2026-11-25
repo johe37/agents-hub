@@ -2,7 +2,8 @@ import { createSignal } from "solid-js";
 import type { Agent } from "../api";
 import { act, isBusy } from "../store";
 import { cls } from "../util";
-import { Send } from "./icons";
+import { heard, listening, toggleVoice, voiceAgent, voiceSupported } from "../voice";
+import { Mic, Send } from "./icons";
 import { Spinner } from "./ui";
 
 /** One line to the agent: Enter sends it, as if typed in its terminal. */
@@ -23,6 +24,7 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
       fit();
     }
   };
+  const voice = () => voiceAgent() === p.agent.key;
   return (
     <div
       class={cls(
@@ -39,7 +41,7 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
         rows={1}
         value={text()}
         disabled={!p.agent.reachable}
-        placeholder={p.agent.reachable ? (p.placeholder ?? `Reply to ${p.agent.name}…`) : "This agent cannot get input from here"}
+        placeholder={!p.agent.reachable ? "This agent cannot get input from here" : voice() ? (listening() ? heard() || "Listening…" : "Voice on: waiting for Claude…") : (p.placeholder ?? `Reply to ${p.agent.name}…`)}
         class="max-h-40 min-h-[26px] flex-1 resize-none bg-transparent py-[3px] text-[13.5px] text-fg outline-none placeholder:text-fg-3"
         onInput={(e) => {
           setText(e.currentTarget.value);
@@ -55,6 +57,22 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
           }
         }}
       />
+      {voiceSupported && (
+        <button
+          class={cls(
+            "mb-px grid size-7 shrink-0 place-items-center rounded-lg transition-all",
+            voice() ? "bg-danger text-accent-fg" : "text-fg-3 hover:text-fg",
+            voice() && listening() && "animate-pulse-dot",
+          )}
+          disabled={!p.agent.reachable}
+          onClick={() => toggleVoice(p.agent.key)}
+          aria-label={voice() ? "Stop voice chat" : "Voice chat"}
+          aria-pressed={voice()}
+          title={voice() ? "Stop voice chat" : "Voice chat: talk to Claude, hear the answer"}
+        >
+          <Mic size={14} />
+        </button>
+      )}
       <button
         class={cls(
           "mb-px grid size-7 shrink-0 place-items-center rounded-lg transition-all",

@@ -31,7 +31,8 @@ export const Search = icon(() => <><circle cx="11" cy="11" r="7" /><path d="m21 
 export const Plus = icon(() => <><path d="M12 5v14" /><path d="M5 12h14" /></>);
 export const Check = icon(() => <path d="M20 6 9 17l-5-5" />);
 export const X = icon(() => <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>);
-export const Send = icon(() => <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>);
+export const Mic = icon(() => <><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v5" /></>);
+export const Send =icon(() => <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>);
 export const Branch = icon(() => <><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="8" r="2.5" /><path d="M6 8.5v7" /><path d="M18 10.5c0 4-6 3-11 5.5" /></>);
 export const ArrowUp = icon(() => <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>);
 export const ArrowDown = icon(() => <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>);

@@ -23,6 +23,10 @@ Stop it with `Ctrl+C`. Workspaces and agents keep running.
   changed files; click a file to see its diff.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not
   open yet, and Claude starts with the task as its first prompt.
+- **Voice chat.** Click the microphone in a reply box and talk. When you stop, it is sent; when
+  Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
+  permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses
+  the browser's own speech recognition, which sends your voice to Google or Microsoft.
 - **Command palette** (`Ctrl+K`). Go to any workspace or agent, open any repo, run any action.
 - **Notifications.** Click the bell. The browser then tells you when an agent needs you or
   finishes, while the page is in the background. The tab title and icon show how many wait.

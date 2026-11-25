@@ -2,6 +2,7 @@ import { createMemo, createRoot, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { post, wsURL, type Action, type ActionResult, type Agent, type State } from "./api";
 import { STATUS, alive } from "./util";
+import { voiceTurn } from "./voice";
 
 const EMPTY: State = {
   workspaces: [],
@@ -185,6 +186,7 @@ function notifyChanges(next: State) {
     const ask = a.status === "waiting";
     const finished = a.status === "idle" && before === "working";
     if (!ask && !finished) continue;
+    voiceTurn(a);
     if (notifyPermission() !== "granted" || (document.hasFocus() && document.visibilityState === "visible")) continue;
     const body = ask ? (a.message ?? "Waiting for you") : (a.reply?.slice(0, 180) ?? "Finished its turn");
     const n = new Notification(`${ask ? "⏳" : "✓"} ${a.name}: ${a.title}`, { body, tag: a.key, silent: !ask });
