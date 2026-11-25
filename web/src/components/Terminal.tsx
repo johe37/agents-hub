@@ -1,5 +1,6 @@
 import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { wsURL } from "../api";
@@ -60,6 +61,14 @@ export function Terminal(p: { window: string; focus?: boolean }) {
     });
     fit = new FitAddon();
     term.loadAddon(fit);
+    // tmux owns the mouse and copies a selection with OSC 52; this puts it on the clipboard.
+    // tmux leaves the selection parameter empty, which the default provider ignores.
+    term.loadAddon(
+      new ClipboardAddon(undefined, {
+        readText: () => "",
+        writeText: (_, text) => navigator.clipboard.writeText(text),
+      }),
+    );
     term.loadAddon(new WebLinksAddon((_, uri) => window.open(uri, "_blank", "noopener")));
     term.open(host);
     try {
