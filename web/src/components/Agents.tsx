@@ -80,7 +80,7 @@ export function Agents() {
     const n = store.waiting().length;
     if (n) return `${n} agent${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you.`;
     const w = working();
-    return `Nothing needs you.${w ? ` ${w} agent${w > 1 ? "s" : ""} at work.` : ""}`;
+    return `Nothing needs you.${w ? ` ${w} ball${w > 1 ? "s" : ""} in the air.` : ""}`;
   };
 
   return (
@@ -89,7 +89,7 @@ export function Agents() {
         <div>
           <h1 class="text-[22px] font-semibold tracking-[-0.02em] text-fg">Agents</h1>
           <p class="mt-0.5 text-fg-2">
-            <Show when={loaded()} fallback="Connecting to your agents…">
+            <Show when={loaded()} fallback="Let's get ready to jugglr…">
               {summary()}
             </Show>
           </p>
@@ -116,13 +116,13 @@ export function Agents() {
       </header>
 
       <Show when={loaded()} fallback={<div class="flex flex-col gap-3">{[0, 1].map(() => <div class="skeleton h-44" />)}</div>}>
-        <Show when={state.agents.length} fallback={<Empty icon={<Bot size={22} />} title="No agents yet">Start one with N or from a workspace.</Empty>}>
+        <Show when={state.agents.length} fallback={<Empty icon={<Bot size={22} />} title="Nothing to juggle yet">Start one with N or from a workspace.</Empty>}>
           <section class="mb-8">
             <GroupTitle title="Needs you" count={waiting().length} />
             <Show
               when={waiting().length}
               fallback={
-                <Empty icon={<Check size={20} />} title="All clear" class="rounded-2xl border border-dashed border-line py-8">
+                <Empty icon={<Check size={20} />} title="All balls in the air" class="rounded-2xl border border-dashed border-line py-8">
                   Agents that ask for permission or wait for your reply show up here. Answer them without leaving this page.
                 </Empty>
               }
