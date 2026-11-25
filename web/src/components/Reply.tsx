@@ -1,6 +1,6 @@
-import { createSignal } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import type { Agent } from "../api";
-import { act, isBusy } from "../store";
+import { act, draft, isBusy, setDraft } from "../store";
 import { cls } from "../util";
 import { heard, listening, toggleVoice, voiceAgent, voiceSupported } from "../voice";
 import { Mic, Send } from "./icons";
@@ -15,6 +15,15 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
     area.style.height = "auto";
     area.style.height = `${Math.min(area.scrollHeight, 160)}px`;
   };
+  createEffect(() => {
+    const d = draft();
+    if (!d || d.agent !== p.agent.key || !area) return;
+    setDraft(null);
+    setText(d.text);
+    area.value = d.text;
+    fit();
+    area.focus();
+  });
   const send = async () => {
     const t = text().trim();
     if (!t) return;

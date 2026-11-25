@@ -153,13 +153,13 @@ fn run_web(args: &[String]) -> ExitCode {
         std::env::remove_var("TMUX_PANE");
     }
     let cfg = config::load();
-    let exe = exe();
-    let conf = tmux::write_config(&exe, &cfg.hub_key);
-    if tmux::server_running() {
-        tmux::source_config(&conf, &cfg.hub_key);
-    }
     // The hub UI keeps the pools of ready shells and Claudes; the web app only uses them.
-    tmux::ensure_hub(&exe, &conf);
+    // A running hub keeps its binary and config, so the web app never restarts it.
+    if !tmux::server_running() {
+        let exe = exe();
+        let conf = tmux::write_config(&exe, &cfg.hub_key);
+        tmux::ensure_hub(&exe, &conf);
+    }
     web::run(cfg, port, !args.iter().any(|a| a == "--no-open"))
 }
 

@@ -27,7 +27,7 @@ setInterval(() => setNow(Date.now()), 1000);
 export type Route =
   | { view: "inbox" }
   | { view: "agents" }
-  | { view: "gitlab" }
+  | { view: "gitlab"; key: string | null }
   | { view: "workspace"; name: string; window: string | null }
   | { view: "agent"; key: string };
 
@@ -37,7 +37,7 @@ function parse(hash: string): Route {
     case "agents":
       return { view: "agents" };
     case "gitlab":
-      return { view: "gitlab" };
+      return { view: "gitlab", key: parts.slice(1).join("/") || null };
     case "w":
       if (parts[1]) return { view: "workspace", name: parts[1], window: parts[2] || null };
       break;
@@ -55,7 +55,7 @@ export function href(r: Route): string {
     case "agents":
       return "#/agents";
     case "gitlab":
-      return "#/gitlab";
+      return r.key ? `#/gitlab/${encodeURIComponent(r.key)}` : "#/gitlab";
     case "workspace":
       return `#/w/${encodeURIComponent(r.name)}${r.window ? "/" + encodeURIComponent(r.window) : ""}`;
     case "agent":
@@ -266,7 +266,9 @@ export function cycleTheme() {
 export const [paletteOpen, setPaletteOpen] = createSignal(false);
 export const [paletteMode, setPaletteMode] = createSignal<"all" | "open" | "agent">("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
-export const [composer, setComposer] = createSignal<{ path: string | null } | null>(null);
+export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string } | null>(null);
+/** Text to put in an agent's reply box, to edit before sending. */
+export const [draft, setDraft] = createSignal<{ agent: string; text: string } | null>(null);
 export const [confirmBox, setConfirmBox] = createSignal<{
   title: string;
   body?: string;

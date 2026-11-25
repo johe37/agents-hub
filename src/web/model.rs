@@ -34,8 +34,48 @@ fn git(g: &GitStatus) -> Value {
     })
 }
 
-fn mr(m: &Mr) -> Value {
+/// The key the page knows an MR by: unique across projects.
+pub fn mr_key(m: &Mr) -> String {
+    format!("{}!{}", m.project_id, m.iid)
+}
+
+pub fn issue_key(i: &Issue) -> String {
+    format!("{}#{}", i.project, i.iid)
+}
+
+/// The workspace that works on the MR: it has the MR's branch, or is its review or branch checkout.
+pub fn mr_workspace<'a>(m: &Mr, snap: &'a Snapshot) -> Option<&'a Workspace> {
+    let dirs = [m.review_dir(), m.branch_dir()].map(|d| crate::tmux::canonical(&d.display().to_string()));
+    snap.workspaces
+        .iter()
+        .find(|w| w.mr.as_ref().is_some_and(|wm| wm.project_id == m.project_id && wm.iid == m.iid))
+        .or_else(|| snap.workspaces.iter().find(|w| dirs.contains(&crate::tmux::canonical(&w.path))))
+}
+
+fn mr(m: &Mr, ws: Option<&Workspace>) -> Value {
+    let threads: Vec<Value> = m
+        .threads
+        .iter()
+        .map(|t| {
+            json!({
+                "key": t.id,
+                "id": t.id,
+                "place": t.place(),
+                "path": t.path,
+                "line": t.line,
+                "notes": t.notes.iter().map(|n| json!({"id": n.id, "author": n.author, "body": n.body})).collect::<Vec<_>>(),
+                "prompt": t.as_prompt(m),
+            })
+        })
+        .collect();
+    let jobs: Vec<Value> = m
+        .jobs
+        .iter()
+        .map(|j| json!({"key": j.id, "id": j.id, "name": j.name, "stage": j.stage, "status": j.status, "duration": j.duration, "url": j.url}))
+        .collect();
     json!({
+        "key": mr_key(m),
+        "project_id": m.project_id,
         "iid": m.iid,
         "title": m.title,
         "url": m.url,
@@ -48,21 +88,38 @@ fn mr(m: &Mr) -> Value {
         "project": m.project,
         "branch": m.branch,
         "updated": m.updated,
+        "description": m.description,
         "approved": m.approved,
         "approved_by": m.approved_by,
-        "threads": m.threads.len(),
+        "threads": threads,
+        "jobs": jobs,
+        "review_prompt": m.review_prompt(),
+        "workspace": ws.map(|w| w.name.clone()),
     })
+}
+
+/// A list's MR, with the fresher copy a workspace keeps of it when there is one. Only the list has approvals.
+fn listed_mr(m: &Mr, snap: &Snapshot) -> Value {
+    let ws = mr_workspace(m, snap);
+    match ws.and_then(|w| w.mr.as_ref()).filter(|wm| wm.iid == m.iid && wm.project_id == m.project_id) {
+        Some(fresh) => mr(&Mr { approved_by: m.approved_by.clone(), approved: m.approved, ..fresh.clone() }, ws),
+        None => mr(m, ws),
+    }
 }
 
 fn issue(i: &Issue) -> Value {
     json!({
+        "key": issue_key(i),
         "iid": i.iid,
         "title": i.title,
         "url": i.url,
         "project": i.project,
         "labels": i.labels,
+        "milestone": i.milestone,
         "author": i.author,
         "updated": i.updated,
+        "description": i.description,
+        "prompt": i.prompt(),
     })
 }
 
@@ -101,7 +158,7 @@ fn workspace(ws: &Workspace, snap: &Snapshot) -> Value {
         "path": ws.path,
         "short_path": shorten(&ws.path),
         "git": ws.git.as_ref().map(git),
-        "mr": ws.mr.as_ref().map(mr),
+        "mr": ws.mr.as_ref().map(|m| mr(m, Some(ws))),
         "windows": windows,
     })
 }
@@ -160,9 +217,9 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
             "enabled": cfg.gitlab(),
             "loading": snap.inbox_loading,
             "errors": snap.inbox_errors.iter().map(|(s, e)| json!([s.title(), e])).collect::<Vec<_>>(),
-            "reviews": snap.reviews.iter().map(mr).collect::<Vec<_>>(),
-            "authored": snap.authored.iter().map(mr).collect::<Vec<_>>(),
-            "assigned": snap.assigned.iter().map(mr).collect::<Vec<_>>(),
+            "reviews": snap.reviews.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
+            "authored": snap.authored.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
+            "assigned": snap.assigned.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
             "issues": snap.issues.iter().map(issue).collect::<Vec<_>>(),
         },
         "chat_dir": cfg.chat_dir,

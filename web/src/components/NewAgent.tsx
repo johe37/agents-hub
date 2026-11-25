@@ -37,7 +37,7 @@ export function NewAgent() {
       }
       start ??= state.workspaces[0]?.path ?? null;
       setPath(start ?? "");
-      setPrompt("");
+      setPrompt(c.prompt ?? "");
       setTyped("");
       setPicking(false);
       // With a place filled in, the task is what is left to write.

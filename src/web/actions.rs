@@ -3,7 +3,10 @@
 use serde::Deserialize;
 
 use super::Hub;
-use crate::config::shorten;
+use super::model::{mr_key, mr_workspace};
+use crate::config::{Section, shorten};
+use crate::gitlab::Mr;
+use crate::snapshot::Cmd;
 use crate::snapshot::Agent;
 use crate::state::Status;
 use crate::tmux::{self, Fail};
@@ -26,6 +29,14 @@ pub enum Action {
     CloseWindow { window: String },
     RenameWorkspace { workspace: String, name: String },
     Rescan,
+    /// Check out a merge request and open a workspace for it, or find the one that has it.
+    Checkout { mr: String },
+    /// The local clone of a GitLab project.
+    FindClone { project: String },
+    ThreadReply { mr: String, thread: String, text: String, resolve: bool },
+    /// Push the workspace's branch, opening a draft merge request when it has none.
+    Publish { workspace: String },
+    GitlabRefresh,
 }
 
 #[derive(Default)]
@@ -34,6 +45,7 @@ pub struct Done {
     /// Where the result lives, so the page can go there.
     pub workspace: Option<String>,
     pub window: Option<String>,
+    pub path: Option<String>,
 }
 
 fn said(message: impl Into<String>) -> Done {
@@ -81,6 +93,34 @@ fn window(session: &str, path: &str, name: &str, command: Option<&str>) -> Resul
         }
     }
     tmux::open_window(session, path, name, command)
+}
+
+/// The MR with key, preferring a workspace's copy: it refreshes more often.
+fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
+    let snap = hub.snapshot();
+    let is = |m: &&Mr| mr_key(m) == key;
+    snap.workspaces
+        .iter()
+        .filter_map(|w| w.mr.as_ref())
+        .find(is)
+        .or_else(|| snap.reviews.iter().chain(&snap.authored).chain(&snap.assigned).find(is))
+        .cloned()
+        .ok_or_else(|| "This merge request is gone".to_string())
+}
+
+fn clone_of(hub: &Hub, project: &str) -> Result<String, String> {
+    let dirs = hub.snapshot().dirs.clone();
+    crate::gitlab::find_clone(&dirs, project).ok_or_else(|| format!("No clone of {project} in your repo roots. Clone it there, then rescan."))
+}
+
+fn forget_gitlab(hub: &Hub, path: Option<&str>) {
+    let cmd = hub.cmd.lock().unwrap();
+    for s in [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues] {
+        let _ = cmd.send(Cmd::ForgetInbox(s));
+    }
+    if let Some(p) = path {
+        let _ = cmd.send(Cmd::ForgetMr(p.to_string()));
+    }
 }
 
 pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
@@ -140,7 +180,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let id = a.session_id().filter(|id| crate::hooks::valid_id(id)).ok_or("This agent has no session id")?;
             let session = workspace_for(hub, &a.path)?;
             let w = tmux::open_window(&session, &a.path, "claude", Some(&format!("claude --resume {id}")))?;
-            Ok(Done { message: Some(format!("Resumed in {session}")), workspace: Some(session), window: Some(w) })
+            Ok(Done { message: Some(format!("Resumed in {session}")), workspace: Some(session), window: Some(w), path: None })
         }
         Action::CloseAgent { agent: key } => {
             let a = agent(hub, &key)?;
@@ -173,7 +213,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 return Err(format!("Unknown window kind {kind}"));
             }
             let w = window(&ws.name, &ws.path, &kind, crate::app::window_command(&kind))?;
-            Ok(Done { message: None, workspace: Some(ws.name), window: Some(w) })
+            Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
         }
         Action::NewAgent { path, prompt } => {
             let path = crate::config::expand(path.trim());
@@ -196,7 +236,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 None => window(&session, &path, "claude", Some("claude"))?,
             };
             let message = if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened Claude in {session}") };
-            Ok(Done { message: Some(message), workspace: Some(session), window: Some(w) })
+            Ok(Done { message: Some(message), workspace: Some(session), window: Some(w), path: None })
         }
         Action::OpenWorkspace { path } => {
             let path = crate::config::expand(path.trim());
@@ -204,7 +244,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 return Err(format!("{} is not a directory", shorten(&path)));
             }
             let session = workspace_for(hub, &path)?;
-            Ok(Done { message: None, workspace: Some(session), window: None })
+            Ok(Done { message: None, workspace: Some(session), window: None, path: None })
         }
         Action::CloseWorkspace { workspace } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
@@ -233,11 +273,67 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let taken: Vec<String> = tmux::list_sessions().into_iter().filter(|s| *s != workspace).collect();
             let name = tmux::unique_session_name(name.trim(), &taken);
             res(tmux::rename_session(&workspace, &name))?;
-            Ok(Done { message: Some(format!("Renamed to {name}")), workspace: Some(name), window: None })
+            Ok(Done { message: Some(format!("Renamed to {name}")), workspace: Some(name), window: None, path: None })
         }
         Action::Rescan => {
-            let _ = hub.cmd.lock().unwrap().send(crate::snapshot::Cmd::Rescan);
+            let _ = hub.cmd.lock().unwrap().send(Cmd::Rescan);
             Ok(said("Scanning for repos"))
+        }
+        Action::Checkout { mr: key } => {
+            let m = find_mr(hub, &key)?;
+            let (open, review) = {
+                let snap = hub.snapshot();
+                (mr_workspace(&m, &snap).map(|w| (w.name.clone(), w.path.clone())), snap.reviews.iter().any(|r| mr_key(r) == key))
+            };
+            if let Some((name, path)) = open {
+                return Ok(Done { workspace: Some(name), path: Some(path), ..Done::default() });
+            }
+            let repo = clone_of(hub, &m.project)?;
+            let (dir, name) = if review {
+                (crate::gitlab::checkout(&repo, &m)?, format!("review-{}-{}", m.repo(), m.iid))
+            } else {
+                let dir = crate::gitlab::checkout_branch(&repo, &m, &m.branch_dir())?;
+                let name = std::path::Path::new(&dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                (dir, name)
+            };
+            let session = tmux::ensure_workspace_named(&dir, &name)?;
+            Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), path: Some(dir), ..Done::default() })
+        }
+        Action::FindClone { project } => Ok(Done { path: Some(clone_of(hub, &project)?), ..Done::default() }),
+        Action::ThreadReply { mr: key, thread, text, resolve } => {
+            let m = find_mr(hub, &key)?;
+            let th = m.threads.iter().find(|t| t.id == thread).ok_or("This thread is resolved or gone")?;
+            let text = text.trim();
+            if text.is_empty() && !resolve {
+                return Err("Nothing to send".into());
+            }
+            let path = hub.snapshot().workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| mr_key(wm) == key)).map(|w| w.path.clone());
+            let cwd = path.clone().unwrap_or_else(|| crate::config::home().display().to_string());
+            if !text.is_empty() {
+                crate::gitlab::reply(&cwd, &m, &thread, text)?;
+            }
+            if resolve {
+                crate::gitlab::resolve(&cwd, &m, &thread)?;
+            }
+            forget_gitlab(hub, path.as_deref());
+            let done = if resolve { format!("Resolved the thread at {} on !{}", th.place(), m.iid) } else { format!("Replied on !{} at {}", m.iid, th.place()) };
+            Ok(said(done))
+        }
+        Action::Publish { workspace } => {
+            let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
+            let branch = ws.git.as_ref().and_then(|g| g.branch.clone()).ok_or("This workspace is not on a git branch")?;
+            let open_mr = ws.mr.is_none() && !matches!(branch.as_str(), "main" | "master");
+            let r = crate::gitlab::publish(&ws.path, open_mr);
+            forget_gitlab(hub, Some(&ws.path));
+            Ok(said(r?))
+        }
+        Action::GitlabRefresh => {
+            let paths: Vec<String> = hub.snapshot().workspaces.iter().filter(|w| w.mr.is_some()).map(|w| w.path.clone()).collect();
+            forget_gitlab(hub, None);
+            for p in paths {
+                let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetMr(p));
+            }
+            Ok(said("Refreshing GitLab"))
         }
     }
 }

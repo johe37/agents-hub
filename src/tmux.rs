@@ -465,13 +465,18 @@ pub fn create_workspace(name: &str, path: &str, window: &str, command: Option<&s
 
 /// The workspace for path, created (without switching) if needed.
 pub fn ensure_workspace(path: &str) -> Result<String, String> {
+    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    ensure_workspace_named(path, &name)
+}
+
+/// The workspace for path, or a new one named name with a shell, without switching to it.
+pub fn ensure_workspace_named(path: &str, name: &str) -> Result<String, String> {
     let real = canonical(path);
     let panes: Vec<Pane> = list_all_panes().into_iter().filter(|p| !p.session.starts_with('_')).collect();
     if let Some(p) = panes.iter().find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real) {
         return Ok(p.session.clone());
     }
-    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let name = unique_session_name(&name, &list_sessions());
+    let name = unique_session_name(name, &list_sessions());
     let args = chain(&create_commands(&name, path, "shell", None, None));
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     check(run(&refs))?;

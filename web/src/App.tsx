@@ -86,7 +86,7 @@ export function App() {
       pendingG = 0;
       if (k === "i") go({ view: "inbox" });
       else if (k === "a") go({ view: "agents" });
-      else if (k === "l") go({ view: "gitlab" });
+      else if (k === "l") go({ view: "gitlab", key: null });
       else return;
       e.preventDefault();
       return;
@@ -102,7 +102,7 @@ export function App() {
         break;
       }
       case "o":
-        if (route().view === "inbox") return;
+        if (route().view === "inbox" || route().view === "gitlab") return;
         openPalette("open");
         break;
       case "O":

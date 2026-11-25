@@ -14,6 +14,7 @@ import {
   setPaletteOpen,
   state,
 } from "../store";
+import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
 import { Bell, Bot, Code, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
@@ -96,7 +97,7 @@ export function Palette() {
         : []),
       { id: "go-inbox", group: "Go to", title: "Inbox", icon: <Inbox size={15} />, run: () => (close(), go({ view: "inbox" })) },
       { id: "go-agents", group: "Go to", title: "Agents", icon: <Bot size={15} />, run: () => (close(), go({ view: "agents" })) },
-      ...(state.gitlab.enabled ? [{ id: "go-gitlab", group: "Go to", title: "GitLab", icon: <Git size={15} />, run: () => (close(), go({ view: "gitlab" })) }] : []),
+      ...(state.gitlab.enabled ? [{ id: "go-gitlab", group: "Go to", title: "GitLab", icon: <Git size={15} />, run: () => (close(), go({ view: "gitlab", key: null })) }] : []),
       ...state.workspaces.map((w) => ({
         id: `ws:${w.name}`,
         group: "Workspaces",
@@ -118,6 +119,24 @@ export function Palette() {
           icon: <StatusDot status={a.status} />,
           run: () => (close(), go(agentRoute(a))),
         })),
+      ...allMrs().map((m) => ({
+        id: `mr:${m.key}`,
+        group: "GitLab",
+        title: `!${m.iid} ${m.title}`,
+        hint: m.project.split("/").pop(),
+        keywords: `${m.project} ${m.branch} ${m.author}`,
+        icon: <Git size={15} />,
+        run: () => (close(), go({ view: "gitlab", key: m.key })),
+      })),
+      ...state.gitlab.issues.map((i) => ({
+        id: `issue:${i.key}`,
+        group: "GitLab",
+        title: `#${i.iid} ${i.title}`,
+        hint: i.project.split("/").pop(),
+        keywords: `${i.project} ${i.labels.join(" ")}`,
+        icon: <Git size={15} />,
+        run: () => (close(), go({ view: "gitlab", key: i.key })),
+      })),
       { id: "theme", group: "Settings", title: "Change theme", hint: "System, dark, light", icon: <Sun size={15} />, run: () => cycleTheme() },
       { id: "notify", group: "Settings", title: "Turn on notifications", icon: <Bell size={15} />, run: () => (close(), enableNotifications()) },
       { id: "rescan", group: "Settings", title: "Scan for new repos", hint: "After you clone one", icon: <Refresh size={15} />, run: () => (close(), act({ type: "rescan" }).then(() => setTimeout(() => setDirsVersion((v) => v + 1), 1500))) },

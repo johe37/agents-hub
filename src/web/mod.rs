@@ -299,7 +299,7 @@ async fn action(State(hub): State<Arc<Hub>>, Json(body): Json<Value>) -> Respons
     let result = tokio::task::spawn_blocking(move || actions::run(&h, act)).await;
     hub.refresh();
     match result {
-        Ok(Ok(done)) => Json(json!({"ok": true, "message": done.message, "workspace": done.workspace, "window": done.window})).into_response(),
+        Ok(Ok(done)) => Json(json!({"ok": true, "message": done.message, "workspace": done.workspace, "window": done.window, "path": done.path})).into_response(),
         Ok(Err(e)) => (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok": false, "error": e}))).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"ok": false, "error": e.to_string()}))).into_response(),
     }

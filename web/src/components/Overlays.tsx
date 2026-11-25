@@ -118,7 +118,7 @@ const KEYS: [string, [string, string][]][] = [
       ["Ctrl ⇧ K", "Palette, from inside a terminal"],
       ["N", "New agent with a task"],
       ["O", "Open a workspace"],
-      ["G I / G A", "Go to inbox / agents"],
+      ["G I / G A / G L", "Go to inbox / agents / GitLab"],
       ["W", "Next agent that needs you"],
       ["?", "This help"],
     ],
@@ -143,6 +143,16 @@ const KEYS: [string, [string, string][]][] = [
       ["\\", "Side panel"],
     ],
   ],
+  [
+    "GitLab",
+    [
+      ["J / K", "Next / previous"],
+      ["C", "Claude: review, branch or issue"],
+      ["T / E", "Shell / editor on the MR's code"],
+      ["O", "Open in GitLab"],
+      ["⇧ R", "Fetch again"],
+    ],
+  ],
 ];
 
 export function Help() {
@@ -156,7 +166,7 @@ export function Help() {
               <X size={16} />
             </IconButton>
           </div>
-          <div class="grid gap-6 sm:grid-cols-3">
+          <div class="grid gap-6 sm:grid-cols-2">
             <For each={KEYS}>
               {([group, keys]) => (
                 <section>

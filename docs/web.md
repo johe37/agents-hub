@@ -9,7 +9,8 @@ claude-hub web --port 8080  # another port
 claude-hub web --no-open    # print the link only
 ```
 
-Stop it with `Ctrl+C`. Workspaces and agents keep running.
+Stop it with `Ctrl+C`. Workspaces and agents keep running. If the hub runs already, the web app uses it as it
+is: it does not restart it, also after an update.
 
 ## What it does
 
@@ -27,6 +28,15 @@ Stop it with `Ctrl+C`. Workspaces and agents keep running.
   Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
   permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses
   the browser's own speech recognition, which sends your voice to Google or Microsoft.
+- **GitLab** (`g l`). Your reviews, merge requests and issues, with a detail pane: the
+  pipeline's jobs, the open review threads and the description. Reply in a thread or resolve
+  it. "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
+  to edit before you send it. `c` checks out a review and opens a new agent with the review
+  prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
+  starts Claude in your clone with a prompt about the issue. `t` and `e` open a shell or nvim
+  on the MR's code. A workspace on a branch shows its MR in the side panel, and a button to
+  push (and open a draft MR when it has none). Checkouts work as in the terminal hub; see
+  [gitlab.md](gitlab.md).
 - **Command palette** (`Ctrl+K`). Go to any workspace or agent, open any repo, run any action.
 - **Notifications.** Click the bell. The browser then tells you when an agent needs you or
   finishes, while the page is in the background. The tab title and icon show how many wait.

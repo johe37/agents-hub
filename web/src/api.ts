@@ -11,7 +11,35 @@ export interface Git {
   files: [string, string][];
 }
 
+export interface Note {
+  id: number;
+  author: string;
+  body: string;
+}
+
+export interface Thread {
+  key: string;
+  id: string;
+  place: string;
+  path: string | null;
+  line: number | null;
+  notes: Note[];
+  prompt: string;
+}
+
+export interface Job {
+  key: number;
+  id: number;
+  name: string;
+  stage: string;
+  status: string;
+  duration: number | null;
+  url: string;
+}
+
 export interface Mr {
+  key: string;
+  project_id: number;
   iid: number;
   title: string;
   url: string;
@@ -24,19 +52,27 @@ export interface Mr {
   project: string;
   branch: string;
   updated: number;
+  description: string;
   approved: boolean;
   approved_by: string[];
-  threads: number;
+  threads: Thread[];
+  jobs: Job[];
+  review_prompt: string;
+  workspace: string | null;
 }
 
 export interface Issue {
+  key: string;
   iid: number;
   title: string;
   url: string;
   project: string;
   labels: string[];
+  milestone: string | null;
   author: string;
   updated: number;
+  description: string;
+  prompt: string;
 }
 
 export type WindowKind = "agent" | "shell" | "editor" | "process";
@@ -148,7 +184,12 @@ export type Action =
   | { type: "close_workspace"; workspace: string }
   | { type: "close_window"; window: string }
   | { type: "rename_workspace"; workspace: string; name: string }
-  | { type: "rescan" };
+  | { type: "rescan" }
+  | { type: "checkout"; mr: string }
+  | { type: "find_clone"; project: string }
+  | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
+  | { type: "publish"; workspace: string }
+  | { type: "gitlab_refresh" };
 
 export interface ActionResult {
   ok: boolean;
@@ -156,6 +197,7 @@ export interface ActionResult {
   error?: string;
   workspace?: string | null;
   window?: string | null;
+  path?: string | null;
 }
 
 export async function post(action: Action): Promise<ActionResult> {

@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
 import { act, ask, go, isBusy, now, setDiffView, state, store } from "../store";
+import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
@@ -42,6 +43,12 @@ const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
 
 function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
   const g = () => p.ws.git;
+  // Commits to push, or a branch of its own that has no merge request yet.
+  const canPush = () => {
+    const b = g()?.branch;
+    if (!b || !state.gitlab.enabled) return false;
+    return g()!.ahead > 0 || (!p.ws.mr && b !== "main" && b !== "master");
+  };
   return (
     <aside class="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
       <Show when={p.agents.length}>
@@ -67,27 +74,31 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
       <Show when={p.ws.mr}>
         {(mr) => (
           <section class="border-b border-line p-3">
-            <h3 class="mb-2 px-1 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Merge request</h3>
-            <a href={mr().url} target="_blank" rel="noopener" class="block rounded-lg px-2 py-1.5 hover:bg-hover">
+            <div class="mb-2 flex items-center px-1">
+              <h3 class="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Merge request</h3>
+              <a href={mr().url} target="_blank" rel="noopener" class="ml-auto text-fg-3 hover:text-fg" title="Open in GitLab">
+                <External size={12} />
+              </a>
+            </div>
+            <button class="block w-full rounded-lg px-2 py-1.5 text-left hover:bg-hover" onClick={() => go({ view: "gitlab", key: mr().key })} title="Threads, pipeline and description">
               <div class="flex items-center gap-1.5 text-[13px] font-medium text-fg">
                 <span class="text-fg-3">!{mr().iid}</span>
                 <span class="truncate">{mr().title}</span>
-                <External size={12} class="ml-auto shrink-0 text-fg-3" />
               </div>
               <div class="mt-1 flex flex-wrap items-center gap-1.5">
                 <Show when={mr().draft}>
                   <Badge>Draft</Badge>
                 </Show>
                 <Show when={mr().pipeline}>
-                  <Badge tone={mr().pipeline === "success" ? "add" : mr().pipeline === "failed" ? "danger" : "waiting"}>
+                  <Badge tone={pipelineTone(mr().pipeline)}>
                     <Pipeline size={11} /> {mr().pipeline}
                   </Badge>
                 </Show>
-                <Show when={mr().threads}>
-                  <Badge>{mr().threads} threads</Badge>
+                <Show when={mr().threads.length}>
+                  <Badge tone="waiting">{mr().threads.length} open threads</Badge>
                 </Show>
               </div>
-            </a>
+            </button>
           </section>
         )}
       </Show>
@@ -106,6 +117,23 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
             </button>
           </Show>
         </div>
+        <Show when={canPush()}>
+          <Button
+            size="sm"
+            class="mb-2 w-full"
+            loading={isBusy(`publish:${p.ws.name}`)}
+            onClick={() =>
+              ask({
+                title: `Push ${g()!.branch}?`,
+                body: p.ws.mr ? `It updates !${p.ws.mr.iid}.` : "It also opens a draft merge request.",
+                confirm: "Push",
+                run: () => act({ type: "publish", workspace: p.ws.name }, { key: `publish:${p.ws.name}` }),
+              })
+            }
+          >
+            <ArrowUp size={13} /> {p.ws.mr ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push and open draft MR"}
+          </Button>
+        </Show>
         <Show when={g()} fallback={<div class="px-1 text-[12.5px] text-fg-3">Not a git repository</div>}>
           <Show when={g()!.files.length} fallback={<div class="px-1 text-[12.5px] text-fg-3">Working tree clean</div>}>
             <div class="flex flex-col">

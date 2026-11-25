@@ -86,7 +86,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         <NavItem to={{ view: "agents" }} icon={<Bot size={15} />} label="Agents" count={store.live().length} active={r().view === "agents" || r().view === "agent"} onNavigate={p.onNavigate} />
         <Show when={state.gitlab.enabled}>
           <NavItem
-            to={{ view: "gitlab" }}
+            to={{ view: "gitlab", key: null }}
             icon={<Git size={15} />}
             label="GitLab"
             count={state.gitlab.reviews.length + state.gitlab.issues.length}
