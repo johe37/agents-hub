@@ -176,7 +176,12 @@ export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuIte
   const open = () => {
     const r = btn.getBoundingClientRect();
     setPos(p.align === "right" ? { top: r.bottom + 4, right: window.innerWidth - r.right } : { top: r.bottom + 4, left: r.left });
-    queueMicrotask(() => menu?.querySelector<HTMLButtonElement>("button")?.focus({ focusVisible: false } as FocusOptions));
+    queueMicrotask(() => {
+      // A left-aligned menu near the right edge would run off the screen.
+      if (menu && p.align !== "right" && menu.getBoundingClientRect().right > window.innerWidth - 8)
+        setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+      menu?.querySelector<HTMLButtonElement>("button")?.focus({ focusVisible: false } as FocusOptions);
+    });
   };
   const outside = (e: MouseEvent) => {
     const t = e.target as Node;
