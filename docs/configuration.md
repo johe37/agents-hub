@@ -11,6 +11,8 @@ prewarm = true               # keep a started shell ready per workspace
 prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
+web_theme = "jugglr"         # the web app: jugglr (follows the system), jugglr-light, jugglr-dark,
+                             # dark-modern, light-modern, catppuccin, gruvbox, tokyo-night, oxocarbon
 chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 # The sections to show, in this order.
 sections = ["workspaces", "gitlab-reviews", "gitlab-merge-requests",

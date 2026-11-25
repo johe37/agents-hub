@@ -1,6 +1,7 @@
-import { createMemo, createRoot, createSignal } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Workspace } from "./api";
+import { apply, choiceLabel, isChoice, resolve } from "./themes";
 import { STATUS, alive } from "./util";
 import { voiceTurn } from "./voice";
 
@@ -11,6 +12,7 @@ const EMPTY: State = {
   gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [] },
   closed: [],
   chat_dir: "~/chats",
+  web_theme: readStored("config-theme") ?? "jugglr",
   home: "",
   warnings: [],
 };
@@ -241,31 +243,49 @@ export function sortAgents(list: Agent[]): Agent[] {
 
 // ---- Theme
 
-export type ThemePref = "system" | "dark" | "light";
-const media = window.matchMedia("(prefers-color-scheme: dark)");
-function readPref(): ThemePref {
+function readStored(key: string): string | null {
   try {
-    const v = localStorage.getItem("theme");
-    if (v === "dark" || v === "light") return v;
+    return localStorage.getItem(key);
   } catch {
-    /* storage can be blocked */
+    return null; // storage can be blocked
   }
-  return "system";
 }
-export const [themePref, setThemePref] = createSignal<ThemePref>(readPref());
-export const [systemDark, setSystemDark] = createSignal(media.matches);
-media.addEventListener("change", (e) => setSystemDark(e.matches));
-export const theme = createRoot(() => createMemo(() => (themePref() === "system" ? (systemDark() ? "dark" : "light") : themePref())));
-export function cycleTheme() {
-  const order: ThemePref[] = ["system", "dark", "light"];
-  const next = order[(order.indexOf(themePref()) + 1) % order.length];
-  setThemePref(next);
+function writeStored(key: string, value: string | null) {
   try {
-    localStorage.setItem("theme", next);
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
     /* ignore */
   }
-  toast(`Theme: ${next}`);
+}
+
+/** Before themes, "theme" held "dark" or "light" for the two Jugglr palettes. */
+function readChoice(): string | null {
+  const v = readStored("theme");
+  if (v === "dark" || v === "light") return `jugglr-${v}`;
+  return isChoice(v) ? v : null;
+}
+
+const media = window.matchMedia("(prefers-color-scheme: dark)");
+const [systemDark, setSystemDark] = createSignal(media.matches);
+media.addEventListener("change", (e) => setSystemDark(e.matches));
+
+/** This browser's pick; null follows web_theme in config.toml. */
+export const [themeChoice, setThemeChoice] = createSignal<string | null>(readChoice());
+/** The theme under the cursor in the theme picker, shown before you pick it. */
+export const [themePreview, setThemePreview] = createSignal<string | null>(null);
+export const configTheme = () => (isChoice(state.web_theme) ? state.web_theme : "jugglr");
+export const theme = createRoot(() => {
+  const t = createMemo(() => resolve(themePreview() ?? themeChoice() ?? configTheme(), systemDark()));
+  createEffect(() => apply(t()));
+  createEffect(() => writeStored("config-theme", state.web_theme));
+  return t;
+});
+
+export function pickTheme(choice: string | null) {
+  setThemeChoice(choice);
+  writeStored("theme", choice);
+  toast(`Theme: ${choiceLabel(choice ?? configTheme())}${choice ? "" : " (from config)"}`);
 }
 
 /** Go to the workspace for path, or to the page that opens one with what you pick. */
@@ -299,7 +319,8 @@ export async function reopen(id: string) {
 // ---- Overlays
 
 export const [paletteOpen, setPaletteOpen] = createSignal(false);
-export const [paletteMode, setPaletteMode] = createSignal<"all" | "open" | "agent">("all");
+export type PaletteMode = "all" | "open" | "agent" | "theme";
+export const [paletteMode, setPaletteMode] = createSignal<PaletteMode>("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
 export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string } | null>(null);
 /** Text to put in an agent's reply box, to edit before sending. */
@@ -313,7 +334,7 @@ export const [confirmBox, setConfirmBox] = createSignal<{
 } | null>(null);
 export const [diffView, setDiffView] = createSignal<{ path: string; file: string | null; title: string } | null>(null);
 
-export function openPalette(mode: "all" | "open" | "agent" = "all") {
+export function openPalette(mode: PaletteMode = "all") {
   setPaletteMode(mode);
   setPaletteOpen(true);
 }

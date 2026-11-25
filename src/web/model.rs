@@ -242,6 +242,7 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
             "windows": c.windows.iter().map(|w| json!({"kind": w.kind, "name": w.name, "resume": w.session_id.is_some()})).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "chat_dir": cfg.chat_dir,
+        "web_theme": cfg.web_theme,
         "home": crate::config::home(),
         "warnings": cfg.warnings,
     })

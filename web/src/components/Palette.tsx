@@ -3,19 +3,24 @@ import { getJSON } from "../api";
 import {
   act,
   agentRoute,
-  cycleTheme,
+  configTheme,
   enableNotifications,
   go,
   paletteMode,
   paletteOpen,
   route,
   openDir,
+  openPalette,
+  pickTheme,
   reopen,
   setComposer,
   setHelpOpen,
   setPaletteOpen,
+  setThemePreview,
   state,
+  themeChoice,
 } from "../store";
+import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
 import { Bell, Bot, Undo, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
@@ -28,6 +33,8 @@ interface Item {
   hint?: string;
   icon: JSX.Element;
   keywords?: string;
+  /** The theme to show while this item is under the cursor. */
+  preview?: string;
   run: (mod: boolean) => void;
 }
 
@@ -53,7 +60,7 @@ export function Palette() {
     on(paletteOpen, (o) => {
       if (o) {
         setQuery("");
-        setSel(0);
+        setSel(paletteMode() === "theme" ? currentTheme() : 0);
         queueMicrotask(() => input?.focus());
       }
     }),
@@ -61,6 +68,10 @@ export function Palette() {
   createEffect(on(query, () => setSel(0)));
 
   const close = () => setPaletteOpen(false);
+  const currentTheme = () => {
+    const c = themeChoice();
+    return c === null ? 0 : CHOICES.indexOf(c) + 1;
+  };
   const here = () => {
     const r = route();
     return r.view === "workspace" ? state.workspaces.find((w) => w.name === r.name) : undefined;
@@ -86,8 +97,30 @@ export function Palette() {
     }));
   });
 
+  const themeItems = (): Item[] => [
+    {
+      id: "theme:config",
+      group: "Theme",
+      title: `Use the config theme (${choiceLabel(configTheme())})`,
+      hint: themeChoice() === null ? "Current" : "web_theme in config.toml",
+      icon: <Sun size={15} />,
+      preview: configTheme(),
+      run: () => (close(), pickTheme(null)),
+    },
+    ...CHOICES.map((c) => ({
+      id: `theme:${c}`,
+      group: "Theme",
+      title: choiceLabel(c),
+      hint: themeChoice() === c ? "Current" : undefined,
+      icon: <Sun size={15} />,
+      preview: c,
+      run: () => (close(), pickTheme(c)),
+    })),
+  ];
+
   const items = createMemo<Item[]>(() => {
     if (paletteMode() === "open") return dirItems();
+    if (paletteMode() === "theme") return themeItems();
     const ws = here();
     const commands: Item[] = [
       { id: "new-agent", group: "Actions", title: "New agent…", hint: "Start Claude with a task", icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
@@ -147,7 +180,7 @@ export function Palette() {
         icon: <Undo size={15} />,
         run: () => (close(), void reopen(c.id)),
       })),
-      { id: "theme", group: "Settings", title: "Change theme", hint: "System, dark, light", icon: <Sun size={15} />, run: () => cycleTheme() },
+      { id: "theme", group: "Settings", title: "Change theme…", hint: choiceLabel(themeChoice() ?? configTheme()), icon: <Sun size={15} />, keywords: "color dark light", run: () => (setQuery(""), openPalette("theme"), setSel(currentTheme())) },
       { id: "notify", group: "Settings", title: "Turn on notifications", icon: <Bell size={15} />, run: () => (close(), enableNotifications()) },
       { id: "rescan", group: "Settings", title: "Scan for new repos", hint: "After you clone one", icon: <Refresh size={15} />, run: () => (close(), act({ type: "rescan" }).then(() => setTimeout(() => setDirsVersion((v) => v + 1), 1500))) },
       { id: "help", group: "Settings", title: "Keyboard shortcuts", icon: <Keyboard size={15} />, run: () => (close(), setHelpOpen(true)) },
@@ -173,7 +206,7 @@ export function Palette() {
       out = scored.slice(0, 60).map(([, it]) => it);
     }
     // A typed path opens as it is, even when the scan does not know it.
-    if (/^[~/.]/.test(q)) {
+    if (/^[~/.]/.test(q) && paletteMode() !== "theme") {
       out.unshift({
         id: "path",
         group: "Open a workspace",
@@ -189,6 +222,8 @@ export function Palette() {
     }
     return out;
   });
+
+  createEffect(() => setThemePreview(paletteOpen() ? (results()[sel()]?.preview ?? null) : null));
 
   createEffect(() => {
     const el = list?.querySelector(`[data-index="${sel()}"]`) as HTMLElement | null;
@@ -224,7 +259,7 @@ export function Palette() {
               value={query()}
               onInput={(e) => setQuery(e.currentTarget.value)}
               onKeyDown={onKey}
-              placeholder={paletteMode() === "open" ? "Search repos and folders, or type a path…" : "Search workspaces, agents and actions…"}
+              placeholder={paletteMode() === "open" ? "Search repos and folders, or type a path…" : paletteMode() === "theme" ? "Pick a theme…" : "Search workspaces, agents and actions…"}
               class="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-fg outline-none placeholder:text-fg-3"
               spellcheck={false}
               autocomplete="off"

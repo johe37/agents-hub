@@ -3,7 +3,7 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@xterm/xterm/css/xterm.css";
 
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
 
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -63,70 +63,7 @@
   }
 }
 
-/* Light palette on :root; dark overrides it. The page follows the system unless the user picks one. */
-:root {
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --raised: #ffffff;
-  --hover: #f1f1ef;
-  --line: #e9e8e4;
-  --line-strong: #d9d7d1;
-  --fg: #1b1a18;
-  --fg-2: #5b5853;
-  --fg-3: #8e8a83;
-  --accent: #c15f3c;
-  --accent-fg: #ffffff;
-  --accent-soft: #f7e6de;
-  --waiting: #b7791f;
-  --waiting-soft: #fdf3dc;
-  --working: #4f6bed;
-  --working-soft: #e8ecfd;
-  --idle: #2f855a;
-  --idle-soft: #e3f4ea;
-  --ended: #9b978f;
-  --danger: #d64545;
-  --danger-soft: #fbe5e5;
-  --add: #1f7a46;
-  --add-soft: #e4f5ea;
-  --del: #b4372f;
-  --del-soft: #fbe7e5;
-  --term-bg: #fdfdfc;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.06);
-  --shadow-lg: 0 8px 24px rgb(0 0 0 / 0.08), 0 24px 64px rgb(0 0 0 / 0.12);
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  --bg: #0c0c0e;
-  --panel: #121215;
-  --raised: #18181c;
-  --hover: #1e1e23;
-  --line: #24242a;
-  --line-strong: #33333b;
-  --fg: #ececf1;
-  --fg-2: #a3a3ad;
-  --fg-3: #6c6c77;
-  --accent: #e07b53;
-  --accent-fg: #160d08;
-  --accent-soft: #2e1d16;
-  --waiting: #f0b44c;
-  --waiting-soft: #2d2413;
-  --working: #7c93ff;
-  --working-soft: #1b2040;
-  --idle: #5cc98a;
-  --idle-soft: #14281d;
-  --ended: #5f5f69;
-  --danger: #f2706a;
-  --danger-soft: #33171a;
-  --add: #6fd394;
-  --add-soft: #10281a;
-  --del: #ff8a80;
-  --del-soft: #33161a;
-  --term-bg: #0e0e11;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.5), 0 32px 80px rgb(0 0 0 / 0.5);
-  color-scheme: dark;
-}
+/* The colors come from src/themes.ts, set on :root when the app starts. */
 
 html,
 body,
@@ -257,28 +194,6 @@ textarea:focus-visible {
 }
 
 /* Syntax colors in diffs (highlight.js classes). */
-:root {
-  --hl-keyword: #a626a4;
-  --hl-string: #3f8f3e;
-  --hl-comment: #9a9ba1;
-  --hl-number: #986801;
-  --hl-title: #3f6fd8;
-  --hl-type: #b07a00;
-  --hl-meta: #0f8a9a;
-  --hl-var: #c9473d;
-}
-
-:root[data-theme="dark"] {
-  --hl-keyword: #c678dd;
-  --hl-string: #98c379;
-  --hl-comment: #7f848e;
-  --hl-number: #d19a66;
-  --hl-title: #61afef;
-  --hl-type: #e5c07b;
-  --hl-meta: #56b6c2;
-  --hl-var: #e06c75;
-}
-
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: var(--hl-keyword); }
 .hljs-string, .hljs-regexp, .hljs-addition, .hljs-symbol { color: var(--hl-string); }
 .hljs-comment, .hljs-quote { color: var(--hl-comment); font-style: italic; }

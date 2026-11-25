@@ -45,6 +45,10 @@ is: it does not restart it, also after an update.
 - **Command palette** (`Ctrl+K`). Go to any workspace or agent, open any repo, run any action.
 - **Notifications.** Click the bell. The browser then tells you when an agent needs you or
   finishes, while the page is in the background. The tab title and icon show how many wait.
+- **Themes.** Click the sun or moon in the sidebar, or run "Change theme…" in the palette.
+  The theme under the cursor shows at once; `Enter` keeps it. The pick holds for this
+  browser. Without a pick, the page uses `web_theme` from the config file; see
+  [configuration.md](configuration.md).
 
 `?` in the page lists every key.
 

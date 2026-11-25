@@ -1,8 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
-import { act, closeWorkspace, connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, themePref } from "../store";
+import { act, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Monitor, Moon, Plus, Search, Sun, Undo, X } from "./icons";
+import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Moon, Plus, Search, Sun, Undo, X } from "./icons";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot } from "./ui";
 
@@ -232,8 +232,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
               <Bell size={15} />
             </Show>
           </IconButton>
-          <IconButton label={`Theme: ${themePref()}`} onClick={cycleTheme}>
-            {themePref() === "dark" ? <Moon size={15} /> : themePref() === "light" ? <Sun size={15} /> : <Monitor size={15} />}
+          <IconButton label={`Theme: ${theme().label}`} onClick={() => openPalette("theme")}>
+            {theme().mode === "dark" ? <Moon size={15} /> : <Sun size={15} />}
           </IconButton>
           <IconButton label="Keyboard shortcuts (?)" onClick={() => setHelpOpen(true)}>
             <Keyboard size={15} />

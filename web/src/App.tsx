@@ -32,22 +32,22 @@ import { cls } from "./util";
 const logo = new Image();
 logo.src = "/favicon.png";
 
-function drawFavicon(waiting: number, dark: boolean) {
+function drawFavicon(waiting: number, fill: string, ring: string) {
   const link = document.getElementById("favicon") as HTMLLinkElement;
   if (!waiting) {
     link.href = "/favicon.png";
     return;
   }
   if (!logo.complete) {
-    logo.onload = () => drawFavicon(waiting, dark);
+    logo.onload = () => drawFavicon(waiting, fill, ring);
     return;
   }
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const g = c.getContext("2d")!;
   g.drawImage(logo, 0, 0, 64, 64);
-  g.fillStyle = "#f0b44c";
-  g.strokeStyle = dark ? "#0c0c0e" : "#fff";
+  g.fillStyle = fill;
+  g.strokeStyle = ring;
   g.lineWidth = 5;
   g.beginPath();
   g.arc(50, 14, 12, 0, Math.PI * 2);
@@ -60,12 +60,9 @@ export function App() {
   const [drawer, setDrawer] = createSignal(false);
 
   createEffect(() => {
-    document.documentElement.dataset.theme = theme();
-  });
-  createEffect(() => {
     const n = store.waiting().length;
     document.title = n ? `(${n}) jugglr` : "jugglr";
-    drawFavicon(n, theme() === "dark");
+    drawFavicon(n, theme().vars.waiting, theme().vars.bg);
   });
 
   // Single keys only act when nothing else wants the keyboard: inputs and terminals keep theirs.

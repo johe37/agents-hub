@@ -203,6 +203,8 @@ export interface State {
   };
   closed: ClosedWorkspace[];
   chat_dir: string;
+  /** The theme from config.toml, used when this browser has not picked one. */
+  web_theme: string;
   home: string;
   warnings: string[];
 }

@@ -84,6 +84,7 @@ pub struct Config {
     pub prewarm_claude: bool,
     pub hub_key: String,
     pub theme: String,
+    pub web_theme: String,
     pub chat_dir: String,
     /// The sections to show, in this order.
     #[serde(skip)]
@@ -106,6 +107,9 @@ const SECTIONS: [(&str, Section); 7] = [
     ("closed-sessions", Section::ClosedSessions),
 ];
 
+/// Must match the theme ids in web/src/themes.ts. `jugglr` follows the system's light or dark mode.
+pub const WEB_THEMES: [&str; 9] = ["jugglr", "jugglr-light", "jugglr-dark", "dark-modern", "light-modern", "catppuccin", "gruvbox", "tokyo-night", "oxocarbon"];
+
 impl Config {
     pub fn gitlab(&self) -> bool {
         self.sections.iter().any(|s| s.gitlab())
@@ -123,6 +127,7 @@ impl Default for Config {
             prewarm_claude: true,
             hub_key: "M-q".into(),
             theme: "dark-modern".into(),
+            web_theme: "jugglr".into(),
             chat_dir: "~/chats".into(),
             sections: SECTIONS.iter().map(|(_, s)| *s).collect(),
             warnings: vec![],
@@ -154,6 +159,10 @@ fn parse(text: &str) -> Config {
     };
     let sections = table.remove("sections");
     let mut cfg: Config = toml::Value::Table(table).try_into().unwrap_or_else(|e| Config { warnings: vec![format!("Ignoring invalid {file}: {e}")], ..Config::default() });
+    if !WEB_THEMES.contains(&cfg.web_theme.as_str()) {
+        cfg.warnings.push(format!("Unknown web_theme '{}' in {file}. Use one of: {}", cfg.web_theme, WEB_THEMES.join(", ")));
+        cfg.web_theme = Config::default().web_theme;
+    }
     if let Some(v) = sections {
         let Some(list) = v.as_array() else {
             cfg.warnings.push("`sections` must be a list of names".into());
@@ -200,5 +209,13 @@ mod tests {
         assert_eq!(cfg.sections, [Section::Workspaces]);
         assert_eq!(cfg.warnings.len(), 1);
         assert!(cfg.warnings[0].contains("\"reviews\""));
+    }
+
+    #[test]
+    fn falls_back_on_an_unknown_web_theme() {
+        assert_eq!(parse(r#"web_theme = "gruvbox""#).web_theme, "gruvbox");
+        let cfg = parse(r#"web_theme = "solarized""#);
+        assert_eq!(cfg.web_theme, "jugglr");
+        assert_eq!(cfg.warnings.len(), 1);
     }
 }

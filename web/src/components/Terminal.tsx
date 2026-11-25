@@ -1,59 +1,11 @@
 import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
-import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
+import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { wsURL } from "../api";
 import { openPalette, theme } from "../store";
 import { Refresh } from "./icons";
 import { Button, Spinner } from "./ui";
-
-const DARK: ITheme = {
-  background: "#0e0e11",
-  foreground: "#e4e4ea",
-  cursor: "#e07b53",
-  cursorAccent: "#0e0e11",
-  selectionBackground: "#e07b5340",
-  black: "#1c1c21",
-  red: "#ff7b72",
-  green: "#6fd394",
-  yellow: "#f0b44c",
-  blue: "#7c93ff",
-  magenta: "#d2a8ff",
-  cyan: "#6ad7e5",
-  white: "#d0d0d8",
-  brightBlack: "#5b5b66",
-  brightRed: "#ffa198",
-  brightGreen: "#8ee6ad",
-  brightYellow: "#f7cc7a",
-  brightBlue: "#a5b4ff",
-  brightMagenta: "#e2c5ff",
-  brightCyan: "#9becf5",
-  brightWhite: "#ffffff",
-};
-
-const LIGHT: ITheme = {
-  background: "#fdfdfc",
-  foreground: "#1b1a18",
-  cursor: "#c15f3c",
-  cursorAccent: "#fdfdfc",
-  selectionBackground: "#c15f3c30",
-  black: "#1b1a18",
-  red: "#c4362c",
-  green: "#1f7a46",
-  yellow: "#9a6700",
-  blue: "#3451d1",
-  magenta: "#8250df",
-  cyan: "#1b7c83",
-  white: "#6e6a63",
-  brightBlack: "#8e8a83",
-  brightRed: "#d64545",
-  brightGreen: "#2f855a",
-  brightYellow: "#b7791f",
-  brightBlue: "#4f6bed",
-  brightMagenta: "#a475f9",
-  brightCyan: "#3192aa",
-  brightWhite: "#3a3833",
-};
 
 /** A live tmux window. Typing here is typing in the window itself. */
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -103,7 +55,7 @@ export function Terminal(p: { window: string; focus?: boolean }) {
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 0,
-      theme: theme() === "dark" ? DARK : LIGHT,
+      theme: theme().term,
       macOptionIsMeta: true,
     });
     fit = new FitAddon();
@@ -171,8 +123,8 @@ export function Terminal(p: { window: string; focus?: boolean }) {
   createEffect(on(() => p.window, () => term && connect(), { defer: true }));
   createEffect(on(attempt, () => term && connect(), { defer: true }));
   createEffect(() => {
-    const t = theme();
-    if (term) term.options.theme = t === "dark" ? DARK : LIGHT;
+    const t = theme().term;
+    if (term) term.options.theme = t;
   });
   createEffect(() => {
     if (p.focus && phase() === "open") term?.focus();
