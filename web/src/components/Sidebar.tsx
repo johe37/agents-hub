@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
 import { act, chatWorkspace, closeChat, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
@@ -126,11 +126,22 @@ export function Sidebar(p: { onNavigate?: () => void }) {
     const x = r();
     return x.view === "workspace" && x.name === name;
   };
+  // A new query string per click restarts the animation; the same URL would resume mid-loop.
+  const [juggle, setJuggle] = createSignal(0);
+  let juggleTimer: number | undefined;
+  const startJuggle = () => {
+    setJuggle((n) => n + 1);
+    clearTimeout(juggleTimer);
+    juggleTimer = window.setTimeout(() => setJuggle(0), 2400);
+  };
+  onCleanup(() => clearTimeout(juggleTimer));
   return (
     <div class="flex h-full w-full flex-col">
       <div class="flex items-center gap-2.5 px-4 pb-2 pt-4">
-        <img src={store.live().some((a) => a.status === "working") ? "/logo-juggling.webp" : "/logo.png"} alt="" class="size-10" />
-        <span class="text-[16px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
+        <button type="button" onClick={startJuggle} class="flex items-center gap-2.5 rounded-lg" aria-label="Juggle">
+          <img src={juggle() ? `/logo-juggling.webp?${juggle()}` : "/logo.png"} alt="" class="size-10" />
+          <span class="text-[16px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
+        </button>
         <span
           class={cls(
             "ml-auto flex h-5 items-center gap-1.5 rounded-full text-[11px] font-medium",
