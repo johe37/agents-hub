@@ -2,6 +2,7 @@ import { For, Show, createSignal, onCleanup, splitProps, type JSX } from "solid-
 import { Portal } from "solid-js/web";
 import type { Status } from "../api";
 import { STATUS, cls } from "../util";
+import { Chevron } from "./icons";
 
 export function StatusDot(p: { status: Status | null; size?: number; class?: string }) {
   const meta = () => (p.status ? STATUS[p.status] : null);
@@ -244,5 +245,22 @@ export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuIte
         )}
       </Show>
     </>
+  );
+}
+
+/** A thin strip in place of a hidden column; a click brings the column back. */
+export function Edge(p: { label: string; side: "left" | "right"; onClick: () => void }) {
+  return (
+    <button
+      aria-label={p.label}
+      title={p.label}
+      onClick={p.onClick}
+      class={cls(
+        "group grid h-full w-3 shrink-0 place-items-center border-line bg-panel text-fg-3 transition-colors hover:bg-hover hover:text-fg",
+        p.side === "left" ? "border-r" : "border-l",
+      )}
+    >
+      <Chevron size={11} class={cls("opacity-0 transition-opacity group-hover:opacity-100", p.side === "right" && "rotate-180")} />
+    </button>
   );
 }

@@ -8,7 +8,7 @@ import { OpenWorkspace } from "./components/OpenWorkspace";
 import { Confirm, DiffModal, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Sidebar } from "./components/Sidebar";
-import { IconButton } from "./components/ui";
+import { Edge, IconButton } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
 import {
   agentRoute,
@@ -27,6 +27,7 @@ import {
   store,
   theme,
 } from "./store";
+import { focus, showNav, toggleFocus, toggleNav } from "./layout";
 import { cls } from "./util";
 
 const logo = new Image();
@@ -114,6 +115,12 @@ export function App() {
         go(agentRoute(list[(cur + 1) % list.length]));
         break;
       }
+      case "|":
+        toggleNav();
+        break;
+      case "z":
+        toggleFocus();
+        break;
       case "?":
         setHelpOpen(true);
         break;
@@ -138,9 +145,18 @@ export function App() {
 
   return (
     <div class="flex h-full min-h-0">
-      <aside class="hidden w-[248px] shrink-0 border-r border-line bg-panel md:block">
-        <Sidebar />
-      </aside>
+      <Show
+        when={showNav()}
+        fallback={
+          <div class="hidden md:flex">
+            <Edge side="left" label={focus() ? "Leave focus mode (Z)" : "Show the sidebar (|)"} onClick={toggleNav} />
+          </div>
+        }
+      >
+        <aside class="hidden w-[248px] shrink-0 border-r border-line bg-panel md:block">
+          <Sidebar />
+        </aside>
+      </Show>
       <Show when={drawer()}>
         <div class="fixed inset-0 z-40 bg-black/30 md:hidden animate-fade-in" onClick={() => setDrawer(false)}>
           <aside class="h-full w-[272px] border-r border-line bg-panel shadow-float animate-slide-up" onClick={(e) => e.stopPropagation()}>

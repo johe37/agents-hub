@@ -3,11 +3,12 @@ import type { Issue, Mr, Thread } from "../api";
 import { allMrs, entries, goWorkspace, isReview, openMr, pipelineTone, startIssue, type Entry, type Kind, type Tab } from "../gitlab";
 import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
-import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
+import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab, Stages, setPipeJob } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Empty } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton } from "./ui";
+import { focus, showList, toggleList } from "../layout";
 
 function Lead(p: { mr: Mr }) {
   const m = () => p.mr;
@@ -185,7 +186,7 @@ function MrDetail(p: { mr: Mr }) {
   const review = createReview(m);
   const count = (t: DetailTab) => (t === "commits" ? review.data()?.commits?.length : t === "changes" ? review.data()?.files.length : undefined);
   return (
-    <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", detailTab() === "overview" ? "max-w-3xl" : "max-w-[110rem]")}>
+    <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", detailTab() === "overview" ? "max-w-3xl" : focus() ? "max-w-none" : "max-w-[110rem]")}>
       <div class="flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-3">
         <span>{m().project}</span>
         <span>·</span>
@@ -500,6 +501,13 @@ export function Gitlab() {
       case "R":
         void act({ type: "gitlab_refresh" });
         break;
+      case "b":
+        toggleList();
+        break;
+      case "\\":
+        if (!cur?.mr) return;
+        setChatMr(chatMr() === cur.mr.key ? null : cur.mr.key);
+        break;
       case "d":
       case "l":
       case "p":
@@ -521,13 +529,22 @@ export function Gitlab() {
 
   return (
     <div class="flex h-full min-h-0">
-      <div class={cls("flex min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r", selected() && "hidden lg:flex", chat() && "lg:hidden 2xl:flex")}>
+      <div
+        class={cls(
+          "min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r",
+          selected() ? "hidden" : "flex",
+          !showList() ? "lg:hidden" : chat() ? "lg:hidden 2xl:flex" : "lg:flex",
+        )}
+      >
         <header class="px-4 pb-2 pt-4 sm:px-5">
           <div class="flex items-center gap-2">
             <h1 class="text-[20px] font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
             <Button size="sm" variant="ghost" class="ml-auto" title="Fetch everything again (Shift+R)" loading={isBusy(JSON.stringify({ type: "gitlab_refresh" }))} onClick={() => act({ type: "gitlab_refresh" })}>
               <Refresh size={13} />
             </Button>
+            <IconButton label="Hide the list (B)" onClick={toggleList} class="-mr-1 hidden size-7 lg:inline-grid">
+              <PanelLeft size={15} />
+            </IconButton>
           </div>
           <div class="mt-3 flex rounded-lg bg-hover p-0.5 text-[12.5px]" role="tablist">
             <For each={TABS}>
@@ -596,6 +613,11 @@ export function Gitlab() {
           </For>
         </div>
       </div>
+      <Show when={!showList()}>
+        <div class="hidden lg:flex">
+          <Edge side="left" label={focus() ? "Leave focus mode (Z)" : "Show the list (B)"} onClick={toggleList} />
+        </div>
+      </Show>
       <div class={cls("min-h-0 min-w-0 flex-1 overflow-y-auto", !selected() && "hidden lg:block")}>
         <Show when={selected()}>
           <button class="mx-4 mt-3 inline-flex items-center gap-1 text-[12.5px] text-fg-2 hover:text-fg lg:hidden" onClick={() => go({ view: "gitlab", key: null })}>

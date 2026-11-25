@@ -243,14 +243,14 @@ export function sortAgents(list: Agent[]): Agent[] {
 
 // ---- Theme
 
-function readStored(key: string): string | null {
+export function readStored(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
     return null; // storage can be blocked
   }
 }
-function writeStored(key: string, value: string | null) {
+export function writeStored(key: string, value: string | null) {
   try {
     if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, value);

@@ -23,8 +23,9 @@ import {
 import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Undo, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Undo, Folder, Git, Inbox, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
+import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
 interface Item {
   id: string;
@@ -183,6 +184,10 @@ export function Palette() {
       { id: "theme", group: "Settings", title: "Change theme…", hint: choiceLabel(themeChoice() ?? configTheme()), icon: <Sun size={15} />, keywords: "color dark light", run: () => (setQuery(""), openPalette("theme"), setSel(currentTheme())) },
       { id: "notify", group: "Settings", title: "Turn on notifications", icon: <Bell size={15} />, run: () => (close(), enableNotifications()) },
       { id: "rescan", group: "Settings", title: "Scan for new repos", hint: "After you clone one", icon: <Refresh size={15} />, run: () => (close(), act({ type: "rescan" }).then(() => setTimeout(() => setDirsVersion((v) => v + 1), 1500))) },
+      { id: "focus", group: "Layout", title: focus() ? "Leave focus mode" : "Focus mode", hint: "Z", icon: <Maximize size={15} />, keywords: "fullscreen zen hide", run: () => (close(), toggleFocus()) },
+      { id: "nav", group: "Layout", title: showNav() ? "Hide the sidebar" : "Show the sidebar", hint: "|", icon: <PanelLeft size={15} />, keywords: "navigation collapse", run: () => (close(), toggleNav()) },
+      ...(route().view === "workspace" ? [{ id: "panel", group: "Layout", title: showPanel() ? "Hide the side panel" : "Show the side panel", hint: "\\", icon: <PanelRight size={15} />, keywords: "right git", run: () => (close(), togglePanel()) }] : []),
+      ...(route().view === "gitlab" ? [{ id: "list", group: "Layout", title: showList() ? "Hide the list" : "Show the list", hint: "B", icon: <PanelLeft size={15} />, keywords: "merge requests collapse", run: () => (close(), toggleList()) }] : []),
       { id: "help", group: "Settings", title: "Keyboard shortcuts", icon: <Keyboard size={15} />, run: () => (close(), setHelpOpen(true)) },
     ];
     // Directories only join the list when you search: then you can open any repo from here.

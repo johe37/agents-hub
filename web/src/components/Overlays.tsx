@@ -122,6 +122,8 @@ const KEYS: [string, [string, string][]][] = [
       ["O", "Open a workspace"],
       ["G I / G A / G L", "Go to inbox / agents / GitLab"],
       ["W", "Next agent that needs you"],
+      ["|", "Hide or show the sidebar"],
+      ["Z", "Focus mode: only the content"],
       ["?", "This help"],
     ],
   ],
@@ -143,7 +145,7 @@ const KEYS: [string, [string, string][]][] = [
       ["C / T", "New Claude / terminal"],
       ["V", "Chat or terminal for an agent"],
       ["M", "Mark the agent done"],
-      ["\\", "Side panel"],
+      ["\\", "Hide or show the side panel"],
     ],
   ],
   [
@@ -162,6 +164,8 @@ const KEYS: [string, [string, string][]][] = [
       ["Esc", "Clear the selection, then back"],
       ["O", "Open in GitLab"],
       ["⇧ R", "Fetch again"],
+      ["B", "Hide or show the list"],
+      ["\\", "Claude chat on the MR"],
     ],
   ],
 ];

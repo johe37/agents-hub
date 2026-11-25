@@ -4,8 +4,9 @@ import { act, ask, closeWorkspace as closeWs, draft, go, isBusy, now, setDiffVie
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill } from "./ui";
+import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, Code, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill } from "./ui";
+import { focus, showPanel, toggleFocus, togglePanel } from "../layout";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
 
@@ -26,17 +27,6 @@ function fileCode(code: string) {
   const c = code === "??" ? "?" : (code.replace(".", "").trim()[0] ?? "M");
   return { letter: c === "?" ? "U" : c, tone: FILE_TONE[c] ?? "text-fg-2", title: code === "??" ? "Untracked" : code };
 }
-
-const [panelOpen, setPanelOpen] = createSignal(localStorage.getItem("panel") !== "closed");
-const togglePanel = () => {
-  const v = !panelOpen();
-  setPanelOpen(v);
-  try {
-    localStorage.setItem("panel", v ? "open" : "closed");
-  } catch {
-    /* ignore */
-  }
-};
 
 /** Chat or terminal for each agent window; chat first, as it reads better. */
 const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
@@ -348,8 +338,13 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                   { label: "Close workspace", icon: <Trash size={14} />, danger: true, run: closeWorkspace },
                 ]}
               />
-              <IconButton label="Toggle side panel (\)" active={panelOpen()} onClick={togglePanel} class="hidden lg:inline-grid">
-                <Layers size={15} />
+              <IconButton label={focus() ? "Leave focus mode (Z)" : "Focus mode (Z)"} active={focus()} onClick={toggleFocus}>
+                <Show when={focus()} fallback={<Maximize size={15} />}>
+                  <Minimize size={15} />
+                </Show>
+              </IconButton>
+              <IconButton label={showPanel() ? "Hide the side panel (\\)" : "Show the side panel (\\)"} active={showPanel()} onClick={togglePanel} class="hidden lg:inline-grid">
+                <PanelRight size={15} />
               </IconButton>
             </div>
           </header>
@@ -445,7 +440,14 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 )}
               </Show>
             </main>
-            <Show when={panelOpen()}>
+            <Show
+              when={showPanel()}
+              fallback={
+                <div class="hidden lg:flex">
+                  <Edge side="right" label={focus() ? "Leave focus mode (Z)" : "Show the side panel (\\)"} onClick={togglePanel} />
+                </div>
+              }
+            >
               <div class="hidden lg:block">
                 <SidePanel ws={w()} agents={agents()} />
               </div>

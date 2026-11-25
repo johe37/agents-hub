@@ -2,7 +2,8 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
 import { act, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Moon, Plus, Search, Sun, Undo, X } from "./icons";
+import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
+import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot } from "./ui";
 
@@ -81,6 +82,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         <img src="/logo.png" alt="" class="size-7" />
         <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         <span class={cls("ml-auto size-2 rounded-full", connection() === "live" ? "bg-idle" : connection() === "connecting" ? "bg-waiting" : "bg-danger")} title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"} />
+        <IconButton label="Hide the sidebar (|)" onClick={toggleNav} class="-mr-2 hidden size-7 md:inline-grid">
+          <PanelLeft size={15} />
+        </IconButton>
       </div>
 
       <div class="px-3 pb-2">
