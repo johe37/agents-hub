@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 14] = [
+const FIELDS: [&str; 15] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -35,6 +35,7 @@ const FIELDS: [&str; 14] = [
     "pane_width",
     "pane_height",
     "@spare",
+    "pane_pid",
 ];
 
 #[derive(Clone, Debug)]
@@ -53,6 +54,8 @@ pub struct Pane {
     pub height: u16,
     /// Pool windows of a pre-started Claude: "<unix start time> <branch> <commit>".
     pub spare: String,
+    /// The process tmux started in the pane, usually a shell.
+    pub pid: u32,
 }
 
 /// Why a tmux action did not complete in place.
@@ -243,6 +246,7 @@ pub fn list_all_panes() -> Vec<Pane> {
                 width: p[11].parse().unwrap_or(80),
                 height: p[12].parse().unwrap_or(24),
                 spare: p[13].into(),
+                pid: p[14].parse().unwrap_or(0),
             })
         })
         .collect()
@@ -766,6 +770,7 @@ mod tests {
             width: 80,
             height: 24,
             spare: spare.into(),
+            pid: 0,
         };
         let pool = claude_pool(&[pane("claude:/r", "100 main abc"), pane("claude-next:/r", "200  abc"), pane("claude:/old", "")]);
         assert_eq!((pool[0].started, pool[0].checkout.clone(), pool[0].next), (Some(100), (Some("main".into()), Some("abc".into())), false));

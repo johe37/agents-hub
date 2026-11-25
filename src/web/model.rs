@@ -123,6 +123,25 @@ fn issue(i: &Issue) -> Value {
     })
 }
 
+/// The command line of what runs in the foreground of a shell's terminal, when it is not the shell itself.
+fn running(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the command name, which is in parentheses and can hold spaces: state is first, tpgid sixth.
+    let tpgid: u32 = stat.rsplit_once(')')?.1.split_whitespace().nth(5)?.parse().ok()?;
+    if tpgid == 0 || tpgid == pid {
+        return None;
+    }
+    let raw = std::fs::read(format!("/proc/{tpgid}/cmdline")).ok()?;
+    let mut args = raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned());
+    let program = args.next()?;
+    let program = program.rsplit('/').next().unwrap_or(&program).to_string();
+    let line = std::iter::once(program).chain(args).collect::<Vec<_>>().join(" ");
+    Some(if line.chars().count() > 60 { format!("{}…", line.chars().take(60).collect::<String>()) } else { line })
+}
+
 fn workspace(ws: &Workspace, snap: &Snapshot) -> Value {
     let windows: Vec<Value> = ws
         .windows
@@ -137,6 +156,7 @@ fn workspace(ws: &Workspace, snap: &Snapshot) -> Value {
                 "pane": w.pane_id,
                 "command": w.command,
                 "kind": w.kind(),
+                "running": (w.kind() != "agent").then(|| running(w.pid)).flatten(),
                 "agent": agent,
             })
         })

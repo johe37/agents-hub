@@ -374,7 +374,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                     title={`${win.command} · Alt+${i() + 1}`}
                   >
                     <span class={cls("text-fg-3", active() && "text-accent")}>{kindIcon(win)}</span>
-                    <span class="max-w-[16rem] truncate">{a()?.title ?? win.name}</span>
+                    <span class="max-w-[16rem] truncate">{a()?.title ?? win.running ?? win.name}</span>
                     <Show when={a()}>
                       <StatusDot status={a()!.status} size={7} />
                     </Show>

@@ -85,6 +85,8 @@ export interface Win {
   pane: string;
   command: string;
   kind: WindowKind;
+  /** The command that runs in a shell now, if any. */
+  running: string | null;
   agent: string | null;
 }
 
