@@ -50,7 +50,7 @@ picker after you clone a new repo.
 
 | Where | Key | Action |
 |---|---|---|
-| Anywhere | `Alt+Q` or click **◀ Jugglr** | Back to the hub |
+| Anywhere | `Alt+Q` or click **◀ jugglr** | Back to the hub |
 | Hub | `j` / `k` or `↓` / `↑` | Move down / up. A count first moves that many rows: `4j` |
 | Hub | `J` / `K` | Jump to the next / previous workspace, review or section |
 | Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F`, `Ctrl+U` / `Ctrl+D` | First / last row, page up / down, half a page up / down |
@@ -78,7 +78,7 @@ picker after you clone a new repo.
 
 ## Inside a workspace
 
-Inside a workspace, the bar at the top shows where you are: a **◀ Jugglr** button (click it
+Inside a workspace, the bar at the top shows where you are: a **◀ jugglr** button (click it
 or press `Alt+Q` to go back), the workspace name and path, its windows (click to switch) and
 how many Claude sessions wait for you.
 

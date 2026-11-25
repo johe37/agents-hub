@@ -24,6 +24,6 @@ fn main() {
     println!("cargo:warning=Could not build the web app with npm; `jugglr web` will not work in this build.");
     if !dist.join("index.html").exists() {
         let _ = std::fs::create_dir_all(dist);
-        let _ = std::fs::write(dist.join("index.html"), "<!doctype html><title>Jugglr</title><p>This jugglr was built without the web app. Install Node.js and npm, then build again.</p>");
+        let _ = std::fs::write(dist.join("index.html"), "<!doctype html><title>jugglr</title><p>This jugglr was built without the web app. Install Node.js and npm, then build again.</p>");
     }
 }

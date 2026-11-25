@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/jugglr.png" alt="Jugglr" width="160"></p>
+<p align="center"><img src="docs/jugglr.png" alt="jugglr" width="160"></p>
 
-# Jugglr
+# jugglr
 
 One place for your Claude Code sessions and the terminals around them.
 

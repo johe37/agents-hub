@@ -76,7 +76,7 @@ function AgentLine(p: { agent: Agent }) {
             <Badge>background</Badge>
           </Show>
           <Show when={!a().workspace && alive(a().status) && !a().background}>
-            <Badge title="Runs outside Jugglr">outside</Badge>
+            <Badge title="Runs outside jugglr">outside</Badge>
           </Show>
         </div>
         <div class="mt-0.5 flex min-w-0 items-center gap-2 text-[12.5px] text-fg-3">
@@ -157,7 +157,7 @@ export function AgentPage(p: { agentKey: string }) {
                     onClick={() =>
                       ask({
                         title: `Adopt “${ag().title}”?`,
-                        body: `It stops where it runs now and continues in a Jugglr workspace for ${ag().short_path}.${ag().status === "working" || ag().status === "waiting" ? " Its current turn gets cut off." : ""}`,
+                        body: `It stops where it runs now and continues in a jugglr workspace for ${ag().short_path}.${ag().status === "working" || ag().status === "waiting" ? " Its current turn gets cut off." : ""}`,
                         confirm: "Adopt",
                         run: () => act({ type: "adopt", agent: ag().key }),
                       })

@@ -150,7 +150,7 @@ set -g status-position top
 set -g status-justify left
 set -g status-style "bg={bar},fg={fg}"
 set -g status-left-length 120
-set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Jugglr  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
+set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  jugglr  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
 set -g status-right-length 80
 set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""

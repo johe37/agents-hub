@@ -225,14 +225,14 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 }
                 return Ok(said(format!("Stopped {}", a.title())));
             }
-            let w = a.window_id.as_ref().ok_or("This agent runs outside Jugglr. Close it in its own terminal, or adopt it.")?;
+            let w = a.window_id.as_ref().ok_or("This agent runs outside jugglr. Close it in its own terminal, or adopt it.")?;
             res(tmux::kill_window(w))?;
             Ok(said(format!("Closed {}", a.title())))
         }
         Action::Adopt { agent: key } => {
             let a = agent(hub, &key)?;
             if a.workspace.is_some() || !a.status.alive() {
-                return Err("Only running agents outside Jugglr can be adopted".into());
+                return Err("Only running agents outside jugglr can be adopted".into());
             }
             let (Some(pid), Some(id)) = (a.pid, a.session_id()) else {
                 return Err("Can't find this agent's process. Adopting needs a recent Claude Code.".into());

@@ -269,7 +269,7 @@ export async function post(action: Action): Promise<ActionResult> {
     if (r.status === 401) return { ok: false, error: "The page lost its key. Open the link from the terminal again." };
     return (await r.json()) as ActionResult;
   } catch (e) {
-    return { ok: false, error: `Jugglr does not answer: ${(e as Error).message}` };
+    return { ok: false, error: `jugglr does not answer: ${(e as Error).message}` };
   }
 }
 

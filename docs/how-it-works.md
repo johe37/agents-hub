@@ -12,7 +12,7 @@ jugglr install-hooks
 ```
 
 This adds `jugglr report` to the hooks in `~/.claude/settings.json`. It replaces older
-hooks from claude-hub, the old name of Jugglr, and the `hook.sh` of the Python version. The
+hooks from claude-hub, the old name of jugglr, and the `hook.sh` of the Python version. The
 command shows what it changes and asks first. It saves a backup as `settings.json.bak`.
 
 The hook runs on every Claude tool call, so it does almost nothing: it stores the latest
@@ -28,7 +28,7 @@ already have a status line, it stays; send its JSON input to `jugglr statusline`
 
 ## tmux
 
-Jugglr runs a private tmux server (`tmux -L jugglr`), so you never have to deal with
+jugglr runs a private tmux server (`tmux -L jugglr`), so you never have to deal with
 tmux yourself. Workspaces are tmux sessions on it, so they keep running when you close the
 terminal. Run `jugglr` again and everything is where you left it.
 
@@ -69,7 +69,7 @@ next output on.
 
 ## Moving from claude-hub
 
-Jugglr was called claude-hub before. The first `jugglr` run moves `~/.local/state/claude-hub`,
+jugglr was called claude-hub before. The first `jugglr` run moves `~/.local/state/claude-hub`,
 `~/.cache/claude-hub`, `~/.config/claude-hub` and the tmux socket to their `jugglr` names. It
 leaves a symlink at each old path, so a running claude-hub engine and its agents keep working.
 

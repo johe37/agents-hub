@@ -122,7 +122,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
         });
 
         let url = format!("http://127.0.0.1:{port}/?token={}", hub.token);
-        println!("Jugglr runs at {url}");
+        println!("jugglr runs at {url}");
         println!("Press Ctrl+C to stop. Workspaces and agents keep running.");
         if open {
             let _ = std::process::Command::new("xdg-open").arg(&url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
@@ -201,7 +201,7 @@ async fn guard(State(hub): State<Arc<Hub>>, req: Request, next: Next) -> Respons
     next.run(req).await
 }
 
-const LOCKED: &str = "<!doctype html><meta charset=utf-8><title>Jugglr</title><body style=\"font:15px system-ui;background:#0b0d12;color:#c9d1e0;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"max-width:28rem;text-align:center\"><h1 style=\"font-size:18px;color:#fff\">Jugglr is locked</h1><p>Open the link that <code>jugglr web</code> printed in your terminal. It holds the key to this page.</p></div>";
+const LOCKED: &str = "<!doctype html><meta charset=utf-8><title>jugglr</title><body style=\"font:15px system-ui;background:#0b0d12;color:#c9d1e0;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"max-width:28rem;text-align:center\"><h1 style=\"font-size:18px;color:#fff\">jugglr is locked</h1><p>Open the link that <code>jugglr web</code> printed in your terminal. It holds the key to this page.</p></div>";
 
 fn url_decode_query(q: &str) -> HashMap<String, String> {
     q.split('&')

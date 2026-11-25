@@ -64,7 +64,7 @@ export function App() {
   });
   createEffect(() => {
     const n = store.waiting().length;
-    document.title = n ? `(${n}) Jugglr` : "Jugglr";
+    document.title = n ? `(${n}) jugglr` : "jugglr";
     drawFavicon(n, theme() === "dark");
   });
 
@@ -157,7 +157,7 @@ export function App() {
             <Menu size={17} />
           </IconButton>
           <img src="/logo.png" alt="" class="size-5" />
-          <span class="text-[13px] font-semibold">Jugglr</span>
+          <span class="text-[13px] font-semibold">jugglr</span>
           <Show when={store.waiting().length}>
             <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-[11px] font-semibold leading-5 text-[#1d1405]">{store.waiting().length} waiting</span>
           </Show>

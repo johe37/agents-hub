@@ -79,7 +79,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
     <div class="flex h-full w-full flex-col">
       <div class="flex items-center gap-2 px-4 pb-2 pt-4">
         <img src="/logo.png" alt="" class="size-7" />
-        <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">Jugglr</span>
+        <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         <span class={cls("ml-auto size-2 rounded-full", connection() === "live" ? "bg-idle" : connection() === "connecting" ? "bg-waiting" : "bg-danger")} title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"} />
       </div>
 
