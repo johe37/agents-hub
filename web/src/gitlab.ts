@@ -56,3 +56,55 @@ export async function startIssue(i: Issue) {
 export function goWorkspace(m: Mr) {
   if (m.workspace) go({ view: "workspace", name: m.workspace, window: null });
 }
+
+export type Tab = "review" | "mine" | "issues";
+
+export interface Entry {
+  key: string;
+  tab: Tab;
+  /** The group in its tab: what you need to do about it. */
+  group: string;
+  mr?: Mr;
+  issue?: Issue;
+}
+
+const running = (p: string | null) => p === "running" || p === "pending" || p === "created" || p === "preparing" || p === "waiting_for_resource";
+
+export const REVIEW_GROUPS = ["New", "In progress", "Approved"];
+export const MINE_GROUPS = ["Needs you", "Waiting", "Ready to merge", "Drafts"];
+
+function reviewGroup(m: Mr): string {
+  if (m.approved && !m.workspace) return "Approved";
+  return m.workspace ? "In progress" : "New";
+}
+
+function mineGroup(m: Mr): string {
+  if (m.pipeline === "failed" || m.threads.length) return "Needs you";
+  if (m.draft) return "Drafts";
+  if (m.merge_status === "mergeable" && !running(m.pipeline)) return "Ready to merge";
+  return "Waiting";
+}
+
+/** Everything in the GitLab view, by tab and group in display order, newest first in a group. */
+export function entries(): Entry[] {
+  const g = state.gitlab;
+  const byTime = <T extends { updated: number }>(a: T, b: T) => b.updated - a.updated;
+  const order = (groups: string[]) => (a: Entry, b: Entry) => groups.indexOf(a.group) - groups.indexOf(b.group);
+  const reviews: Entry[] = [...g.reviews].sort(byTime).map((mr) => ({ key: mr.key, tab: "review", group: reviewGroup(mr), mr }));
+  const mineMrs = [...g.authored, ...g.assigned.filter((m) => !g.authored.some((a) => a.key === m.key))].sort(byTime);
+  const mine: Entry[] = mineMrs.map((mr) => ({ key: mr.key, tab: "mine", group: mineGroup(mr), mr }));
+  const projects = new Set(g.issues.map((i) => i.project));
+  const issues: Entry[] = [...g.issues].sort(byTime).map((issue) => ({
+    key: issue.key,
+    tab: "issues",
+    group: projects.size > 1 ? issue.project.split("/").pop()! : "Assigned to you",
+    issue,
+  }));
+  const issueGroups = [...new Set(issues.map((e) => e.group))];
+  return [...reviews.sort(order(REVIEW_GROUPS)), ...mine.sort(order(MINE_GROUPS)), ...issues.sort(order(issueGroups))];
+}
+
+/** What needs you on GitLab: reviews not started, and your MRs with a failed pipeline or open threads. */
+export function attention(): number {
+  return entries().filter((e) => (e.tab === "review" && e.group === "New") || (e.tab === "mine" && e.group === "Needs you")).length;
+}

@@ -1,24 +1,11 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import type { Issue, Job, Mr, Thread } from "../api";
-import { allMrs, goWorkspace, isReview, openMr, pipelineTone, startIssue, type Kind } from "../gitlab";
+import { allMrs, entries, goWorkspace, isReview, openMr, pipelineTone, startIssue, type Entry, type Kind, type Tab } from "../gitlab";
 import { act, go, isBusy, now, route, state } from "../store";
-import { age, cls } from "../util";
-import { Branch, Check, Chevron, Code, External, Git, Layers, Pipeline, Refresh, Sparkles, Terminal, X } from "./icons";
+import { age, cls, fuzzyWords } from "../util";
+import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, Pipeline, Refresh, Search, Sparkles, Terminal, X } from "./icons";
 import { Markdown } from "./Markdown";
 import { Badge, Button, Empty, Spinner } from "./ui";
-
-type Entry = { key: string; group: string } & ({ mr: Mr; issue?: undefined } | { issue: Issue; mr?: undefined });
-
-function entries(): Entry[] {
-  const g = state.gitlab;
-  const reviews = [...g.reviews].sort((a, b) => Number(a.approved && !a.workspace) - Number(b.approved && !b.workspace));
-  return [
-    ...reviews.map((mr) => ({ key: mr.key, group: mr.approved && !mr.workspace ? "Approved by you" : "Reviews", mr })),
-    ...g.authored.map((mr) => ({ key: mr.key, group: "Your merge requests", mr })),
-    ...g.assigned.filter((m) => !g.authored.some((a) => a.key === m.key)).map((mr) => ({ key: mr.key, group: "Assigned merge requests", mr })),
-    ...g.issues.map((issue) => ({ key: issue.key, group: "Issues", issue })),
-  ];
-}
 
 function duration(s: number | null): string {
   if (s == null) return "";
@@ -45,58 +32,76 @@ function JobMark(p: { status: string }) {
   );
 }
 
-function MrRow(p: { mr: Mr }) {
+function Lead(p: { mr: Mr }) {
   const m = () => p.mr;
   return (
-    <>
-      <div class="flex items-baseline gap-2">
-        <span class="shrink-0 text-fg-3">!{m().iid}</span>
-        <span class="truncate font-medium text-fg">{m().title}</span>
+    <span class="mt-[3px] grid size-4 shrink-0 place-items-center" title={m().approved ? "You approved it" : m().pipeline ? `Pipeline ${m().pipeline}` : "No pipeline"}>
+      <Switch fallback={<JobMark status={m().pipeline ?? ""} />}>
+        <Match when={m().approved}>
+          <Done size={14} class="text-idle" />
+        </Match>
+      </Switch>
+    </span>
+  );
+}
+
+function MrRow(p: { mr: Mr; tab: Tab; group: string }) {
+  const m = () => p.mr;
+  const assigned = () => p.tab === "mine" && !state.gitlab.authored.some((a) => a.key === m().key);
+  return (
+    <div class="flex gap-2.5">
+      <Lead mr={m()} />
+      <div class="min-w-0 flex-1">
+        <div class="flex items-baseline gap-1.5">
+          <span class="truncate text-fg">
+            <span class="text-fg-3">!{m().iid}</span> {m().title.replace(/^Draft:\s*/i, "")}
+          </span>
+        </div>
+        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+          <span class="truncate">
+            {m().project.split("/").pop()}
+            {p.tab === "review" || assigned() ? ` · ${m().author}` : ""}
+          </span>
+          <Show when={assigned()}>
+            <Badge>assigned</Badge>
+          </Show>
+          <Show when={m().draft && p.group !== "Drafts"}>
+            <Badge>draft</Badge>
+          </Show>
+          <Show when={m().threads.length}>
+            <span class="inline-flex shrink-0 items-center gap-0.5 text-waiting" title="Open threads">
+              <Chat size={11} /> {m().threads.length}
+            </span>
+          </Show>
+          <Show when={m().workspace}>
+            <span class="inline-flex shrink-0 items-center text-accent" title={`Open in ${m().workspace}`}>
+              <Layers size={11} />
+            </span>
+          </Show>
+          <span class="ml-auto shrink-0 tabular-nums">{age(m().updated, now())}</span>
+        </div>
       </div>
-      <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-3">
-        <span>{m().project.split("/").pop()}</span>
-        <span>· {m().author}</span>
-        <Show when={m().draft}>
-          <Badge>Draft</Badge>
-        </Show>
-        <Show when={m().pipeline}>
-          <Badge tone={pipelineTone(m().pipeline)}>
-            <Pipeline size={11} /> {m().pipeline}
-          </Badge>
-        </Show>
-        <Show when={m().threads.length}>
-          <Badge tone="waiting">{m().threads.length} open</Badge>
-        </Show>
-        <Show when={m().approved}>
-          <Badge tone="add">
-            <Check size={11} /> approved
-          </Badge>
-        </Show>
-        <Show when={m().workspace}>
-          <Badge tone="accent">
-            <Layers size={11} /> {m().workspace}
-          </Badge>
-        </Show>
-        <span class="ml-auto tabular-nums">{age(m().updated, now())}</span>
-      </div>
-    </>
+    </div>
   );
 }
 
 function IssueRow(p: { issue: Issue }) {
   const i = () => p.issue;
   return (
-    <>
-      <div class="flex items-baseline gap-2">
-        <span class="shrink-0 text-fg-3">#{i().iid}</span>
-        <span class="truncate font-medium text-fg">{i().title}</span>
+    <div class="flex gap-2.5">
+      <span class="mt-[3px] grid size-4 shrink-0 place-items-center">
+        <span class="size-2 rounded-full border-[1.5px] border-idle" />
+      </span>
+      <div class="min-w-0 flex-1">
+        <div class="truncate text-fg">
+          <span class="text-fg-3">#{i().iid}</span> {i().title}
+        </div>
+        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+          <span class="truncate">{i().labels.slice(0, 2).join(" · ") || i().project.split("/").pop()}</span>
+          <span class="ml-auto shrink-0 tabular-nums">{age(i().updated, now())}</span>
+        </div>
       </div>
-      <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-3">
-        <span>{i().project.split("/").pop()}</span>
-        <For each={i().labels.slice(0, 3)}>{(l) => <Badge>{l}</Badge>}</For>
-        <span class="ml-auto tabular-nums">{age(i().updated, now())}</span>
-      </div>
-    </>
+    </div>
   );
 }
 
@@ -336,9 +341,43 @@ function IssueDetail(p: { issue: Issue }) {
   );
 }
 
+const TABS: { id: Tab; label: string; key: string }[] = [
+  { id: "review", label: "To review", key: "1" },
+  { id: "mine", label: "My MRs", key: "2" },
+  { id: "issues", label: "Issues", key: "3" },
+];
+
+function load<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key: string, v: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v));
+  } catch {
+    /* ignore */
+  }
+}
+
+const [tab, setTabRaw] = createSignal<Tab>(load("gitlab-tab", "review"));
+const setTab = (t: Tab) => (setTabRaw(t), save("gitlab-tab", t));
+// Approved reviews are done: folded until you open them.
+const [folded, setFoldedRaw] = createSignal<string[]>(load("gitlab-folded", ["review:Approved"]));
+const toggleFold = (id: string) => {
+  const next = folded().includes(id) ? folded().filter((f) => f !== id) : [...folded(), id];
+  setFoldedRaw(next);
+  save("gitlab-folded", next);
+};
+
 export function Gitlab() {
   const g = () => state.gitlab;
-  const list = createMemo(entries);
+  const [q, setQ] = createSignal("");
+  const all = createMemo(entries);
   const selected = () => {
     const r = route();
     return r.view === "gitlab" ? r.key : null;
@@ -346,13 +385,58 @@ export function Gitlab() {
   const current = createMemo(() => {
     const k = selected();
     if (!k) return null;
-    return list().find((e) => e.key === k) ?? (allMrs().find((m) => m.key === k) ? { key: k, group: "", mr: allMrs().find((m) => m.key === k)! } : null);
+    const e = all().find((x) => x.key === k);
+    if (e) return e;
+    const mr = allMrs().find((m) => m.key === k);
+    return mr ? ({ key: k, tab: "mine", group: "", mr } as Entry) : null;
   });
+  // Opening an item from elsewhere shows its tab.
+  createEffect(() => {
+    const t = current()?.tab;
+    if (t && t !== untrack(tab) && all().some((e) => e.key === current()!.key)) setTab(t);
+  });
+
+  const inTab = createMemo(() => {
+    const query = q().trim();
+    return all().filter((e) => {
+      if (e.tab !== tab()) return false;
+      if (!query) return true;
+      const text = e.mr ? `${e.mr.title} ${e.mr.project} ${e.mr.branch} ${e.mr.author} !${e.mr.iid}` : `${e.issue!.title} ${e.issue!.project} ${e.issue!.labels.join(" ")} #${e.issue!.iid}`;
+      return fuzzyWords(query, text) !== null;
+    });
+  });
+  const groups = createMemo(() => {
+    const out: [string, Entry[]][] = [];
+    for (const e of inTab()) {
+      const gr = out.find(([t]) => t === e.group);
+      if (gr) gr[1].push(e);
+      else out.push([e.group, [e]]);
+    }
+    return out;
+  });
+  const isFolded = (group: string) => !q().trim() && folded().includes(`${tab()}:${group}`);
+  const visible = createMemo(() => groups().flatMap(([group, items]) => (isFolded(group) ? [] : items)));
+  const count = (t: Tab) => all().filter((e) => e.tab === t).length;
+
   const select = (key: string, replace = false) => go({ view: "gitlab", key }, replace);
+
+  // A switch of tab shows its first item, not one from the tab you left.
+  createEffect(
+    on(
+      tab,
+      () => {
+        if (current()?.tab === tab()) return;
+        const first = untrack(visible)[0];
+        if (first && matchMedia("(min-width: 1024px)").matches) select(first.key, true);
+        else go({ view: "gitlab", key: null }, true);
+      },
+      { defer: true },
+    ),
+  );
 
   // A wide screen shows the first item instead of an empty pane.
   createEffect(() => {
-    if (!selected() && list().length && matchMedia("(min-width: 1024px)").matches) select(list()[0].key, true);
+    if (!selected() && visible().length && matchMedia("(min-width: 1024px)").matches) select(visible()[0].key, true);
   });
 
   let listEl!: HTMLDivElement;
@@ -364,9 +448,15 @@ export function Gitlab() {
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.target as HTMLElement).closest("input,textarea,[contenteditable],.xterm")) return;
-    const l = list();
+    const l = visible();
     const i = l.findIndex((x) => x.key === selected());
     const cur = current();
+    const t = TABS.find((x) => x.key === e.key);
+    if (t) {
+      setTab(t.id);
+      e.preventDefault();
+      return;
+    }
     switch (e.key) {
       case "j":
       case "ArrowDown":
@@ -379,7 +469,7 @@ export function Gitlab() {
       case "o":
       case "Enter":
         if (!cur) return;
-        window.open((cur.mr ?? cur.issue).url, "_blank", "noopener");
+        window.open((cur.mr ?? cur.issue)!.url, "_blank", "noopener");
         break;
       case "c":
         if (cur?.mr) void openMr(cur.mr, "claude");
@@ -406,53 +496,78 @@ export function Gitlab() {
   onMount(() => window.addEventListener("keydown", onKey));
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
-  const groups = createMemo(() => {
-    const out: [string, Entry[]][] = [];
-    for (const e of list()) {
-      const gr = out.find(([t]) => t === e.group);
-      if (gr) gr[1].push(e);
-      else out.push([e.group, [e]]);
-    }
-    return out;
-  });
-
   return (
     <div class="flex h-full min-h-0">
       <div class={cls("flex min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r", selected() && "hidden lg:flex")}>
-        <header class="flex items-center gap-2 px-4 pb-3 pt-5 sm:px-5">
-          <div>
+        <header class="px-4 pb-2 pt-4 sm:px-5">
+          <div class="flex items-center gap-2">
             <h1 class="text-[20px] font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
-            <p class="text-[12.5px] text-fg-3">Reviews, your merge requests and issues</p>
+            <Button size="sm" variant="ghost" class="ml-auto" title="Fetch everything again (Shift+R)" loading={isBusy(JSON.stringify({ type: "gitlab_refresh" }))} onClick={() => act({ type: "gitlab_refresh" })}>
+              <Refresh size={13} />
+            </Button>
           </div>
-          <Button size="sm" variant="ghost" class="ml-auto" title="Fetch everything again (Shift+R)" loading={isBusy(JSON.stringify({ type: "gitlab_refresh" }))} onClick={() => act({ type: "gitlab_refresh" })}>
-            <Refresh size={13} />
-          </Button>
+          <div class="mt-3 flex rounded-lg bg-hover p-0.5 text-[12.5px]" role="tablist">
+            <For each={TABS}>
+              {(t) => (
+                <button
+                  role="tab"
+                  aria-selected={tab() === t.id}
+                  title={`${t.label} (${t.key})`}
+                  onClick={() => setTab(t.id)}
+                  class={cls("flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-medium transition-colors", tab() === t.id ? "bg-raised text-fg shadow-soft" : "text-fg-2 hover:text-fg")}
+                >
+                  {t.label}
+                  <span class="tabular-nums text-fg-3">{count(t.id)}</span>
+                </button>
+              )}
+            </For>
+          </div>
+          <label class="mt-2 flex h-8 items-center gap-2 rounded-lg border border-line-strong bg-raised px-2.5 focus-within:border-accent/60">
+            <Search size={13} class="text-fg-3" />
+            <input
+              value={q()}
+              onInput={(e) => setQ(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Escape" && (setQ(""), e.currentTarget.blur())}
+              placeholder="Filter by title, repo, branch or author"
+              class="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-fg-3"
+              data-filter
+            />
+          </label>
         </header>
         <div ref={listEl} class="min-h-0 flex-1 overflow-y-auto px-2 pb-8">
           <For each={g().errors}>{([section, err]) => <div class="mx-2 mb-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-[12.5px] text-danger">{section}: {err}</div>}</For>
-          <Show when={g().loading && !list().length}>
+          <Show when={g().loading && !all().length}>
             <div class="flex flex-col gap-2 px-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-14" />)}</div>
           </Show>
-          <Show when={!g().loading && !list().length && !g().errors.length}>
-            <Empty icon={<Git size={22} />} title="Nothing on GitLab">No reviews, merge requests or issues wait for you.</Empty>
+          <Show when={!g().loading && !inTab().length}>
+            <div class="px-3 py-8 text-center text-[12.5px] text-fg-3">
+              {q().trim() ? "Nothing matches." : tab() === "review" ? "No reviews wait for you." : tab() === "mine" ? "You have no open merge requests." : "No issues are assigned to you."}
+            </div>
           </Show>
           <For each={groups()}>
             {([title, items]) => (
-              <section class="mb-3">
-                <h2 class="px-3 pb-1 pt-3 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">
+              <section class="mt-2">
+                <button
+                  class="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3 hover:text-fg-2"
+                  onClick={() => toggleFold(`${tab()}:${title}`)}
+                  aria-expanded={!isFolded(title)}
+                >
+                  <ChevronDown size={12} class={cls("transition-transform", isFolded(title) && "-rotate-90")} />
                   {title} <span class="ml-1 tabular-nums">{items.length}</span>
-                </h2>
-                <For each={items}>
-                  {(e) => (
-                    <button
-                      data-key={e.key}
-                      onClick={() => select(e.key)}
-                      class={cls("block w-full rounded-lg px-3 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
-                    >
-                      {e.mr ? <MrRow mr={e.mr} /> : <IssueRow issue={e.issue!} />}
-                    </button>
-                  )}
-                </For>
+                </button>
+                <Show when={!isFolded(title)}>
+                  <For each={items}>
+                    {(e) => (
+                      <button
+                        data-key={e.key}
+                        onClick={() => select(e.key)}
+                        class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
+                      >
+                        {e.mr ? <MrRow mr={e.mr} tab={e.tab} group={e.group} /> : <IssueRow issue={e.issue!} />}
+                      </button>
+                    )}
+                  </For>
+                </Show>
               </section>
             )}
           </For>

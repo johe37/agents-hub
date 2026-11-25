@@ -28,7 +28,10 @@ is: it does not restart it, also after an update.
   Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
   permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses
   the browser's own speech recognition, which sends your voice to Google or Microsoft.
-- **GitLab** (`g l`). Your reviews, merge requests and issues, with a detail pane: the
+- **GitLab** (`g l`). Three tabs: **To review** (new, in progress, approved), **My MRs** (needs
+  you, waiting, ready to merge, drafts) and **Issues**; `1`, `2` and `3` switch, `/` filters,
+  and a click on a group title folds it. The count in the menu is what needs you: new reviews,
+  and your MRs with a failed pipeline or open threads. Each item has a detail pane: the
   pipeline's jobs, the open review threads and the description. Reply in a thread or resolve
   it. "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review

@@ -3,6 +3,7 @@ import type { UsageWindow } from "../api";
 import { act, connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, themePref } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
 import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Monitor, Moon, Plus, Search, Sun, Undo, X } from "./icons";
+import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot } from "./ui";
 
 function stored(key: string, fallback: boolean): boolean {
@@ -108,7 +109,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             to={{ view: "gitlab", key: null }}
             icon={<Git size={15} />}
             label="GitLab"
-            count={state.gitlab.reviews.length + state.gitlab.issues.length}
+            count={attention()}
+            tone="waiting"
             active={r().view === "gitlab"}
             onNavigate={p.onNavigate}
           />
