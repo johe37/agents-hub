@@ -3,7 +3,7 @@ import type { Agent } from "../api";
 import { act, agentRoute, ask, go, isBusy, now, state } from "../store";
 import { STATUS, age, alive, cls, fuzzyWords, modelName, money } from "../util";
 import { Conversation } from "./Conversation";
-import { Bot, Branch, Play, Search, Trash } from "./icons";
+import { Bot, Branch, Done, Play, Search, Trash } from "./icons";
 import { Badge, Button, Empty, StatusDot, StatusPill } from "./ui";
 
 const GROUPS: { title: string; test: (a: Agent) => boolean }[] = [
@@ -142,6 +142,11 @@ export function AgentPage(p: { agentKey: string }) {
                 <Show when={moved()}>
                   <Button size="sm" variant="primary" onClick={() => go(agentRoute(ag()))}>
                     Open in workspace
+                  </Button>
+                </Show>
+                <Show when={ag().status === "waiting" && !ag().needs_permission}>
+                  <Button size="sm" variant="ghost" onClick={() => act({ type: "mark_done", agent: ag().key })} title="Stop showing it as waiting">
+                    <Done size={13} /> Done
                   </Button>
                 </Show>
                 <Show when={ag().adoptable}>

@@ -4,7 +4,7 @@ import { act, ask, go, isBusy, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { ArrowDown, ArrowUp, Bot, Done, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
 import { Badge, Button, Empty, IconButton, Kbd, StatusDot, StatusPill } from "./ui";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
@@ -258,6 +258,11 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     else if (k === "e") open("nvim");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");
     else if (k === "\\") togglePanel();
+    else if (k === "m") {
+      const a = agentOf(current());
+      if (!a || a.status !== "waiting" || a.needs_permission) return;
+      act({ type: "mark_done", agent: a.key });
+    }
     else return;
     e.preventDefault();
   };
@@ -407,7 +412,12 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                               <Match when={a().status === "waiting"}>{a().message}</Match>
                             </Switch>
                           </span>
-                          <div class="ml-auto flex rounded-lg bg-hover p-0.5 text-[12px]">
+                          <Show when={a().status === "waiting" && !a().needs_permission}>
+                            <Button size="sm" variant="ghost" class="ml-auto shrink-0" onClick={() => act({ type: "mark_done", agent: a().key })} title="Stop showing it as waiting (m)">
+                              <Done size={13} /> Done
+                            </Button>
+                          </Show>
+                          <div class={cls("flex rounded-lg bg-hover p-0.5 text-[12px]", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
                             <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")}>
                               <Chat size={12} /> Chat
                             </button>

@@ -140,6 +140,7 @@ const KEYS: [string, [string, string][]][] = [
       ["Alt 1–9", "Window by number"],
       ["C / T / E", "New Claude / terminal / editor"],
       ["V", "Chat or terminal for an agent"],
+      ["M", "Mark the agent done"],
       ["\\", "Side panel"],
     ],
   ],
