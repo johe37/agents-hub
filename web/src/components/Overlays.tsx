@@ -154,7 +154,7 @@ const KEYS: [string, [string, string][]][] = [
       ["/", "Filter"],
       ["C", "Claude: review, branch or issue"],
       ["T", "Terminal on the MR's code"],
-      ["D / L", "Changes / commits of the MR"],
+      ["D / L / P", "Changes / commits / pipeline"],
       ["[ / ]", "Previous / next file"],
       ["Click, ⇧ click", "Select lines in a diff"],
       ["A / C", "Ask Claude / comment on them"],

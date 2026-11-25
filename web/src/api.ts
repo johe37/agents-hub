@@ -246,6 +246,7 @@ export type Action =
   | { type: "draft_delete"; mr: string; id: number }
   | { type: "finish_review"; mr: string; summary: string; approve: boolean; head?: string }
   | { type: "mr_approve"; mr: string; approve: boolean; head?: string }
+  | { type: "retry_job"; mr: string; job: number }
   | { type: "reopen_workspace"; id: string }
   | { type: "forget_closed"; id: string };
 

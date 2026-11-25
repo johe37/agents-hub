@@ -50,14 +50,18 @@ is: it does not restart it, also after an update.
 
 ## Reviewing a merge request
 
-An MR's detail pane has three tabs: **Overview**, **Commits** (`l`) and **Changes** (`d`).
-`Esc` goes back to the overview.
+An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** (`d`) and
+**Pipeline** (`p`). `Esc` goes back to the overview.
 
 - **Changes** shows the diff as GitLab does, unified or side by side (`s`), with syntax
   colors. Pick one commit, or only the changes since your last review, in the list above the
   diff. A click on a commit in **Commits** also shows only its diff. `[` and `]` go to the
   previous and next file. Mark a file as viewed to fold it; it unfolds again when its diff
   changes.
+- **Pipeline** shows the stages and their jobs. Click a job to read the end of its log; the
+  log of a running job updates every few seconds. It opens on the first failed job. **Retry**
+  runs the job again, and **Ask Claude** on a failed job asks the Claude in the MR's checkout
+  to find the cause.
 - **Select lines.** Click a line number. Shift+click another line in the same hunk to select
   up to it.
 - **Ask Claude** (`a`). The side panel opens with the Claude in the MR's checkout, and its

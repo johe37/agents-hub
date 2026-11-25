@@ -10,7 +10,7 @@ import { Markdown } from "./Markdown";
 import { ReviewDiff } from "./ReviewDiff";
 import { Badge, Button, IconButton, Spinner } from "./ui";
 
-export type DetailTab = "overview" | "commits" | "changes";
+export type DetailTab = "overview" | "commits" | "changes" | "pipeline";
 
 function load(key: string): string | null {
   try {
@@ -27,7 +27,7 @@ function save(key: string, v: string) {
 }
 
 const savedTab = load("mr-tab");
-const [tab, setTabRaw] = createSignal<DetailTab>(savedTab === "commits" || savedTab === "changes" ? savedTab : "overview");
+const [tab, setTabRaw] = createSignal<DetailTab>(savedTab === "commits" || savedTab === "changes" || savedTab === "pipeline" ? savedTab : "overview");
 export const detailTab = tab;
 export function setDetailTab(t: DetailTab) {
   setTabRaw(t);
@@ -67,7 +67,7 @@ export function createReview(mr: () => Mr) {
   createEffect(on(() => mr().key, () => setMode(""), { defer: true }));
   const url = (key: string, extra = "") => `/api/mr/changes?mr=${encodeURIComponent(key)}${extra}`;
   const [all] = createResource(
-    () => tab() !== "overview" && ([mr().key, mr().updated] as const),
+    () => (tab() === "changes" || tab() === "commits") && ([mr().key, mr().updated] as const),
     async ([key]) => ({ key, ...(await getJSON<MrChanges>(url(key))) }),
   );
   const [one] = createResource(
@@ -75,7 +75,7 @@ export function createReview(mr: () => Mr) {
     async ([key, m]) => ({ key, mode: m, ...(await getJSON<MrChanges>(url(key, m.startsWith("c:") ? `&commit=${m.slice(2)}` : `&since=${m.slice(2)}`))) }),
   );
   const [drafts] = createResource(
-    () => tab() !== "overview" && ([mr().key, draftTick()] as const),
+    () => (tab() === "changes" || tab() === "commits") && ([mr().key, draftTick()] as const),
     async ([key]) => ({ key, ...(await getJSON<{ drafts: DraftNote[] }>(`/api/mr/drafts?mr=${encodeURIComponent(key)}`)) }),
   );
   const data = () => {

@@ -287,3 +287,12 @@ textarea:focus-visible {
 .hljs-type, .hljs-built_in, .hljs-class .hljs-title, .hljs-selector-class { color: var(--hl-type); }
 .hljs-meta, .hljs-tag, .hljs-bullet, .hljs-link { color: var(--hl-meta); }
 .hljs-variable, .hljs-template-variable, .hljs-params, .hljs-property, .hljs-selector-id, .hljs-deletion { color: var(--hl-var); }
+
+/* CI log colors. */
+.ansi-30, .ansi-37 { color: var(--fg-3); }
+.ansi-31 { color: var(--del); }
+.ansi-32 { color: var(--add); }
+.ansi-33 { color: var(--waiting); }
+.ansi-34 { color: var(--working); }
+.ansi-35 { color: var(--hl-keyword); }
+.ansi-36 { color: var(--hl-meta); }

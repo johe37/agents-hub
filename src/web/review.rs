@@ -116,3 +116,17 @@ pub async fn mr_drafts(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<Stri
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
     }
 }
+
+/// A job of the MR's pipeline: its log, the last 512 kB.
+pub async fn mr_job(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let (Some(key), Some(id)) = (q.get("mr"), q.get("job").and_then(|j| j.parse::<u64>().ok())) else {
+        return (StatusCode::BAD_REQUEST, "mr or job missing").into_response();
+    };
+    let job = super::actions::find_mr(&hub, key).ok().and_then(|m| m.jobs.into_iter().find(|j| j.id == id));
+    let Some(job) = job else { return (StatusCode::NOT_FOUND, Json(json!({"error": "The job is not in this merge request's pipeline"}))).into_response() };
+    match tokio::task::spawn_blocking(move || gitlab::job_log(&job.url, job.id, 512 * 1024)).await {
+        Ok(Ok((log, truncated))) => Json(json!({"log": log, "truncated": truncated})).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+    }
+}

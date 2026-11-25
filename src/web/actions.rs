@@ -47,6 +47,7 @@ pub enum Action {
     /// head is the commit you reviewed: the next review can show what changed since.
     FinishReview { mr: String, summary: String, approve: bool, head: Option<String> },
     MrApprove { mr: String, approve: bool, head: Option<String> },
+    RetryJob { mr: String, job: u64 },
     ReopenWorkspace { id: String },
     ForgetClosed { id: String },
 }
@@ -457,6 +458,14 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             }
             forget_gitlab(hub, None);
             Ok(said(if approve { format!("Approved !{}", m.iid) } else { format!("Revoked your approval of !{}", m.iid) }))
+        }
+        Action::RetryJob { mr: key, job } => {
+            let m = find_mr(hub, &key)?;
+            let j = m.jobs.iter().find(|j| j.id == job).ok_or("The job is not in this merge request's pipeline")?;
+            crate::gitlab::retry_job(&j.url, j.id)?;
+            let path = hub.snapshot().workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| mr_key(wm) == key)).map(|w| w.path.clone());
+            forget_gitlab(hub, path.as_deref());
+            Ok(said(format!("Retrying {}", j.name)))
         }
         Action::GitlabRefresh => {
             let paths: Vec<String> = hub.snapshot().workspaces.iter().filter(|w| w.mr.is_some()).map(|w| w.path.clone()).collect();

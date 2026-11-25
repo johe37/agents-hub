@@ -648,6 +648,35 @@ pub fn approve(mr: &Mr, on: bool) -> Result<(), String> {
     glab(&home, &["api", "-X", "POST", &mr_path(mr, if on { "approve" } else { "unapprove" })]).map(|_| ())
 }
 
+/// The project of a job from its web URL, `https://host/acme/api/-/jobs/12`, URL-encoded for the API.
+/// A fork's pipeline runs in the fork, so the MR's project would be the wrong one.
+fn job_project(url: &str) -> Option<String> {
+    let path = url.split("://").nth(1)?.split_once('/')?.1.split("/-/jobs/").next()?;
+    (!path.is_empty()).then(|| path.replace('/', "%2F"))
+}
+
+/// The end of a job's log: the error is almost always there.
+pub fn job_log(url: &str, id: u64, max: usize) -> Result<(String, bool), String> {
+    let project = job_project(url).ok_or("The job has no project")?;
+    let home = crate::config::home().display().to_string();
+    let log = glab(&home, &["api", &format!("projects/{project}/jobs/{id}/trace")])?;
+    if log.len() <= max {
+        return Ok((log, false));
+    }
+    let mut cut = log.len() - max;
+    while !log.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let start = log[cut..].find('\n').map_or(cut, |i| cut + i + 1);
+    Ok((log[start..].to_string(), true))
+}
+
+pub fn retry_job(url: &str, id: u64) -> Result<(), String> {
+    let project = job_project(url).ok_or("The job has no project")?;
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &format!("projects/{project}/jobs/{id}/retry")]).map(|_| ())
+}
+
 pub fn reviews_dir() -> PathBuf {
     crate::config::cache_dir().join("reviews")
 }
@@ -1000,6 +1029,12 @@ mod tests {
         assert_eq!((d[0].line, d[0].old_line), (Some(4), true));
         assert_eq!((d[1].path.as_deref(), d[1].line, d[1].old_line), (Some("b.rs"), Some(9), false));
         assert_eq!((d[2].path.as_deref(), d[2].line), (None, None));
+    }
+
+    #[test]
+    fn finds_the_project_of_a_job() {
+        assert_eq!(job_project("https://git.example.com/acme/tools/api/-/jobs/12").as_deref(), Some("acme%2Ftools%2Fapi"));
+        assert_eq!(job_project(""), None);
     }
 
     fn mr_stub() -> Mr {

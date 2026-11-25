@@ -1,37 +1,13 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
-import type { Issue, Job, Mr, Thread } from "../api";
+import type { Issue, Mr, Thread } from "../api";
 import { allMrs, entries, goWorkspace, isReview, openMr, pipelineTone, startIssue, type Entry, type Kind, type Tab } from "../gitlab";
 import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
-import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, Pipeline, Refresh, Search, Sparkles, Terminal, X } from "./icons";
+import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
+import { JobMark, Pipeline as PipelineTab, Stages, setPipeJob } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Empty, Spinner } from "./ui";
-
-function duration(s: number | null): string {
-  if (s == null) return "";
-  const m = Math.floor(s / 60);
-  return m ? `${m}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
-}
-
-function JobMark(p: { status: string }) {
-  return (
-    <Switch fallback={<span class="size-2 rounded-full bg-fg-3/50" />}>
-      <Match when={p.status === "success"}>
-        <Check size={13} stroke-width={2.5} class="text-idle" />
-      </Match>
-      <Match when={p.status === "failed"}>
-        <X size={13} stroke-width={2.5} class="text-danger" />
-      </Match>
-      <Match when={p.status === "warning"}>
-        <span class="text-[12px] font-bold leading-none text-waiting">!</span>
-      </Match>
-      <Match when={p.status === "running" || p.status === "pending"}>
-        <Spinner size={11} />
-      </Match>
-    </Switch>
-  );
-}
+import { Badge, Button, Empty } from "./ui";
 
 function Lead(p: { mr: Mr }) {
   const m = () => p.mr;
@@ -118,51 +94,6 @@ function Section(p: { title: string; children: any; actions?: any }) {
   );
 }
 
-function Pipe(p: { mr: Mr }) {
-  const stages = createMemo(() => {
-    const out: [string, Job[]][] = [];
-    for (const j of p.mr.jobs) {
-      const s = out.find(([name]) => name === j.stage);
-      if (s) s[1].push(j);
-      else out.push([j.stage, [j]]);
-    }
-    return out;
-  });
-  return (
-    <Section
-      title="Pipeline"
-      actions={
-        <Show when={p.mr.pipeline_url}>
-          <a href={p.mr.pipeline_url!} target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[12px] text-fg-2 hover:text-fg">
-            Open <External size={11} />
-          </a>
-        </Show>
-      }
-    >
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2">
-        <For each={stages()}>
-          {([stage, jobs]) => (
-            <div class="rounded-xl border border-line bg-raised p-2">
-              <div class="mb-1 px-1 text-[11.5px] font-medium uppercase tracking-wide text-fg-3">{stage}</div>
-              <For each={jobs}>
-                {(j) => (
-                  <a href={j.url} target="_blank" rel="noopener" class="flex items-center gap-2 rounded-md px-1.5 py-1 text-[12.5px] hover:bg-hover">
-                    <span class="grid w-3.5 shrink-0 place-items-center">
-                      <JobMark status={j.status} />
-                    </span>
-                    <span class={cls("truncate", j.status === "failed" ? "text-danger" : "text-fg")}>{j.name}</span>
-                    <span class="ml-auto shrink-0 tabular-nums text-fg-3">{duration(j.duration)}</span>
-                  </a>
-                )}
-              </For>
-            </div>
-          )}
-        </For>
-      </div>
-    </Section>
-  );
-}
-
 function ThreadBox(p: { mr: Mr; thread: Thread }) {
   const [text, setText] = createSignal("");
   const key = (what: string) => `${what}:${p.mr.key}:${p.thread.id}`;
@@ -246,6 +177,7 @@ const DETAIL_TABS: { id: DetailTab; label: string; key: string }[] = [
   { id: "overview", label: "Overview", key: "Esc" },
   { id: "commits", label: "Commits", key: "L" },
   { id: "changes", label: "Changes", key: "D" },
+  { id: "pipeline", label: "Pipeline", key: "P" },
 ];
 
 function MrDetail(p: { mr: Mr }) {
@@ -313,6 +245,11 @@ function MrDetail(p: { mr: Mr }) {
               onClick={() => setDetailTab(t.id)}
               class={cls("-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition-colors", detailTab() === t.id ? "border-accent text-fg" : "border-transparent text-fg-2 hover:text-fg")}
             >
+              <Show when={t.id === "pipeline" && m().pipeline}>
+                <span class="grid w-3.5 place-items-center">
+                  <JobMark status={m().pipeline!} />
+                </span>
+              </Show>
               {t.label}
               <Show when={count(t.id) != null}>
                 <span class="rounded-full bg-hover px-1.5 text-[11px] tabular-nums text-fg-3">{count(t.id)}</span>
@@ -333,6 +270,11 @@ function MrDetail(p: { mr: Mr }) {
             <Changes mr={m()} review={review} thread={(t) => <ThreadBox mr={m()} thread={t} />} />
           </div>
         </Match>
+        <Match when={detailTab() === "pipeline"}>
+          <div class="mt-4">
+            <PipelineTab mr={m()} />
+          </div>
+        </Match>
         <Match when={detailTab() === "overview"}>
           <Overview mr={m()} />
         </Match>
@@ -346,7 +288,16 @@ function Overview(p: { mr: Mr }) {
   return (
     <>
       <Show when={m().jobs.length}>
-        <Pipe mr={m()} />
+        <Section
+          title="Pipeline"
+          actions={
+            <button class="text-[12px] text-fg-2 hover:text-fg" onClick={() => setDetailTab("pipeline")}>
+              Logs
+            </button>
+          }
+        >
+          <Stages mr={m()} onPick={(j) => (setPipeJob(j.id), setDetailTab("pipeline"))} />
+        </Section>
       </Show>
 
       <Section title={`Open threads ${m().threads.length ? m().threads.length : ""}`}>
@@ -551,8 +502,9 @@ export function Gitlab() {
         break;
       case "d":
       case "l":
+      case "p":
         if (!cur?.mr) return;
-        setDetailTab(e.key === "d" ? "changes" : "commits");
+        setDetailTab(e.key === "d" ? "changes" : e.key === "l" ? "commits" : "pipeline");
         break;
       case "Escape":
         if (!selected()) return;
