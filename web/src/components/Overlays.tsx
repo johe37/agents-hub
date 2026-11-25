@@ -120,7 +120,7 @@ const KEYS: [string, [string, string][]][] = [
       ["Ctrl ⇧ K", "Palette, from inside a terminal"],
       ["N", "New agent with a task"],
       ["O", "Open a workspace"],
-      ["G I / G A / G L", "Go to inbox / agents / GitLab"],
+      ["G A / G L", "Go to agents / GitLab"],
       ["W", "Next agent that needs you"],
       ["|", "Hide or show the sidebar"],
       ["Z", "Focus mode: only the content"],
@@ -128,9 +128,9 @@ const KEYS: [string, [string, string][]][] = [
     ],
   ],
   [
-    "Inbox",
+    "Agents",
     [
-      ["J / K", "Next / previous agent"],
+      ["J / K", "Next / previous waiting agent"],
       ["A / D", "Approve / deny"],
       ["R", "Reply"],
       ["M", "Mark done"],

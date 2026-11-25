@@ -28,7 +28,6 @@ setInterval(() => setNow(Date.now()), 1000);
 // ---- Routing: the URL always says what is on screen, so Back and reload work.
 
 export type Route =
-  | { view: "inbox" }
   | { view: "agents" }
   | { view: "gitlab"; key: string | null }
   | { view: "workspace"; name: string; window: string | null }
@@ -52,13 +51,11 @@ function parse(hash: string): Route {
       if (parts[1]) return { view: "open", path: parts.slice(1).join("/") };
       break;
   }
-  return { view: "inbox" };
+  return { view: "agents" };
 }
 
 export function href(r: Route): string {
   switch (r.view) {
-    case "inbox":
-      return "#/inbox";
     case "agents":
       return "#/agents";
     case "gitlab":
@@ -252,7 +249,7 @@ function notifyChanges(next: State) {
     const n = new Notification(`${ask ? "⏳" : "✓"} ${a.name}: ${a.title}`, { body, tag: a.key, silent: !ask });
     n.onclick = () => {
       window.focus();
-      go(ask ? { view: "inbox" } : agentRoute(a));
+      go(ask ? { view: "agents" } : agentRoute(a));
       n.close();
     };
   }
@@ -279,13 +276,7 @@ export const store = createRoot(() => {
     }
     return m;
   });
-  /** Agents that finished a turn recently, for "ready for review" in the inbox. */
-  const finished = createMemo(() =>
-    state.agents
-      .filter((a) => a.status === "idle" && a.turns > 0 && a.timestamp > 0)
-      .sort((a, b) => b.timestamp - a.timestamp),
-  );
-  return { agentsByKey, waiting, live, byWorkspace, finished };
+  return { agentsByKey, waiting, live, byWorkspace };
 });
 
 export function sortAgents(list: Agent[]): Agent[] {
@@ -374,7 +365,7 @@ export function closeWorkspace(w: Workspace) {
 async function closeNow(w: Workspace) {
   const before = () => {
     const here = route();
-    if (here.view === "workspace" && here.name === w.name) go({ view: "inbox" });
+    if (here.view === "workspace" && here.name === w.name) go({ view: "agents" });
   };
   const r = await actHiding({ type: "close_workspace", workspace: w.name }, { workspace: w.name }, { quiet: true, before });
   if (!r.ok) return;

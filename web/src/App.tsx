@@ -2,7 +2,6 @@ import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } f
 import { AgentPage, Agents } from "./components/Agents";
 import { Gitlab } from "./components/Gitlab";
 import { Menu } from "./components/icons";
-import { Inbox } from "./components/Inbox";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
 import { Confirm, DiffModal, Help, Toasts } from "./components/Overlays";
@@ -67,7 +66,7 @@ export function App() {
   });
 
   // Single keys only act when nothing else wants the keyboard: inputs and terminals keep theirs.
-  // Capture phase: this runs before the views' own keys, so "g a" never reaches the inbox as "a".
+  // Capture phase: this runs before the views' own keys, so "g a" never reaches the agents view as "a".
   let pendingG = 0;
   const onKey = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
@@ -83,8 +82,7 @@ export function App() {
     const k = e.key;
     if (pendingG && Date.now() - pendingG < 800) {
       pendingG = 0;
-      if (k === "i") go({ view: "inbox" });
-      else if (k === "a") go({ view: "agents" });
+      if (k === "a") go({ view: "agents" });
       else if (k === "l") go({ view: "gitlab", key: null });
       else return;
       e.preventDefault();
@@ -101,7 +99,7 @@ export function App() {
         break;
       }
       case "o":
-        if (route().view === "inbox" || route().view === "gitlab") return;
+        if (route().view === "agents" || route().view === "gitlab") return;
         openPalette("open");
         break;
       case "O":
@@ -182,9 +180,6 @@ export function App() {
         </Show>
         <main class={cls("min-h-0 flex-1", route().view === "workspace" || route().view === "agent" ? "overflow-hidden" : "overflow-y-auto")}>
           <Switch>
-            <Match when={route().view === "inbox"}>
-              <Inbox />
-            </Match>
             <Match when={route().view === "agents"}>
               <Agents />
             </Match>

@@ -23,7 +23,7 @@ import {
 import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Undo, Folder, Git, Inbox, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
 import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
@@ -130,7 +130,6 @@ export function Palette() {
             { id: "new-term", group: "Actions", title: `New terminal in ${ws.name}`, icon: <Terminal size={15} />, keywords: "shell", run: () => (close(), act({ type: "new_window", workspace: ws.name, kind: "shell" }, { quiet: true }).then((r) => r.ok && r.window && go({ view: "workspace", name: ws.name, window: r.window }))) },
           ]
         : []),
-      { id: "go-inbox", group: "Go to", title: "Inbox", icon: <Inbox size={15} />, run: () => (close(), go({ view: "inbox" })) },
       { id: "go-agents", group: "Go to", title: "Agents", icon: <Bot size={15} />, run: () => (close(), go({ view: "agents" })) },
       ...(state.gitlab.enabled ? [{ id: "go-gitlab", group: "Go to", title: "GitLab", icon: <Git size={15} />, run: () => (close(), go({ view: "gitlab", key: null })) }] : []),
       ...state.workspaces.map((w) => ({

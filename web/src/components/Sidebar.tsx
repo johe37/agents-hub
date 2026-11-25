@@ -2,7 +2,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
 import { act, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
+import { Bell, BellOff, Bot, ChevronDown, Git, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot } from "./ui";
@@ -102,8 +102,15 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       </div>
 
       <nav class="flex flex-col gap-0.5 px-3 py-1">
-        <NavItem to={{ view: "inbox" }} icon={<Inbox size={15} />} label="Inbox" count={store.waiting().length} tone="waiting" active={r().view === "inbox"} onNavigate={p.onNavigate} />
-        <NavItem to={{ view: "agents" }} icon={<Bot size={15} />} label="Agents" count={store.live().length} active={r().view === "agents" || r().view === "agent"} onNavigate={p.onNavigate} />
+        <NavItem
+          to={{ view: "agents" }}
+          icon={<Bot size={15} />}
+          label="Agents"
+          count={store.waiting().length || store.live().length}
+          tone={store.waiting().length ? "waiting" : undefined}
+          active={r().view === "agents" || r().view === "agent"}
+          onNavigate={p.onNavigate}
+        />
         <Show when={state.gitlab.enabled}>
           <NavItem
             to={{ view: "gitlab", key: null }}

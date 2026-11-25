@@ -209,7 +209,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       // tmux closes the session with its last window.
       const what = rest.length ? { window: w.id } : { window: w.id, workspace: p.name };
       const before = () => {
-        if (!rest.length) go({ view: "inbox" });
+        if (!rest.length) go({ view: "agents" });
         else if (p.window === w.id) go({ view: "workspace", name: p.name, window: rest[0].id }, true);
       };
       actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
@@ -270,8 +270,8 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       when={ws()}
       fallback={
         <Empty icon={<Layers size={22} />} title="This workspace is closed" class="h-full">
-          <Button class="mt-4" onClick={() => go({ view: "inbox" })}>
-            Back to the inbox
+          <Button class="mt-4" onClick={() => go({ view: "agents" })}>
+            Back to agents
           </Button>
         </Empty>
       }

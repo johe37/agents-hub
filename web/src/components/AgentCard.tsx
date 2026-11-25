@@ -8,7 +8,7 @@ import { Reply } from "./Reply";
 import { ToolDetail } from "./ToolCall";
 import { Button, StatusPill } from "./ui";
 
-/** A waiting agent with everything needed to answer it without leaving the inbox. */
+/** A waiting agent with everything needed to answer it without leaving the agents view. */
 export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => void; replyRef?: (el: HTMLTextAreaElement) => void }) {
   const a = () => p.agent;
   const approve = () => act({ type: "approve", agent: a().key }, { key: `approve:${a().key}` });
