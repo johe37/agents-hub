@@ -18,7 +18,7 @@ import {
 } from "../store";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Undo, Code, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Undo, Folder, Git, Inbox, Keyboard, Layers, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
 
 interface Item {
@@ -94,7 +94,6 @@ export function Palette() {
       ...(ws
         ? [
             { id: "new-term", group: "Actions", title: `New terminal in ${ws.name}`, icon: <Terminal size={15} />, keywords: "shell", run: () => (close(), act({ type: "new_window", workspace: ws.name, kind: "shell" }, { quiet: true }).then((r) => r.ok && r.window && go({ view: "workspace", name: ws.name, window: r.window }))) },
-            { id: "new-edit", group: "Actions", title: `New editor in ${ws.name}`, icon: <Code size={15} />, keywords: "nvim vim", run: () => (close(), act({ type: "new_window", workspace: ws.name, kind: "nvim" }, { quiet: true }).then((r) => r.ok && r.window && go({ view: "workspace", name: ws.name, window: r.window }))) },
           ]
         : []),
       { id: "go-inbox", group: "Go to", title: "Inbox", icon: <Inbox size={15} />, run: () => (close(), go({ view: "inbox" })) },

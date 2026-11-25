@@ -205,7 +205,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     if (d && agentOf(current())?.key === d.agent) setMode("chat");
   });
 
-  const open = (kind: "claude" | "shell" | "nvim") =>
+  const open = (kind: "claude" | "shell") =>
     act({ type: "new_window", workspace: p.name, kind }, { key: `new:${kind}`, quiet: true }).then((r) => {
       if (r.ok && r.window) {
         go({ view: "workspace", name: p.name, window: r.window });
@@ -258,7 +258,6 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     else if (k === "[" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i - 1 + wins.length) % wins.length].id });
     else if (k === "c") open("claude");
     else if (k === "t") open("shell");
-    else if (k === "e") open("nvim");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");
     else if (k === "\\") togglePanel();
     else if (k === "m") {
@@ -395,14 +394,13 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               }}
             </For>
             <MenuButton
-              label="New window (c, t, e)"
-              icon={<Show when={isBusy("new:claude") || isBusy("new:shell") || isBusy("new:nvim")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
+              label="New window (c, t)"
+              icon={<Show when={isBusy("new:claude") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
               size="sm"
               class="ml-0.5"
               items={[
                 { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
                 { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
-                { label: "Editor", icon: <Code size={14} />, hint: "E", run: () => open("nvim") },
               ]}
             />
           </nav>

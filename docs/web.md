@@ -19,11 +19,11 @@ is: it does not restart it, also after an update.
   of an answer declines the tool and goes to Claude as your next prompt. Below the inbox: the
   agents that work now, and the ones that finished a turn.
 - **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
-  chat: its conversation, with the tool calls folded, and a box to reply. Shells and editors
-  are live terminals in the page. The side panel lists the agents, the merge request and the
+  chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
+  in the page; start your editor in one. The side panel lists the agents, the merge request and the
   changed files; click a file to see its diff.
 - **Open a workspace** (`o`). Pick a directory. If it has no workspace yet, choose what starts
-  in it: Claude, a terminal or an editor. The workspace opens with only that window.
+  in it: Claude or a terminal. The workspace opens with only that window.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not
   open yet, and Claude starts with the task as its first prompt.
 - **Voice chat.** Click the microphone in a reply box and talk. When you stop, it is sent; when
@@ -38,7 +38,7 @@ is: it does not restart it, also after an update.
   it. "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review
   prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
-  starts Claude in your clone with a prompt about the issue. `t` and `e` open a shell or nvim
+  starts Claude in your clone with a prompt about the issue. `t` opens a shell
   on the MR's code. A workspace on a branch shows its MR in the side panel, and a button to
   push (and open a draft MR when it has none). Checkouts work as in the terminal hub; see
   [gitlab.md](gitlab.md).

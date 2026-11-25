@@ -1,15 +1,14 @@
 import { For, onCleanup, onMount } from "solid-js";
 import { act, go, isBusy, setComposer, state } from "../store";
 import { basename } from "../util";
-import { Bot, Code, Folder, Sparkles, Terminal } from "./icons";
+import { Bot, Folder, Sparkles, Terminal } from "./icons";
 import { Spinner } from "./ui";
 
-type Kind = "claude" | "shell" | "nvim";
+type Kind = "claude" | "shell";
 
 const CHOICES: { kind: Kind; title: string; body: string; key: string; icon: () => any }[] = [
   { kind: "claude", title: "Claude", body: "Claude Code in this directory", key: "C", icon: () => <Bot size={20} /> },
-  { kind: "shell", title: "Terminal", body: "A shell to run and test things", key: "T", icon: () => <Terminal size={20} /> },
-  { kind: "nvim", title: "Editor", body: "nvim in this directory", key: "E", icon: () => <Code size={20} /> },
+  { kind: "shell", title: "Terminal", body: "A shell: run, test or start your editor", key: "T", icon: () => <Terminal size={20} /> },
 ];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
@@ -43,7 +42,7 @@ export function OpenWorkspace(p: { path: string }) {
         </div>
       </div>
       <p class="mt-6 text-fg-2">What do you want to start in this workspace?</p>
-      <div class="mt-3 grid gap-3 sm:grid-cols-3">
+      <div class="mt-3 grid gap-3 sm:grid-cols-2">
         <For each={CHOICES}>
           {(c) => (
             <button

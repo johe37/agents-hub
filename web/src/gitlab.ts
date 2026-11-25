@@ -1,7 +1,7 @@
 import type { Issue, Mr } from "./api";
 import { act, go, setComposer, setDraft, state } from "./store";
 
-export type Kind = "claude" | "shell" | "nvim";
+export type Kind = "claude" | "shell";
 
 export const allMrs = (): Mr[] => {
   const g = state.gitlab;

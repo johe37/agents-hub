@@ -140,7 +140,7 @@ const KEYS: [string, [string, string][]][] = [
     [
       ["[ / ]", "Previous / next window"],
       ["Alt 1–9", "Window by number"],
-      ["C / T / E", "New Claude / terminal / editor"],
+      ["C / T", "New Claude / terminal"],
       ["V", "Chat or terminal for an agent"],
       ["M", "Mark the agent done"],
       ["\\", "Side panel"],
@@ -153,7 +153,7 @@ const KEYS: [string, [string, string][]][] = [
       ["J / K", "Next / previous"],
       ["/", "Filter"],
       ["C", "Claude: review, branch or issue"],
-      ["T / E", "Shell / editor on the MR's code"],
+      ["T", "Terminal on the MR's code"],
       ["O", "Open in GitLab"],
       ["⇧ R", "Fetch again"],
     ],

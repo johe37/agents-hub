@@ -237,9 +237,6 @@ function OpenButtons(p: { mr: Mr }) {
       <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="T">
         <Terminal size={13} /> Shell
       </Button>
-      <Button size="sm" disabled={busy()} onClick={() => open("nvim")} kbd="E">
-        <Code size={13} /> Editor
-      </Button>
     </>
   );
 }
@@ -477,9 +474,8 @@ export function Gitlab() {
         else return;
         break;
       case "t":
-      case "e":
         if (!cur?.mr) return;
-        void openMr(cur.mr, e.key === "t" ? "shell" : "nvim");
+        void openMr(cur.mr, "shell");
         break;
       case "R":
         void act({ type: "gitlab_refresh" });
