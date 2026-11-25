@@ -1,4 +1,4 @@
-"""Write fake hook events, transcripts and plan usage for the claude-hub demo.
+"""Write fake hook events, transcripts and plan usage for the jugglr demo.
 
 usage: events.py <home> <state_dir> <socket> <pay_pane> <dash_pane> <infra_pane>
 """

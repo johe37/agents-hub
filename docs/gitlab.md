@@ -37,7 +37,7 @@ with its status and duration.
 MRs where you are a requested reviewer are listed under
 **REVIEWS**, newest activity first, with author, pipeline and open threads. The panel shows the
 description, threads, approvals and pipeline. `Enter` opens the MR in GitLab. `c` checks out its
-code in a separate git worktree of your local clone (under `~/.cache/claude-hub/reviews/`),
+code in a separate git worktree of your local clone (under `~/.cache/jugglr/reviews/`),
 opens it as a workspace and starts Claude with a review prompt typed in but not sent: adjust it,
 then press `Enter`. `t` and `e` check it out the same way, with a shell or nvim instead of
 Claude. Your own checkout is never touched. The review's workspace shows in **WORKSPACES**,
@@ -55,7 +55,7 @@ shows only under **MERGE REQUESTS**. Each row shows pipeline, open threads and a
 the workspace that has its branch, if one is open. `Enter` goes to that workspace, and `c`, `t`
 and `e` open Claude, a shell or nvim in it. Without a workspace, `Enter` opens the MR in GitLab,
 and `c`, `t` and `e` first check out the MR's branch in a git worktree of your local clone (under
-`~/.cache/claude-hub/mrs/`), so you can commit and push with `p`. Your own checkout is never
+`~/.cache/jugglr/mrs/`), so you can commit and push with `p`. Your own checkout is never
 switched. For an MR from a fork, the clone needs a remote for the fork. `x` closes the workspace
 and removes the worktree; git refuses while it has uncommitted changes, and commits stay on the
 branch.

@@ -1,10 +1,12 @@
 mod app;
+mod closed;
 mod config;
 mod fuzzy;
 mod git;
 mod gitlab;
 mod hooks;
 mod input;
+mod migrate;
 mod picker;
 mod screens;
 mod snapshot;
@@ -14,6 +16,7 @@ mod tmux;
 mod transcript;
 mod ui;
 mod usage;
+mod web;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -21,20 +24,21 @@ use std::process::ExitCode;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | restart | stop [-y] | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: jugglr [<dir> | <query>] | ui [--no-mouse] | web [--port N] [--no-open] | restart | stop [-y] | report | statusline | install-hooks [-y]
 
-Open the claude-hub workspace manager. Give a directory to open a workspace there,
+Open the jugglr workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
+  web             run the hub as a web app on 127.0.0.1 (default port 7420) and open it
   restart         restart a frozen hub UI; workspaces and agents keep running
   stop            stop the tmux engine and close all workspaces and agents
   report          hook handler: read hook JSON from stdin
   statusline      status line command: store plan usage for the hub
-  install-hooks   add claude-hub hooks and status line to ~/.claude/settings.json";
+  install-hooks   add jugglr hooks and status line to ~/.claude/settings.json";
 
 fn exe() -> String {
-    std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into())
+    std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "jugglr".into())
 }
 
 /// Start the engine if needed, then go to the hub, or straight to a workspace for a directory.
@@ -50,7 +54,7 @@ fn open_hub(cfg: &config::Config, target: Option<String>) -> ExitCode {
         Some(t) if std::path::Path::new(&t).is_dir() => match tmux::ensure_workspace(&tmux::canonical(&t)) {
             Ok(s) => session = s,
             Err(e) => {
-                eprintln!("claude-hub: {e}");
+                eprintln!("jugglr: {e}");
                 return ExitCode::FAILURE;
             }
         },
@@ -63,19 +67,19 @@ fn open_hub(cfg: &config::Config, target: Option<String>) -> ExitCode {
         let _ = tmux::switch_client(&session);
         return ExitCode::SUCCESS;
     }
-    eprintln!("claude-hub: {}", tmux::exec_attach(&conf, &session));
+    eprintln!("jugglr: {}", tmux::exec_attach(&conf, &session));
     ExitCode::FAILURE
 }
 
 fn restart() -> ExitCode {
     if !tmux::server_running() {
-        eprintln!("claude-hub: the hub is not running");
+        eprintln!("jugglr: the hub is not running");
         return ExitCode::FAILURE;
     }
     // Without a hub session, open_hub starts a new one.
     if tmux::list_sessions().iter().any(|s| s == tmux::HUB_SESSION) {
         if let Err(e) = tmux::restart_hub(&exe()) {
-            eprintln!("claude-hub: {e}");
+            eprintln!("jugglr: {e}");
             return ExitCode::FAILURE;
         }
     }
@@ -99,7 +103,7 @@ fn stop(yes: bool) -> ExitCode {
         }
     }
     if let Err(e) = tmux::kill_server() {
-        eprintln!("claude-hub: {e}");
+        eprintln!("jugglr: {e}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -123,20 +127,50 @@ fn run_ui(cfg: config::Config) -> ExitCode {
     }
     ratatui::restore();
     if let Err(e) = result {
-        eprintln!("claude-hub: {e}");
+        eprintln!("jugglr: {e}");
         return ExitCode::FAILURE;
     }
     if let Some(session) = app.attach_to {
         let conf = tmux::write_config(&exe(), &cfg.hub_key);
-        eprintln!("claude-hub: {}", tmux::exec_attach(&conf, &session));
+        eprintln!("jugglr: {}", tmux::exec_attach(&conf, &session));
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
 
+const WEB_PORT: u16 = 7420;
+
+fn run_web(args: &[String]) -> ExitCode {
+    let port = match args.iter().position(|a| a == "--port").map(|i| args.get(i + 1).and_then(|p| p.parse::<u16>().ok())) {
+        Some(Some(p)) => p,
+        Some(None) => {
+            eprintln!("jugglr: --port needs a number");
+            return ExitCode::FAILURE;
+        }
+        None => WEB_PORT,
+    };
+    // SAFETY: no other thread runs yet. Without these, tmux calls would act on the terminal the server started in.
+    unsafe {
+        std::env::remove_var("TMUX");
+        std::env::remove_var("TMUX_PANE");
+    }
+    let cfg = config::load();
+    // The hub UI keeps the pools of ready shells and Claudes; the web app only uses them.
+    // A running hub keeps its binary and config, so the web app never restarts it.
+    if !tmux::server_running() {
+        let exe = exe();
+        let conf = tmux::write_config(&exe, &cfg.hub_key);
+        tmux::ensure_hub(&exe, &conf);
+    }
+    web::run(cfg, port, !args.iter().any(|a| a == "--no-open"))
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let first = args.first().map(String::as_str);
+    if !matches!(first, Some("report" | "statusline")) {
+        migrate::run();
+    }
     match first {
         Some("report") => {
             hooks::report();
@@ -152,6 +186,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("restart") => restart(),
+        Some("web") => run_web(&args[1..]),
         Some("stop") => stop(args.iter().any(|a| a == "-y" || a == "--yes")),
         Some("ui") => {
             let mut cfg = config::load();

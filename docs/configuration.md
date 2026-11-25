@@ -1,6 +1,6 @@
 # Configuration
 
-Every key in `~/.config/claude-hub/config.toml`, and how the list sections are chosen.
+Every key in `~/.config/jugglr/config.toml`, and how the list sections are chosen.
 
 ```toml
 roots = ["~/repos"]          # where to look for git repos (any depth)
@@ -11,6 +11,8 @@ prewarm = true               # keep a started shell ready per workspace
 prewarm_claude = true        # keep started Claudes ready for the last selected workspaces
 hub_key = "M-q"              # tmux key that brings you back to the hub from any terminal
 theme = "dark-modern"        # dark-modern, light, catppuccin, gruvbox, tokyo-night, oxocarbon
+web_theme = "jugglr"         # the web app: jugglr (follows the system), jugglr-light, jugglr-dark,
+                             # dark-modern, light-modern, catppuccin, gruvbox, tokyo-night, oxocarbon
 chat_dir = "~/chats"         # where C starts Claude for chats that belong to no repo
 # The sections to show, in this order.
 sections = ["workspaces", "gitlab-reviews", "gitlab-merge-requests",
@@ -22,4 +24,4 @@ without `gitlab-`, in capitals: `gitlab-issues` is **ISSUES**. The hub fetches o
 sections in the list; leave them all out and it does not call `glab` for them. An unknown name is
 skipped, and the hub shows a warning when it starts.
 
-The hub reads the file when it starts. Run `claude-hub restart` after a change.
+The hub reads the file when it starts. Run `jugglr restart` after a change.

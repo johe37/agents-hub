@@ -162,7 +162,7 @@ fn side_visible(area: Rect) -> bool {
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Block::new().style(Style::new().bg(colors().bar)), area);
     let t = tick(app);
-    let mut left = vec![s(" Claude Hub", fg(colors().bright).bold())];
+    let mut left = vec![s(" jugglr", fg(colors().bright).bold())];
     left.push(s(format!("   {} brings you back here from any terminal", key_label(&app.cfg.hub_key)), fg(colors().dim)));
     let left = Line::from(left);
     let count = |st: Status| app.snap.agents.iter().filter(|a| a.status == st).count();
@@ -558,8 +558,8 @@ fn headline(a: &Agent) -> (String, Option<String>) {
         Status::Working => ("Working".into(), sess.and_then(|s| s.tool.clone()).or_else(|| t.and_then(|t| t.last_tool.clone()))),
         Status::Polling => ("Polling".into(), Some("Resumes on its own at the next wake-up or when a background task finishes.".into())),
         Status::Idle => ("Done with its turn".into(), Some("Enter opens it to continue.".into())),
-        Status::Ended | Status::Stale => ("Closed".into(), Some("Enter resumes it in a Claude Hub workspace.".into())),
-        _ => ("No status".into(), Some("Started before claude-hub hooks were installed.".into())),
+        Status::Ended | Status::Stale => ("Closed".into(), Some("Enter resumes it in a jugglr workspace.".into())),
+        _ => ("No status".into(), Some("Started before jugglr hooks were installed.".into())),
     }
 }
 
@@ -800,7 +800,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
     }
     if a.workspace.is_none() && a.status.alive() {
         let where_ = a.session.as_ref().and_then(|s| s.tmux_session.clone()).map_or("its own terminal".into(), |s| format!("tmux session {s}"));
-        banner.push(Line::from(s(format!("Runs outside Claude Hub, in {where_}."), fg(colors().muted).italic())));
+        banner.push(Line::from(s(format!("Runs outside jugglr, in {where_}."), fg(colors().muted).italic())));
     }
     let mut buttons = vec![];
     if a.status == Status::Waiting && a.target.is_some() {
@@ -829,7 +829,7 @@ fn agent_side(app: &App, a: &Agent, ws: Option<&Workspace>, t: u128) -> Side {
             body_links = links;
             lines
         }
-        _ if ws.is_none() => vec![Line::from(s("Runs outside Claude Hub, so it has no hub windows.", fg(colors().muted)))],
+        _ if ws.is_none() => vec![Line::from(s("Runs outside jugglr, so it has no hub windows.", fg(colors().muted)))],
         _ => vec![],
     };
     Side {
@@ -1068,7 +1068,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             return;
         }
         _ => {
-            let block = panel(Line::from(s(" Claude Hub ", fg(colors().bright).bold())), false);
+            let block = panel(Line::from(s(" jugglr ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
             f.render_widget(block, area);
             let text = vec![Line::from(s("No workspaces yet.", fg(colors().bright).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(colors().muted)))];
@@ -1638,7 +1638,7 @@ const HELP: &[(&str, &str)] = &[
     ("c", "open Claude in the repo's workspace with the issue in its prompt (not sent)"),
     ("", ""),
     ("", "From any terminal"),
-    ("HUBKEY", "back to the hub, or click ◀ Claude Hub in the top bar"),
+    ("HUBKEY", "back to the hub, or click ◀ jugglr in the top bar"),
     ("", ""),
     ("", "Mouse"),
     ("click", "select; click again or double-click to open"),
@@ -1663,7 +1663,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
                 .collect();
             let rect = centered(area, 74, lines.len() as u16 + 2);
             f.render_widget(Clear, rect);
-            f.render_widget(Paragraph::new(lines).block(modal_block("claude-hub · help")), rect);
+            f.render_widget(Paragraph::new(lines).block(modal_block("jugglr · help")), rect);
         }
         Modal::Confirm { question, yes, .. } => {
             let rect = centered(area, 64, 9);

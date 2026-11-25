@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn worktree_is_its_own_root() {
-        let dir = std::env::temp_dir().join(format!("claude-hub-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jugglr-git-{}", std::process::id()));
         let (main, wt) = (dir.join("main"), dir.join("wt"));
         std::fs::create_dir_all(&main).unwrap();
         let sh = |cwd: &Path, args: &[&str]| assert!(Command::new("git").current_dir(cwd).args(args).output().unwrap().status.success());

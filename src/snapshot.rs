@@ -26,6 +26,7 @@ pub struct Window {
     pub window_id: String,
     pub pane_id: String,
     pub command: String,
+    pub pid: u32,
     pub claude: Option<Session>,
     pub width: u16,
     pub height: u16,
@@ -36,6 +37,18 @@ impl Window {
     pub fn is_claude(&self) -> bool {
         // An attach window shows a background agent that already has its own row.
         (self.claude.is_some() || self.command == "claude") && !self.name.starts_with(ATTACH_PREFIX)
+    }
+
+    /// agent, editor, shell or process: what the window is for, from what runs in it.
+    pub fn kind(&self) -> &'static str {
+        if self.is_claude() {
+            return "agent";
+        }
+        match self.command.as_str() {
+            "nvim" | "vim" | "vi" | "hx" | "helix" | "emacs" | "nano" | "micro" | "kak" => "editor",
+            "bash" | "zsh" | "fish" | "sh" | "dash" | "nu" | "xonsh" | "tcsh" | "ksh" => "shell",
+            _ => "process",
+        }
     }
 }
 
@@ -72,7 +85,7 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn transcript_file(&self) -> Option<&str> {
+    pub fn transcript_file(&self) -> Option<&str> {
         self.session.as_ref().and_then(|s| s.transcript_path.as_deref()).or(self.transcript_path.as_deref())
     }
 
@@ -133,6 +146,8 @@ pub struct Snapshot {
     pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub inbox_busy: Vec<crate::config::Section>,
     pub usage: Option<crate::usage::Usage>,
+    /// The last RefreshFor number this snapshot answers: it shows everything done before that request.
+    pub served: u64,
 }
 
 /// Keep a Claude ready for this many of the last selected workspaces, so moving between two of them finds one ready.
@@ -157,6 +172,8 @@ struct ClaudeSpare {
 
 pub enum Cmd {
     Refresh,
+    /// Refresh, and mark the snapshot with this number, so the sender can wait for it.
+    RefreshFor(u64),
     Rescan,
     /// Keep a shell ready for the directory highlighted in the picker.
     Prewarm(Option<String>),
@@ -209,6 +226,7 @@ struct Collector {
     adopted: bool,
     dirs: Arc<Vec<(String, bool)>>,
     need_scan: bool,
+    asked: u64,
     /// Transcripts of live agents. Claude writes its replies there without a hook event.
     watched: Vec<String>,
 }
@@ -222,6 +240,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
         let mut c = Collector {
             hub_socket: tmux::socket_path(),
             need_scan: cached.is_none(),
+            asked: 0,
             watched: vec![],
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
@@ -280,6 +299,10 @@ impl Collector {
             }
             match rx.recv_timeout(Duration::from_millis(150)) {
                 Ok(Cmd::Refresh) => last = Instant::now() - interval,
+                Ok(Cmd::RefreshFor(n)) => {
+                    self.asked = self.asked.max(n);
+                    last = Instant::now() - interval;
+                }
                 Ok(Cmd::Rescan) => {
                     self.rescan();
                     last = Instant::now() - interval;
@@ -357,7 +380,7 @@ impl Collector {
     }
 
     fn collect(&mut self) -> Snapshot {
-        if tmux::hub_in_use() {
+        if self.cfg.passive || tmux::hub_in_use() {
             self.hub_seen = Instant::now();
         }
         let seen = self.hub_seen.elapsed() < UNSEEN;
@@ -384,7 +407,9 @@ impl Collector {
             .collect();
 
         let mut workspaces = self.workspaces(&panes, &in_hub);
-        self.previews(&mut workspaces, &all_panes);
+        if !self.cfg.passive {
+            self.previews(&mut workspaces, &all_panes);
+        }
 
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
@@ -407,16 +432,18 @@ impl Collector {
                 recent.push(s.cwd.clone());
             }
         }
-        if self.cfg.prewarm {
+        if self.cfg.prewarm && !self.cfg.passive {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
-        if !self.adopted {
-            self.adopted = true;
-            self.adopt_claudes(&all_panes, &workspaces);
+        if !self.cfg.passive {
+            if !self.adopted {
+                self.adopted = true;
+                self.adopt_claudes(&all_panes, &workspaces);
+            }
+            self.fill_claude(&all_panes, &started);
         }
-        self.fill_claude(&all_panes, &started);
         let inbox = if self.cfg.gitlab() { self.inbox.get(seen, &self.cfg.sections) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
         Snapshot {
             workspaces,
@@ -432,6 +459,7 @@ impl Collector {
             inbox_errors: inbox.errors,
             inbox_busy: inbox.busy,
             usage: crate::usage::load(),
+            served: self.asked,
         }
     }
 
@@ -459,6 +487,7 @@ impl Collector {
                 window_id: active.window_id.clone(),
                 pane_id: main.pane_id.clone(),
                 command: main.command.clone(),
+                pid: main.pid,
                 claude,
                 width: main.width,
                 height: main.height,

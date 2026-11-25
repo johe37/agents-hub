@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::config::{shorten, state_dir};
 use crate::theme::*;
 
-pub const SOCKET_NAME: &str = "claude-hub";
+pub const SOCKET_NAME: &str = "jugglr";
 pub const HUB_SESSION: &str = "_hub";
 pub const POOL_SESSION: &str = "_pool";
 
@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 14] = [
+const FIELDS: [&str; 15] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -35,6 +35,7 @@ const FIELDS: [&str; 14] = [
     "pane_width",
     "pane_height",
     "@spare",
+    "pane_pid",
 ];
 
 #[derive(Clone, Debug)]
@@ -53,6 +54,8 @@ pub struct Pane {
     pub height: u16,
     /// Pool windows of a pre-started Claude: "<unix start time> <branch> <commit>".
     pub spare: String,
+    /// The process tmux started in the pane, usually a shell.
+    pub pid: u32,
 }
 
 /// Why a tmux action did not complete in place.
@@ -147,7 +150,7 @@ set -g status-position top
 set -g status-justify left
 set -g status-style "bg={bar},fg={fg}"
 set -g status-left-length 120
-set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Claude Hub  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
+set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  jugglr  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
 set -g status-right-length 80
 set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""
@@ -172,7 +175,7 @@ bind w choose-tree -Zw -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"
     path.display().to_string()
 }
 
-/// Changes whenever the claude-hub binary is rebuilt.
+/// Changes whenever the jugglr binary is rebuilt.
 fn code_version(exe: &str) -> String {
     std::fs::metadata(exe)
         .and_then(|m| m.modified())
@@ -243,6 +246,7 @@ pub fn list_all_panes() -> Vec<Pane> {
                 width: p[11].parse().unwrap_or(80),
                 height: p[12].parse().unwrap_or(24),
                 spare: p[13].into(),
+                pid: p[14].parse().unwrap_or(0),
             })
         })
         .collect()
@@ -465,14 +469,24 @@ pub fn create_workspace(name: &str, path: &str, window: &str, command: Option<&s
 
 /// The workspace for path, created (without switching) if needed.
 pub fn ensure_workspace(path: &str) -> Result<String, String> {
+    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    ensure_workspace_named(path, &name)
+}
+
+/// The workspace for path, or a new one named name with a shell, without switching to it.
+pub fn ensure_workspace_named(path: &str, name: &str) -> Result<String, String> {
+    ensure_workspace_with(path, name, "shell", None)
+}
+
+/// The workspace for path, or a new one named name whose first window is window running command.
+pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Option<&str>) -> Result<String, String> {
     let real = canonical(path);
     let panes: Vec<Pane> = list_all_panes().into_iter().filter(|p| !p.session.starts_with('_')).collect();
     if let Some(p) = panes.iter().find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real) {
         return Ok(p.session.clone());
     }
-    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let name = unique_session_name(&name, &list_sessions());
-    let args = chain(&create_commands(&name, path, "shell", None, None));
+    let name = unique_session_name(name, &list_sessions());
+    let args = chain(&create_commands(&name, path, window, command, None));
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     check(run(&refs))?;
     Ok(name)
@@ -592,6 +606,28 @@ pub fn resume(session_id: &str, path: &str) -> Res {
     new_window(&session, path, "claude", Some(&format!("claude --resume {session_id}")), None)
 }
 
+/// Run a tmux command on the hub server and return its output.
+pub fn call(args: &[&str]) -> Result<String, String> {
+    let out = run(args).ok_or("tmux not found")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() { "tmux failed".into() } else { err });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Open a window in session without switching to it, and return its window id.
+pub fn open_window(session: &str, cwd: &str, name: &str, command: Option<&str>) -> Result<String, String> {
+    let target = format!("={session}:");
+    let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", cwd, "-n", name];
+    args.extend(command);
+    call(&args)
+}
+
+pub fn shell_quote(s: &str) -> String {
+    quote(s)
+}
+
 /// Stream the pane's output to a file, for the preview in the hub.
 pub fn pipe_pane(pane_id: &str, path: &str) {
     run(&["pipe-pane", "-O", "-t", pane_id, &format!("cat >> {}", quote(path))]);
@@ -603,6 +639,30 @@ pub fn kill_session(session: &str) -> Res {
 
 pub fn kill_window(window_id: &str) -> Res {
     simple(&["kill-window", "-t", window_id])
+}
+
+/// Swaps windows instead of moving them, so the session keeps its indexes even with gaps between them.
+pub fn move_window(session: &str, window_id: &str, before: Option<&str>) -> Result<(), String> {
+    let mut cur: Vec<String> = call(&["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}"])?.lines().map(String::from).collect();
+    let mut want = cur.clone();
+    want.retain(|w| w != window_id);
+    let at = match before {
+        Some(b) => want.iter().position(|w| w == b).ok_or("That window is gone")?,
+        None => want.len(),
+    };
+    want.insert(at, window_id.to_string());
+    if want.len() != cur.len() {
+        return Err("This window is gone".into());
+    }
+    for k in 0..want.len() {
+        if cur[k] == want[k] {
+            continue;
+        }
+        let j = cur.iter().position(|w| *w == want[k]).ok_or("The windows changed")?;
+        call(&["swap-window", "-d", "-s", &want[k], "-t", &cur[k]])?;
+        cur.swap(k, j);
+    }
+    Ok(())
 }
 
 pub fn rename_session(session: &str, new: &str) -> Res {
@@ -739,6 +799,7 @@ mod tests {
             width: 80,
             height: 24,
             spare: spare.into(),
+            pid: 0,
         };
         let pool = claude_pool(&[pane("claude:/r", "100 main abc"), pane("claude-next:/r", "200  abc"), pane("claude:/old", "")]);
         assert_eq!((pool[0].started, pool[0].checkout.clone(), pool[0].next), (Some(100), (Some("main".into()), Some("abc".into())), false));
