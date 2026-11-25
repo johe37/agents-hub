@@ -154,6 +154,21 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const current = createMemo(() => ws()?.windows.find((w) => w.id === p.window) ?? null);
   const agentOf = (w: Win | null) => (w?.agent ? store.agentsByKey().get(w.agent) : undefined);
 
+  let tabs: HTMLDivElement | undefined;
+  // A plain mouse wheel only scrolls vertically; the tab row only scrolls sideways.
+  const wheelTabs = (e: WheelEvent) => {
+    if (!tabs || e.deltaX || tabs.scrollWidth <= tabs.clientWidth) return;
+    e.preventDefault();
+    tabs.scrollLeft += e.deltaY;
+  };
+  createEffect(() => {
+    p.window;
+    ws()?.windows.length;
+    requestAnimationFrame(() =>
+      tabs?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" }),
+    );
+  });
+
   // Without a window in the URL, show the one that needs you, else the first agent, else the first window.
   // A window just opened is in the URL before the hub lists it: give it a moment to show up.
   createEffect(() => {
@@ -342,50 +357,57 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
             </div>
           </header>
 
-          <nav class="flex items-center gap-1 overflow-x-auto border-b border-line bg-panel/60 px-2 sm:px-3" role="tablist">
-            <For each={w().windows}>
-              {(win, i) => {
-                const a = () => agentOf(win);
-                const active = () => win.id === p.window;
-                return (
-                  <div
-                    role="tab"
-                    aria-selected={active()}
-                    class={cls(
-                      "group relative flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg px-3 text-[13px] transition-colors",
-                      active() ? "text-fg" : "text-fg-2 hover:text-fg",
-                    )}
-                    onClick={() => go({ view: "workspace", name: p.name, window: win.id })}
-                    onAuxClick={(e) => e.button === 1 && closeWindow(win)}
-                    title={`${win.command} · Alt+${i() + 1}`}
-                  >
-                    <span class={cls("text-fg-3", active() && "text-accent")}>{kindIcon(win)}</span>
-                    <span class="max-w-[16rem] truncate">{a()?.title ?? win.running ?? win.name}</span>
-                    <Show when={a()}>
-                      <StatusDot status={a()!.status} size={7} />
-                    </Show>
-                    <button
-                      class="-mr-1 grid size-5 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        closeWindow(win);
-                      }}
-                      aria-label="Close window"
+          <nav class="flex items-center gap-1 border-b border-line bg-panel/60 px-2 sm:px-3">
+            <div
+              ref={tabs}
+              class="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              onWheel={wheelTabs}
+            >
+              <For each={w().windows}>
+                {(win, i) => {
+                  const a = () => agentOf(win);
+                  const active = () => win.id === p.window;
+                  return (
+                    <div
+                      role="tab"
+                      aria-selected={active()}
+                      class={cls(
+                        "group relative flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg px-3 text-[13px] transition-colors",
+                        active() ? "text-fg" : "text-fg-2 hover:text-fg",
+                      )}
+                      onClick={() => go({ view: "workspace", name: p.name, window: win.id })}
+                      onAuxClick={(e) => e.button === 1 && closeWindow(win)}
+                      title={`${win.command} · Alt+${i() + 1}`}
                     >
-                      <X size={12} />
-                    </button>
-                    <Show when={active()}>
-                      <span class="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-accent" />
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
+                      <span class={cls("text-fg-3", active() && "text-accent")}>{kindIcon(win)}</span>
+                      <span class="max-w-[16rem] truncate">{a()?.title ?? win.running ?? win.name}</span>
+                      <Show when={a()}>
+                        <StatusDot status={a()!.status} size={7} />
+                      </Show>
+                      <button
+                        class="-mr-1 grid size-5 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeWindow(win);
+                        }}
+                        aria-label="Close window"
+                      >
+                        <X size={12} />
+                      </button>
+                      <Show when={active()}>
+                        <span class="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-accent" />
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
             <MenuButton
               label="New window (c, t)"
               icon={<Show when={isBusy("new:claude") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
               size="sm"
-              class="ml-0.5"
+              class="ml-0.5 shrink-0"
               items={[
                 { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
                 { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
