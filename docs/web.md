@@ -28,7 +28,8 @@ is: it does not restart it, also after an update.
   open yet, and Claude starts with the task as its first prompt.
 - **New chat** (`Shift+C`). Ask Claude something that belongs to no repo. Claude starts in
   `chat_dir` (`~/chats` by default), as `C` does in the terminal hub. The sidebar lists the
-  chats under **Chats**; click one to open it.
+  chats under **Chats**; click one to open it. Closed chats go under
+  **Recently closed** below them; click one to resume it.
 - **Voice chat.** Click the microphone in a reply box and talk. When you stop, it is sent; when
   Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
   permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses

@@ -1,8 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
-import type { UsageWindow } from "../api";
+import type { Agent, UsageWindow } from "../api";
 import { act, chatWorkspace, closeChat, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
-import { MOD, age, cls, until, worst } from "../util";
+import { MOD, age, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
@@ -17,15 +17,21 @@ function stored(key: string, fallback: boolean): boolean {
   }
 }
 
-const [showClosed, setShowClosedRaw] = createSignal(stored("show-closed", false));
-const setShowClosed = (v: boolean) => {
-  setShowClosedRaw(v);
-  try {
-    localStorage.setItem("show-closed", v ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
-};
+function storedFlag(key: string) {
+  const [get, set] = createSignal(stored(key, false));
+  const toggle = () => {
+    set(!get());
+    try {
+      localStorage.setItem(key, get() ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  };
+  return [get, toggle] as const;
+}
+
+const [showClosed, toggleClosed] = storedFlag("show-closed");
+const [showClosedChats, toggleClosedChats] = storedFlag("show-closed-chats");
 
 function storedList(key: string): string[] {
   try {
@@ -107,6 +113,15 @@ export function Sidebar(p: { onNavigate?: () => void }) {
     const ws = chatWorkspace();
     return ws ? ws.windows.filter((w) => w.kind === "agent").map((win) => ({ ws, win })) : [];
   });
+  // Closing the last chat closes the chats workspace too; its chats show under Chats instead.
+  const closed = createMemo(() => state.closed.filter((c) => c.path !== state.chat_dir));
+  const closedChats = createMemo(() =>
+    state.agents.filter((a) => a.id && !a.workspace && !alive(a.status) && a.path === state.chat_dir).sort((a, b) => b.timestamp - a.timestamp),
+  );
+  const resume = (a: Agent) => {
+    p.onNavigate?.();
+    void act({ type: "resume", agent: a.key }, { key: `resume:${a.key}` }).then((r) => r.ok && r.workspace && r.window && go({ view: "workspace", name: r.workspace, window: r.window }));
+  };
   const active = (name: string) => {
     const x = r();
     return x.view === "workspace" && x.name === name;
@@ -277,6 +292,52 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           }}
         </For>
 
+        <Show when={closed().length}>
+          <button
+            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
+            onClick={toggleClosed}
+            aria-expanded={showClosed()}
+          >
+            <ChevronDown size={12} class={cls("transition-transform", !showClosed() && "-rotate-90")} />
+            Recently closed <span class="ml-1 tabular-nums">{closed().length}</span>
+          </button>
+          <Show when={showClosed()}>
+            <For each={closed()}>
+              {(c) => (
+                <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
+                  <button
+                    class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
+                    title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
+                    disabled={isBusy(`reopen:${c.id}`)}
+                    onClick={() => {
+                      p.onNavigate?.();
+                      void reopen(c.id);
+                    }}
+                  >
+                    <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                      <Spinner size={13} />
+                    </Show>
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{c.name}</div>
+                      <div class="truncate text-[11.5px] text-fg-3">
+                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · {age(c.closed_at, now())} ago
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                    onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
+                    aria-label={`Remove ${c.name} from the list`}
+                    title="Remove from the list"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </For>
+          </Show>
+        </Show>
+
         <div class="mt-4 flex items-center px-2 pb-1">
           <span class="text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3">Chats</span>
           <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={newChat} title="New chat (⇧C)">
@@ -329,47 +390,33 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           }}
         </For>
 
-        <Show when={state.closed.length}>
+
+        <Show when={closedChats().length}>
           <button
             class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
-            onClick={() => setShowClosed(!showClosed())}
-            aria-expanded={showClosed()}
+            onClick={toggleClosedChats}
+            aria-expanded={showClosedChats()}
           >
-            <ChevronDown size={12} class={cls("transition-transform", !showClosed() && "-rotate-90")} />
-            Recently closed <span class="ml-1 tabular-nums">{state.closed.length}</span>
+            <ChevronDown size={12} class={cls("transition-transform", !showClosedChats() && "-rotate-90")} />
+            Recently closed <span class="ml-1 tabular-nums">{closedChats().length}</span>
           </button>
-          <Show when={showClosed()}>
-            <For each={state.closed}>
-              {(c) => (
-                <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
-                  <button
-                    class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
-                    title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
-                    disabled={isBusy(`reopen:${c.id}`)}
-                    onClick={() => {
-                      p.onNavigate?.();
-                      void reopen(c.id);
-                    }}
-                  >
-                    <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
-                      <Spinner size={13} />
-                    </Show>
-                    <div class="min-w-0 flex-1">
-                      <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{c.name}</div>
-                      <div class="truncate text-[11.5px] text-fg-3">
-                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · {age(c.closed_at, now())} ago
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                    onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
-                    aria-label={`Remove ${c.name} from the list`}
-                    title="Remove from the list"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
+          <Show when={showClosedChats()}>
+            <For each={closedChats()}>
+              {(a) => (
+                <button
+                  class="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover/70"
+                  title="Resume this chat"
+                  disabled={isBusy(`resume:${a.key}`)}
+                  onClick={() => resume(a)}
+                >
+                  <Show when={isBusy(`resume:${a.key}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                    <Spinner size={13} />
+                  </Show>
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{a.title}</div>
+                    <div class="truncate text-[11.5px] text-fg-3">{age(a.timestamp, now())} ago</div>
+                  </div>
+                </button>
               )}
             </For>
           </Show>
