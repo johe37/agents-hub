@@ -62,7 +62,7 @@ export interface Entry {
 
 const running = (p: string | null) => p === "running" || p === "pending" || p === "created" || p === "preparing" || p === "waiting_for_resource";
 
-export const REVIEW_GROUPS = ["New", "In progress", "Approved"];
+export const REVIEW_GROUPS = ["In progress", "New", "Approved"];
 export const MINE_GROUPS = ["Needs you", "Waiting", "Ready to merge", "Drafts"];
 
 function reviewGroup(m: Mr): string {
