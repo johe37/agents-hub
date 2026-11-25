@@ -146,6 +146,8 @@ pub struct Snapshot {
     pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub inbox_busy: Vec<crate::config::Section>,
     pub usage: Option<crate::usage::Usage>,
+    /// The last RefreshFor number this snapshot answers: it shows everything done before that request.
+    pub served: u64,
 }
 
 /// Keep a Claude ready for this many of the last selected workspaces, so moving between two of them finds one ready.
@@ -170,6 +172,8 @@ struct ClaudeSpare {
 
 pub enum Cmd {
     Refresh,
+    /// Refresh, and mark the snapshot with this number, so the sender can wait for it.
+    RefreshFor(u64),
     Rescan,
     /// Keep a shell ready for the directory highlighted in the picker.
     Prewarm(Option<String>),
@@ -222,6 +226,7 @@ struct Collector {
     adopted: bool,
     dirs: Arc<Vec<(String, bool)>>,
     need_scan: bool,
+    asked: u64,
     /// Transcripts of live agents. Claude writes its replies there without a hook event.
     watched: Vec<String>,
 }
@@ -235,6 +240,7 @@ pub fn spawn(cfg: Config, screens: Arc<Mutex<ScreenCache>>) -> (Sender<Cmd>, Rec
         let mut c = Collector {
             hub_socket: tmux::socket_path(),
             need_scan: cached.is_none(),
+            asked: 0,
             watched: vec![],
             dirs: Arc::new(cached.unwrap_or_default()),
             speculative: None,
@@ -293,6 +299,10 @@ impl Collector {
             }
             match rx.recv_timeout(Duration::from_millis(150)) {
                 Ok(Cmd::Refresh) => last = Instant::now() - interval,
+                Ok(Cmd::RefreshFor(n)) => {
+                    self.asked = self.asked.max(n);
+                    last = Instant::now() - interval;
+                }
                 Ok(Cmd::Rescan) => {
                     self.rescan();
                     last = Instant::now() - interval;
@@ -449,6 +459,7 @@ impl Collector {
             inbox_errors: inbox.errors,
             inbox_busy: inbox.busy,
             usage: crate::usage::load(),
+            served: self.asked,
         }
     }
 

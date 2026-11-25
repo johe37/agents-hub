@@ -9,7 +9,9 @@ mod term;
 use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -41,11 +43,22 @@ pub struct Hub {
     state: watch::Sender<Arc<str>>,
     /// Toasts for every open page: notices from background jobs.
     events: broadcast::Sender<Arc<str>>,
+    asked: AtomicU64,
+    /// The RefreshFor number the published state answers.
+    served: watch::Sender<u64>,
 }
 
 impl Hub {
     fn refresh(&self) {
         let _ = self.cmd.lock().unwrap().send(Cmd::Refresh);
+    }
+
+    /// Wait until the page has state that shows everything done so far, or a second passed.
+    async fn fresh(&self) {
+        let n = self.asked.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut served = self.served.subscribe();
+        let _ = self.cmd.lock().unwrap().send(Cmd::RefreshFor(n));
+        let _ = tokio::time::timeout(Duration::from_secs(1), served.wait_for(|s| *s >= n)).await;
     }
 
     fn snapshot(&self) -> std::sync::RwLockReadGuard<'_, Snapshot> {
@@ -100,7 +113,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             }
         };
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-        let hub = Arc::new(Hub { snap: RwLock::default(), cmd: Mutex::new(cmd), token: token(), port, state: state_tx, events });
+        let hub = Arc::new(Hub { snap: RwLock::default(), cmd: Mutex::new(cmd), token: token(), port, state: state_tx, events, asked: AtomicU64::new(0), served: watch::channel(0).0 });
 
         let bridge = Arc::clone(&hub);
         std::thread::spawn(move || {
@@ -109,6 +122,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
                 for (text, error) in &snap.notices {
                     let _ = bridge.events.send(Arc::from(json!({"type": "notice", "text": text, "error": error}).to_string()));
                 }
+                let served = snap.served;
                 *bridge.snap.write().unwrap() = snap;
                 let text = json!({"type": "state", "data": state}).to_string();
                 bridge.state.send_if_modified(|cur| {
@@ -118,6 +132,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
                     }
                     changed
                 });
+                bridge.served.send_replace(served);
             }
         });
 
@@ -301,7 +316,8 @@ async fn action(State(hub): State<Arc<Hub>>, Json(body): Json<Value>) -> Respons
     };
     let h = Arc::clone(&hub);
     let result = tokio::task::spawn_blocking(move || actions::run(&h, act)).await;
-    hub.refresh();
+    // The page goes to what the action made as soon as it has the answer, so the state must show it by then.
+    hub.fresh().await;
     match result {
         Ok(Ok(done)) => Json(json!({"ok": true, "message": done.message, "workspace": done.workspace, "window": done.window, "path": done.path})).into_response(),
         Ok(Err(e)) => (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok": false, "error": e}))).into_response(),
