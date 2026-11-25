@@ -76,7 +76,7 @@ An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** 
 
 Comments go on all changes only: GitLab places them in the MR's latest version. The hub
 remembers the head commit when you finish a review or approve, in
-`~/.local/state/claude-hub/reviewed.json`; "Since your last review" shows the diff from it.
+`~/.local/state/jugglr/reviewed.json`; "Since your last review" shows the diff from it.
 
 ## Terminals in the page
 
