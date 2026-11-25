@@ -72,6 +72,29 @@ export function href(r: Route): string {
 export const [route, setRoute] = createSignal<Route>(parse(location.hash));
 window.addEventListener("hashchange", () => setRoute(parse(location.hash)));
 
+/** The window last shown in each workspace, so coming back opens it again. */
+const lastWindows: Record<string, string> = (() => {
+  try {
+    return JSON.parse(readStored("last-windows") ?? "{}");
+  } catch {
+    return {};
+  }
+})();
+export const lastWindow = (workspace: string): string | undefined => lastWindows[workspace];
+export function forgetLastWindow(workspace: string) {
+  if (!(workspace in lastWindows)) return;
+  delete lastWindows[workspace];
+  writeStored("last-windows", JSON.stringify(lastWindows));
+}
+createRoot(() =>
+  createEffect(() => {
+    const r = route();
+    if (r.view !== "workspace" || !r.window || lastWindows[r.name] === r.window) return;
+    lastWindows[r.name] = r.window;
+    writeStored("last-windows", JSON.stringify(lastWindows));
+  }),
+);
+
 export function go(r: Route, replace = false) {
   const h = href(r);
   if (location.hash === h) return;
@@ -369,6 +392,7 @@ async function closeNow(w: Workspace) {
   };
   const r = await actHiding({ type: "close_workspace", workspace: w.name }, { workspace: w.name }, { quiet: true, before });
   if (!r.ok) return;
+  forgetLastWindow(w.name);
   const undo = () => {
     const c = state.closed.find((c) => c.path === w.path);
     if (c) reopen(c.id);

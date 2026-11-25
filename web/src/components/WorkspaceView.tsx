@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
-import { act, actHiding, ask, closeWorkspace as closeWs, draft, go, isBusy, now, setDiffView, state, stops, store } from "../store";
+import { act, actHiding, ask, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, now, setDiffView, state, stops, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -169,14 +169,18 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     );
   });
 
-  // Without a window in the URL, show the one that needs you, else the first agent, else the first window.
+  // Without a window in the URL, show the last one shown here, else the one that needs you, else the first agent, else the first window.
   // A window just opened is in the URL before the hub lists it: give it a moment to show up.
   createEffect(() => {
     const w = ws();
     if (!w || current()) return;
     const pickOne = () => {
+      const last = lastWindow(w.name);
       const pick =
-        w.windows.find((x) => agentOf(x)?.status === "waiting") ?? w.windows.find((x) => x.kind === "agent") ?? w.windows[0];
+        w.windows.find((x) => x.id === last) ??
+        w.windows.find((x) => agentOf(x)?.status === "waiting") ??
+        w.windows.find((x) => x.kind === "agent") ??
+        w.windows[0];
       if (pick) go({ view: "workspace", name: w.name, window: pick.id }, true);
     };
     if (!p.window) return pickOne();
@@ -238,7 +242,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const rename = (name: string) => {
     setRenaming(false);
     if (!name.trim() || name === p.name) return;
-    act({ type: "rename_workspace", workspace: p.name, name }).then((r) => r.ok && r.workspace && go({ view: "workspace", name: r.workspace, window: p.window }, true));
+    act({ type: "rename_workspace", workspace: p.name, name }).then((r) => r.ok && r.workspace && (forgetLastWindow(p.name), go({ view: "workspace", name: r.workspace, window: p.window }, true)));
   };
 
   const onKey = (e: KeyboardEvent) => {
