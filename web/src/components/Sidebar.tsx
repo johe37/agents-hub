@@ -5,7 +5,7 @@ import { MOD, age, cls, until, worst } from "../util";
 import { Bell, BellOff, Bot, ChevronDown, Git, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
-import { IconButton, Spinner, StatusDot } from "./ui";
+import { IconButton, Spinner, StatusDot, kindIcon } from "./ui";
 
 function stored(key: string, fallback: boolean): boolean {
   try {
@@ -21,6 +21,28 @@ const setShowClosed = (v: boolean) => {
   setShowClosedRaw(v);
   try {
     localStorage.setItem("show-closed", v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+};
+
+function storedList(key: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+const [expanded, setExpanded] = createSignal(new Set(storedList("nav-expanded")));
+const isExpanded = (name: string) => expanded().has(name);
+const toggleExpanded = (name: string) => {
+  const next = new Set(expanded());
+  if (!next.delete(name)) next.add(name);
+  setExpanded(next);
+  try {
+    localStorage.setItem("nav-expanded", JSON.stringify([...next]));
   } catch {
     /* ignore */
   }
@@ -135,47 +157,98 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           {(w) => {
             const agents = () => store.byWorkspace().get(w.name) ?? [];
             const waiting = () => agents().filter((a) => a.status === "waiting").length;
+            const tree = () => w.windows.length > 1;
             return (
-              <a
-                href={href({ view: "workspace", name: w.name, window: null })}
-                onClick={(e) => {
-                  e.preventDefault();
-                  p.onNavigate?.();
-                  go({ view: "workspace", name: w.name, window: null });
-                }}
-                class={cls(
-                  "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors",
-                  active(w.name) ? "bg-hover" : "hover:bg-hover/70",
-                )}
-              >
-                <StatusDot status={worst(agents())} size={7} />
-                <div class="min-w-0 flex-1">
-                  <div class={cls("truncate text-[13px] font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
-                  <Show when={w.git?.branch}>
-                    <div class="truncate text-[11.5px] text-fg-3">
-                      {w.git!.branch}
-                      <Show when={w.git!.dirty}>
-                        <span class="text-waiting"> · {w.git!.dirty}</span>
-                      </Show>
-                    </div>
-                  </Show>
-                </div>
-                <Show when={waiting()}>
-                  <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-[#1d1405] group-hover:hidden">{waiting()}</span>
-                </Show>
-                <button
-                  class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid"
+              <div>
+                <a
+                  href={href({ view: "workspace", name: w.name, window: null })}
                   onClick={(e) => {
                     e.preventDefault();
-                    e.stopPropagation();
-                    closeWorkspace(w);
+                    p.onNavigate?.();
+                    go({ view: "workspace", name: w.name, window: null });
                   }}
-                  aria-label={`Close workspace ${w.name}`}
-                  title="Close workspace"
+                  class={cls(
+                    "group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors",
+                    active(w.name) ? "bg-hover" : "hover:bg-hover/70",
+                  )}
                 >
-                  <X size={12} />
-                </button>
-              </a>
+                  <Show when={tree()} fallback={<span class="-ml-1.5 size-4 shrink-0" />}>
+                    <button
+                      class="-ml-1.5 grid size-4 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleExpanded(w.name);
+                      }}
+                      aria-expanded={isExpanded(w.name)}
+                      aria-label={`${isExpanded(w.name) ? "Collapse" : "Expand"} ${w.name}`}
+                    >
+                      <ChevronDown size={12} class={cls("transition-transform", !isExpanded(w.name) && "-rotate-90")} />
+                    </button>
+                  </Show>
+                  <StatusDot status={worst(agents())} size={7} />
+                  <div class="min-w-0 flex-1">
+                    <div class={cls("truncate text-[13px] font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
+                    <Show when={w.git?.branch}>
+                      <div class="truncate text-[11.5px] text-fg-3">
+                        {w.git!.branch}
+                        <Show when={w.git!.dirty}>
+                          <span class="text-waiting"> · {w.git!.dirty}</span>
+                        </Show>
+                      </div>
+                    </Show>
+                  </div>
+                  <Show when={waiting()}>
+                    <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-[#1d1405] group-hover:hidden">{waiting()}</span>
+                  </Show>
+                  <button
+                    class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      closeWorkspace(w);
+                    }}
+                    aria-label={`Close workspace ${w.name}`}
+                    title="Close workspace"
+                  >
+                    <X size={12} />
+                  </button>
+                </a>
+                <Show when={tree() && isExpanded(w.name)}>
+                  <div class="mb-1 ml-[13px] flex flex-col gap-px border-l border-line pl-1.5">
+                    <For each={w.windows}>
+                      {(win) => {
+                        const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
+                        const on = () => {
+                          const x = r();
+                          return x.view === "workspace" && x.name === w.name && x.window === win.id;
+                        };
+                        return (
+                          <a
+                            href={href({ view: "workspace", name: w.name, window: win.id })}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              p.onNavigate?.();
+                              go({ view: "workspace", name: w.name, window: win.id });
+                            }}
+                            title={win.command}
+                            class={cls(
+                              "flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] transition-colors",
+                              on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
+                            )}
+                          >
+                            <span class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")}>{kindIcon(win, 13)}</span>
+                            <span class="min-w-0 flex-1 truncate">{a()?.title ?? win.running ?? win.name}</span>
+                            <Show when={a()}>
+                              <StatusDot status={a()!.status} size={6} />
+                            </Show>
+                          </a>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
+              </div>
             );
           }}
         </For>

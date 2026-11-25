@@ -1,8 +1,19 @@
 import { For, Show, createSignal, onCleanup, splitProps, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import type { Status } from "../api";
+import type { Status, Win } from "../api";
 import { STATUS, cls } from "../util";
-import { Chevron } from "./icons";
+import { Bot, Chevron, Code, Terminal } from "./icons";
+
+export function kindIcon(w: Win, size = 14) {
+  switch (w.kind) {
+    case "agent":
+      return <Bot size={size} />;
+    case "editor":
+      return <Code size={size} />;
+    default:
+      return <Terminal size={size} />;
+  }
+}
 
 export function StatusDot(p: { status: Status | null; size?: number; class?: string }) {
   const meta = () => (p.status ? STATUS[p.status] : null);

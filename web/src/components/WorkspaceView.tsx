@@ -4,22 +4,11 @@ import { act, actHiding, ask, closeWorkspace as closeWs, draft, go, isBusy, now,
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, Code, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill } from "./ui";
+import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon } from "./ui";
 import { focus, showPanel, toggleFocus, togglePanel } from "../layout";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
-
-function kindIcon(w: Win, size = 14) {
-  switch (w.kind) {
-    case "agent":
-      return <Bot size={size} />;
-    case "editor":
-      return <Code size={size} />;
-    default:
-      return <TermIcon size={size} />;
-  }
-}
 
 const FILE_TONE: Record<string, string> = { M: "text-waiting", A: "text-add", D: "text-del", R: "text-working", "?": "text-add", U: "text-danger" };
 
