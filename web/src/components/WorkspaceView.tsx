@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
-import { act, ask, go, isBusy, now, setDiffView, state, store } from "../store";
+import { act, ask, draft, go, isBusy, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -187,17 +187,21 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const mode = () => {
     const w = current();
     if (!w || w.kind !== "agent") return "terminal";
-    return modes()[w.id] ?? (agentOf(w) ? "chat" : "terminal");
+    return modes()[w.id] ?? "terminal";
   };
   const setMode = (m: "chat" | "terminal") => {
     const w = current();
     if (w) setModes((s) => ({ ...s, [w.id]: m }));
   };
+  // A draft for this window's agent waits in the chat's reply box, so show the chat.
+  createEffect(() => {
+    const d = draft();
+    if (d && agentOf(current())?.key === d.agent) setMode("chat");
+  });
 
   const open = (kind: "claude" | "shell" | "nvim") =>
     act({ type: "new_window", workspace: p.name, kind }, { key: `new:${kind}`, quiet: true }).then((r) => {
       if (r.ok && r.window) {
-        if (kind === "claude") setModes((s) => ({ ...s, [r.window!]: "terminal" }));
         go({ view: "workspace", name: p.name, window: r.window });
       }
     });

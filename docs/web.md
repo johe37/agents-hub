@@ -18,9 +18,9 @@ is: it does not restart it, also after an update.
   command or the diff of the edit, so you can approve or deny it there. Text you send instead
   of an answer declines the tool and goes to Claude as your next prompt. Below the inbox: the
   agents that work now, and the ones that finished a turn.
-- **Workspaces.** One tab per window. An agent opens as a chat: its conversation, with the tool
-  calls folded, and a box to reply. Switch to its terminal with `v`. Shells and editors are
-  live terminals in the page. The side panel lists the agents, the merge request and the
+- **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
+  chat: its conversation, with the tool calls folded, and a box to reply. Shells and editors
+  are live terminals in the page. The side panel lists the agents, the merge request and the
   changed files; click a file to see its diff.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not
   open yet, and Claude starts with the task as its first prompt.
