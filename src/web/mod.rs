@@ -3,6 +3,7 @@
 mod actions;
 mod conversation;
 mod model;
+mod review;
 mod term;
 
 use std::collections::HashMap;
@@ -133,6 +134,8 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/dirs", get(dirs))
             .route("/api/conversation", get(conversation))
             .route("/api/diff", get(diff))
+            .route("/api/mr/changes", get(review::mr_changes))
+            .route("/api/mr/drafts", get(review::mr_drafts))
             .route("/api/term", get(term::upgrade))
             .fallback(asset)
             .layer(middleware::from_fn_with_state(Arc::clone(&hub), guard))

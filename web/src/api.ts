@@ -23,6 +23,8 @@ export interface Thread {
   place: string;
   path: string | null;
   line: number | null;
+  /** The line is a removed one, in the old file. */
+  old_line: boolean;
   notes: Note[];
   prompt: string;
 }
@@ -59,6 +61,42 @@ export interface Mr {
   jobs: Job[];
   review_prompt: string;
   workspace: string | null;
+}
+
+export interface FileChange {
+  old_path: string;
+  new_path: string;
+  /** Hunks only; empty for a binary file. */
+  diff: string;
+  new_file: boolean;
+  deleted: boolean;
+  renamed: boolean;
+  too_large: boolean;
+}
+
+export interface Commit {
+  sha: string;
+  short: string;
+  title: string;
+  message: string;
+  author: string;
+  created: number;
+}
+
+export interface MrChanges {
+  version?: { base: string; start: string; head: string };
+  commits?: Commit[];
+  files: FileChange[];
+  /** The head you last reviewed, when it is not the head now. */
+  reviewed?: string | null;
+}
+
+export interface DraftNote {
+  id: number;
+  body: string;
+  path: string | null;
+  line: number | null;
+  old_line: boolean;
 }
 
 export interface Issue {
@@ -203,6 +241,11 @@ export type Action =
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
   | { type: "gitlab_refresh" }
+  | { type: "mr_note"; mr: string; body: string; position?: Record<string, unknown>; draft: boolean }
+  | { type: "draft_edit"; mr: string; id: number; body: string }
+  | { type: "draft_delete"; mr: string; id: number }
+  | { type: "finish_review"; mr: string; summary: string; approve: boolean; head?: string }
+  | { type: "mr_approve"; mr: string; approve: boolean; head?: string }
   | { type: "reopen_workspace"; id: string }
   | { type: "forget_closed"; id: string };
 
@@ -231,7 +274,14 @@ export async function post(action: Action): Promise<ActionResult> {
 
 export async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    const text = await r.text();
+    let error: string | undefined;
+    try {
+      error = (JSON.parse(text) as { error?: string }).error;
+    } catch {}
+    throw new Error(error ?? `${r.status} ${text}`);
+  }
   return (await r.json()) as T;
 }
 

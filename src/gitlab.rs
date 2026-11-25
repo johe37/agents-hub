@@ -134,6 +134,8 @@ pub struct Thread {
     pub id: String,
     pub path: Option<String>,
     pub line: Option<u64>,
+    /// The line is in the old version of the file: a removed line.
+    pub old_line: bool,
     pub notes: Vec<Note>,
 }
 
@@ -294,6 +296,7 @@ fn parse_threads(v: &Value) -> Vec<Thread> {
                 id: d["id"].as_str()?.to_string(),
                 path: pos["new_path"].as_str().or(pos["old_path"].as_str()).map(String::from),
                 line: pos["new_line"].as_u64().or(pos["old_line"].as_u64()),
+                old_line: pos["new_line"].as_u64().is_none() && pos["old_line"].as_u64().is_some(),
                 notes: notes
                     .iter()
                     .filter(|n| n["system"] != true)
@@ -435,6 +438,214 @@ fn api_list(cwd: &str, path: &str) -> Result<Vec<Value>, String> {
         Ok(Value::Array(list)) => Ok(list),
         _ => Err("glab gave an unexpected answer".into()),
     }
+}
+
+/// One file of an MR's or a commit's diff.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FileDiff {
+    pub old_path: String,
+    pub new_path: String,
+    /// Hunks only, from the first `@@`; empty for a binary file.
+    pub diff: String,
+    pub new_file: bool,
+    pub deleted: bool,
+    pub renamed: bool,
+    /// GitLab left the diff out because it is too large.
+    pub too_large: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Commit {
+    pub sha: String,
+    pub short: String,
+    pub title: String,
+    pub message: String,
+    pub author: String,
+    pub created: u64,
+}
+
+/// The commits of the MR's latest diff version. Line comments must name all three.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Version {
+    pub base: String,
+    pub start: String,
+    pub head: String,
+}
+
+fn parse_file_diffs(v: &Value) -> Vec<FileDiff> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| {
+            Some(FileDiff {
+                old_path: f["old_path"].as_str()?.to_string(),
+                new_path: f["new_path"].as_str()?.to_string(),
+                diff: f["diff"].as_str().unwrap_or_default().to_string(),
+                new_file: f["new_file"] == true,
+                deleted: f["deleted_file"] == true,
+                renamed: f["renamed_file"] == true,
+                too_large: f["too_large"] == true,
+            })
+        })
+        .collect()
+}
+
+fn parse_commits(v: &[Value]) -> Vec<Commit> {
+    v.iter()
+        .filter_map(|c| {
+            Some(Commit {
+                sha: c["id"].as_str()?.to_string(),
+                short: c["short_id"].as_str().unwrap_or_default().to_string(),
+                title: c["title"].as_str().unwrap_or_default().to_string(),
+                message: c["message"].as_str().unwrap_or_default().to_string(),
+                author: c["author_name"].as_str().unwrap_or_default().to_string(),
+                created: c["created_at"].as_str().and_then(epoch).unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+/// GitLab lists the versions newest first.
+fn parse_version(v: &[Value]) -> Option<Version> {
+    let l = v.first()?;
+    Some(Version {
+        base: l["base_commit_sha"].as_str()?.to_string(),
+        start: l["start_commit_sha"].as_str()?.to_string(),
+        head: l["head_commit_sha"].as_str()?.to_string(),
+    })
+}
+
+/// Every page of a list, up to max pages of 100.
+fn pages(path: &str, max: u32) -> Result<Vec<Value>, String> {
+    let home = crate::config::home().display().to_string();
+    let sep = if path.contains('?') { '&' } else { '?' };
+    let mut all = vec![];
+    for page in 1..=max {
+        let list = api_list(&home, &format!("{path}{sep}per_page=100&page={page}"))?;
+        let last = list.len() < 100;
+        all.extend(list);
+        if last {
+            break;
+        }
+    }
+    Ok(all)
+}
+
+pub fn mr_version(mr: &Mr) -> Result<Version, String> {
+    let list = pages(&format!("projects/{}/merge_requests/{}/versions", mr.project_id, mr.iid), 1)?;
+    parse_version(&list).ok_or_else(|| "The merge request has no diff yet".to_string())
+}
+
+/// Newest first, as GitLab shows them.
+pub fn mr_commits(mr: &Mr) -> Result<Vec<Commit>, String> {
+    Ok(parse_commits(&pages(&format!("projects/{}/merge_requests/{}/commits", mr.project_id, mr.iid), 10)?))
+}
+
+pub fn mr_diff(mr: &Mr) -> Result<Vec<FileDiff>, String> {
+    match pages(&format!("projects/{}/merge_requests/{}/diffs", mr.project_id, mr.iid), 30) {
+        Ok(list) => Ok(parse_file_diffs(&Value::Array(list))),
+        // GitLab before 15.7 has only the older changes endpoint.
+        Err(e) if e.contains("404") => {
+            let home = crate::config::home().display().to_string();
+            let text = glab(&home, &["api", &format!("projects/{}/merge_requests/{}/changes", mr.project_id, mr.iid)])?;
+            let v: Value = serde_json::from_str(&text).map_err(|_| "glab gave an unexpected answer".to_string())?;
+            Ok(parse_file_diffs(&v["changes"]))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// The diff of one commit. An MR's commits are in the target project, also from a fork.
+pub fn commit_diff(mr: &Mr, sha: &str) -> Result<Vec<FileDiff>, String> {
+    let list = pages(&format!("projects/{}/repository/commits/{sha}/diff", mr.project_id), 30)?;
+    Ok(parse_file_diffs(&Value::Array(list)))
+}
+
+/// The diff between two commits of the MR's project, such as your last review and the head now.
+pub fn compare_diff(mr: &Mr, from: &str, to: &str) -> Result<Vec<FileDiff>, String> {
+    let home = crate::config::home().display().to_string();
+    let text = glab(&home, &["api", &format!("projects/{}/repository/compare?from={from}&to={to}", mr.project_id)])?;
+    let v: Value = serde_json::from_str(&text).map_err(|_| "glab gave an unexpected answer".to_string())?;
+    Ok(parse_file_diffs(&v["diffs"]))
+}
+
+/// A comment of your review that GitLab keeps unpublished until you finish the review.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DraftNote {
+    pub id: u64,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<u64>,
+    pub old_line: bool,
+}
+
+fn parse_drafts(v: &[Value]) -> Vec<DraftNote> {
+    v.iter()
+        .filter_map(|d| {
+            let pos = &d["position"];
+            let new_line = pos["new_line"].as_u64();
+            Some(DraftNote {
+                id: d["id"].as_u64()?,
+                body: d["note"].as_str().unwrap_or_default().to_string(),
+                path: pos["new_path"].as_str().or(pos["old_path"].as_str()).map(String::from),
+                line: new_line.or(pos["old_line"].as_u64()),
+                old_line: new_line.is_none() && pos["old_line"].as_u64().is_some(),
+            })
+        })
+        .collect()
+}
+
+/// A request with a JSON body: --field would send a nested object, such as a position, as a string.
+fn glab_json(method: &str, path: &str, body: &Value) -> Result<String, String> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = crate::config::state_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join(format!("glab-body-{}-{}.json", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    std::fs::write(&file, body.to_string()).map_err(|e| format!("{}: {e}", file.display()))?;
+    let home = crate::config::home().display().to_string();
+    let r = glab(&home, &["api", "-X", method, path, "--input", &file.display().to_string(), "-H", "Content-Type: application/json"]);
+    let _ = std::fs::remove_file(&file);
+    r
+}
+
+fn mr_path(mr: &Mr, rest: &str) -> String {
+    format!("projects/{}/merge_requests/{}/{rest}", mr.project_id, mr.iid)
+}
+
+pub fn drafts(mr: &Mr) -> Result<Vec<DraftNote>, String> {
+    Ok(parse_drafts(&pages(&mr_path(mr, "draft_notes"), 5)?))
+}
+
+/// A comment on the MR, on a diff line when position is given. A draft waits for publish_drafts.
+pub fn add_note(mr: &Mr, body: &str, position: Option<&Value>, draft: bool) -> Result<(), String> {
+    let (path, mut v) = match (draft, position) {
+        (true, _) => (mr_path(mr, "draft_notes"), serde_json::json!({"note": body})),
+        (false, Some(_)) => (mr_path(mr, "discussions"), serde_json::json!({"body": body})),
+        (false, None) => (mr_path(mr, "notes"), serde_json::json!({"body": body})),
+    };
+    if let Some(p) = position {
+        v["position"] = p.clone();
+    }
+    glab_json("POST", &path, &v).map(|_| ())
+}
+
+pub fn edit_draft(mr: &Mr, id: u64, body: &str) -> Result<(), String> {
+    glab_json("PUT", &mr_path(mr, &format!("draft_notes/{id}")), &serde_json::json!({"note": body})).map(|_| ())
+}
+
+pub fn delete_draft(mr: &Mr, id: u64) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "DELETE", &mr_path(mr, &format!("draft_notes/{id}"))]).map(|_| ())
+}
+
+pub fn publish_drafts(mr: &Mr) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &mr_path(mr, "draft_notes/bulk_publish")]).map(|_| ())
+}
+
+pub fn approve(mr: &Mr, on: bool) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    glab(&home, &["api", "-X", "POST", &mr_path(mr, if on { "approve" } else { "unapprove" })]).map(|_| ())
 }
 
 pub fn reviews_dir() -> PathBuf {
@@ -753,6 +964,42 @@ mod tests {
     #[test]
     fn names_a_missing_program() {
         assert_eq!(run("/", 5, "no-such-program-here", &[]), Err("no-such-program-here is not installed".into()));
+    }
+
+    #[test]
+    fn reads_diffs_commits_and_the_latest_version() {
+        let v: Value = serde_json::from_str(
+            r#"[{"old_path":"a.rs","new_path":"b.rs","diff":"@@ -1 +1 @@\n-x\n+y\n","renamed_file":true},
+                {"old_path":"big.json","new_path":"big.json","diff":"","too_large":true},
+                {"new_path":"no-old-path"}]"#,
+        )
+        .unwrap();
+        let files = parse_file_diffs(&v);
+        assert_eq!(files.len(), 2);
+        assert!(files[0].renamed && !files[0].new_file);
+        assert!(files[1].too_large);
+
+        let v: Vec<Value> = serde_json::from_str(r#"[{"id":"abc123","short_id":"abc","title":"Fix it","message":"Fix it\n\nBody","author_name":"Erik","created_at":"2026-11-18T13:42:24.000+01:00"}]"#).unwrap();
+        let c = &parse_commits(&v)[0];
+        assert_eq!((c.short.as_str(), c.author.as_str(), c.created), ("abc", "Erik", 1_795_005_744));
+
+        let v: Vec<Value> = serde_json::from_str(r#"[{"base_commit_sha":"b2","start_commit_sha":"s2","head_commit_sha":"h2"},{"base_commit_sha":"b1","start_commit_sha":"s1","head_commit_sha":"h1"}]"#).unwrap();
+        assert_eq!(parse_version(&v), Some(Version { base: "b2".into(), start: "s2".into(), head: "h2".into() }));
+        assert_eq!(parse_version(&[]), None);
+    }
+
+    #[test]
+    fn reads_draft_notes_on_old_and_new_lines() {
+        let v: Vec<Value> = serde_json::from_str(
+            r#"[{"id":1,"note":"Why?","position":{"new_path":"a.rs","old_path":"a.rs","new_line":null,"old_line":4}},
+                {"id":2,"note":"Nice","position":{"new_path":"b.rs","new_line":9,"old_line":null}},
+                {"id":3,"note":"Overall fine"}]"#,
+        )
+        .unwrap();
+        let d = parse_drafts(&v);
+        assert_eq!((d[0].line, d[0].old_line), (Some(4), true));
+        assert_eq!((d[1].path.as_deref(), d[1].line, d[1].old_line), (Some("b.rs"), Some(9), false));
+        assert_eq!((d[2].path.as_deref(), d[2].line), (None, None));
     }
 
     fn mr_stub() -> Mr {

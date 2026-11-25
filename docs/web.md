@@ -35,7 +35,7 @@ is: it does not restart it, also after an update.
   and a click on a group title folds it. The count in the menu is what needs you: new reviews,
   and your MRs with a failed pipeline or open threads. Each item has a detail pane: the
   pipeline's jobs, the open review threads and the description. Reply in a thread or resolve
-  it. "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
+  it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review
   prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
   starts Claude in your clone with a prompt about the issue. `t` opens a shell
@@ -47,6 +47,32 @@ is: it does not restart it, also after an update.
   finishes, while the page is in the background. The tab title and icon show how many wait.
 
 `?` in the page lists every key.
+
+## Reviewing a merge request
+
+An MR's detail pane has three tabs: **Overview**, **Commits** (`l`) and **Changes** (`d`).
+`Esc` goes back to the overview.
+
+- **Changes** shows the diff as GitLab does, unified or side by side (`s`), with syntax
+  colors. Pick one commit, or only the changes since your last review, in the list above the
+  diff. A click on a commit in **Commits** also shows only its diff. `[` and `]` go to the
+  previous and next file. Mark a file as viewed to fold it; it unfolds again when its diff
+  changes.
+- **Select lines.** Click a line number. Shift+click another line in the same hunk to select
+  up to it.
+- **Ask Claude** (`a`). The side panel opens with the Claude in the MR's checkout, and its
+  reply box names the file, the lines and a git command that shows them. Write your question
+  and press `Enter`. If no Claude runs there, the hub checks the code out and starts one.
+  **Chat** in the MR's header opens the panel too.
+- **Comment** (`c`). **Add to review** keeps the comment as a draft in GitLab, like "Start a
+  review" there. **Comment now** posts it at once. Under an answer from Claude, **Comment with
+  this** opens a comment with that text on the lines you asked about.
+- **Finish review** publishes your drafts, with a summary if you write one, and approves the
+  MR if you tick the box. **Approve** in the header approves without a review.
+
+Comments go on all changes only: GitLab places them in the MR's latest version. The hub
+remembers the head commit when you finish a review or approve, in
+`~/.local/state/claude-hub/reviewed.json`; "Since your last review" shows the diff from it.
 
 ## Terminals in the page
 

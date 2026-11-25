@@ -255,3 +255,35 @@ textarea:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Syntax colors in diffs (highlight.js classes). */
+:root {
+  --hl-keyword: #a626a4;
+  --hl-string: #3f8f3e;
+  --hl-comment: #9a9ba1;
+  --hl-number: #986801;
+  --hl-title: #3f6fd8;
+  --hl-type: #b07a00;
+  --hl-meta: #0f8a9a;
+  --hl-var: #c9473d;
+}
+
+:root[data-theme="dark"] {
+  --hl-keyword: #c678dd;
+  --hl-string: #98c379;
+  --hl-comment: #7f848e;
+  --hl-number: #d19a66;
+  --hl-title: #61afef;
+  --hl-type: #e5c07b;
+  --hl-meta: #56b6c2;
+  --hl-var: #e06c75;
+}
+
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-symbol { color: var(--hl-string); }
+.hljs-comment, .hljs-quote { color: var(--hl-comment); font-style: italic; }
+.hljs-number, .hljs-attr, .hljs-attribute, .hljs-selector-attr { color: var(--hl-number); }
+.hljs-title, .hljs-section, .hljs-function .hljs-title, .hljs-name { color: var(--hl-title); }
+.hljs-type, .hljs-built_in, .hljs-class .hljs-title, .hljs-selector-class { color: var(--hl-type); }
+.hljs-meta, .hljs-tag, .hljs-bullet, .hljs-link { color: var(--hl-meta); }
+.hljs-variable, .hljs-template-variable, .hljs-params, .hljs-property, .hljs-selector-id, .hljs-deletion { color: var(--hl-var); }

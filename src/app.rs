@@ -1729,7 +1729,7 @@ mod tests {
     fn threads_show_under_the_mr_and_workspaces_stay_local() {
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut app = App::new(Config::default(), tx, Default::default());
-        let thread = |id: &str| crate::gitlab::Thread { id: id.into(), path: None, line: None, notes: vec![] };
+        let thread = |id: &str| crate::gitlab::Thread { id: id.into(), path: None, line: None, old_line: false, notes: vec![] };
         let mr = |iid, threads| crate::gitlab::Mr { project_id: 11, iid, project: "acme/pay".into(), threads, ..Default::default() };
         let ws = |name: &str, path: String, mr| Workspace { name: name.into(), path, windows: vec![], git: None, mr };
         let review = crate::gitlab::Mr { project_id: 13, iid: 311, project: "acme/billing".into(), ..Default::default() };

@@ -6,6 +6,8 @@ export interface DiffLine {
   text: string;
   old?: number;
   new?: number;
+  /** Old and new line counters at this line, as GitLab's line codes count them. */
+  pos?: [number, number];
 }
 
 export interface DiffFile {
@@ -16,46 +18,59 @@ export interface DiffFile {
   binary: boolean;
 }
 
-export function parseUnified(text: string): DiffFile[] {
-  const files: DiffFile[] = [];
-  let f: DiffFile | null = null;
+/** The lines of a diff's hunks: everything from the first `@@` on. */
+export function parseHunks(text: string): { lines: DiffLine[]; added: number; removed: number } {
+  const out = { lines: [] as DiffLine[], added: 0, removed: 0 };
   let o = 0;
   let n = 0;
   for (const line of text.split("\n")) {
+    if (line.startsWith("@@")) {
+      const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/.exec(line);
+      o = m ? +m[1] : 0;
+      n = m ? +m[2] : 0;
+      out.lines.push({ type: "hunk", text: m ? m[3].trim() : line });
+    } else if (!out.lines.length) {
+      continue;
+    } else if (line.startsWith("+")) {
+      out.lines.push({ type: "add", text: line.slice(1), new: n, pos: [o, n++] });
+      out.added++;
+    } else if (line.startsWith("-")) {
+      out.lines.push({ type: "del", text: line.slice(1), old: o, pos: [o++, n] });
+      out.removed++;
+    } else if (line.startsWith(" ")) {
+      out.lines.push({ type: "ctx", text: line.slice(1), old: o, new: n, pos: [o++, n++] });
+    }
+  }
+  return out;
+}
+
+export function parseUnified(text: string): DiffFile[] {
+  const files: DiffFile[] = [];
+  let f: DiffFile | null = null;
+  let body: string[] = [];
+  const close = () => {
+    if (f) Object.assign(f, parseHunks(body.join("\n")));
+    body = [];
+  };
+  for (const line of text.split("\n")) {
     if (line.startsWith("diff --git")) {
+      close();
       const m = / b\/(.*)$/.exec(line);
       f = { name: m ? m[1] : line, lines: [], added: 0, removed: 0, binary: false };
       files.push(f);
       continue;
     }
     if (!f) continue;
-    if (line.startsWith("+++ ")) {
+    if (!body.length && line.startsWith("+++ ")) {
       const name = line.slice(4).replace(/^b\//, "");
       if (name !== "/dev/null") f.name = name;
-      continue;
-    }
-    if (line.startsWith("--- ") || line.startsWith("index ") || line.startsWith("new file") || line.startsWith("deleted file") || line.startsWith("similarity") || line.startsWith("rename ") || line.startsWith("old mode") || line.startsWith("new mode")) continue;
-    if (line.startsWith("Binary files")) {
+    } else if (!body.length && line.startsWith("Binary files")) {
       f.binary = true;
-      continue;
-    }
-    if (line.startsWith("@@")) {
-      const m = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/.exec(line);
-      o = m ? +m[1] : 0;
-      n = m ? +m[2] : 0;
-      f.lines.push({ type: "hunk", text: m ? m[3].trim() : line });
-      continue;
-    }
-    if (line.startsWith("+")) {
-      f.lines.push({ type: "add", text: line.slice(1), new: n++ });
-      f.added++;
-    } else if (line.startsWith("-")) {
-      f.lines.push({ type: "del", text: line.slice(1), old: o++ });
-      f.removed++;
-    } else if (line.startsWith(" ")) {
-      f.lines.push({ type: "ctx", text: line.slice(1), old: o++, new: n++ });
+    } else if (body.length || line.startsWith("@@")) {
+      body.push(line);
     }
   }
+  close();
   return files;
 }
 

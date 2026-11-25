@@ -39,6 +39,14 @@ pub enum Action {
     /// Push the workspace's branch, opening a draft merge request when it has none.
     Publish { workspace: String },
     GitlabRefresh,
+    /// A comment on an MR, on a diff line with a GitLab position. A draft waits for FinishReview.
+    MrNote { mr: String, body: String, position: Option<serde_json::Value>, draft: bool },
+    DraftEdit { mr: String, id: u64, body: String },
+    DraftDelete { mr: String, id: u64 },
+    /// Publish your draft comments, with an optional summary, and approve when asked.
+    /// head is the commit you reviewed: the next review can show what changed since.
+    FinishReview { mr: String, summary: String, approve: bool, head: Option<String> },
+    MrApprove { mr: String, approve: bool, head: Option<String> },
     ReopenWorkspace { id: String },
     ForgetClosed { id: String },
 }
@@ -114,7 +122,7 @@ fn window(session: &str, path: &str, name: &str, command: Option<&str>) -> Resul
 }
 
 /// The MR with key, preferring a workspace's copy: it refreshes more often.
-fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
+pub(super) fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
     let snap = hub.snapshot();
     let is = |m: &&Mr| mr_key(m) == key;
     snap.workspaces
@@ -395,6 +403,60 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
         Action::ForgetClosed { id } => {
             crate::closed::forget(&id)?;
             Ok(Done::default())
+        }
+        Action::MrNote { mr: key, body, position, draft } => {
+            let m = find_mr(hub, &key)?;
+            let body = body.trim();
+            if body.is_empty() {
+                return Err("The comment is empty".into());
+            }
+            if position.as_ref().is_some_and(|p| !p.is_object()) {
+                return Err("Bad position".into());
+            }
+            crate::gitlab::add_note(&m, body, position.as_ref(), draft)?;
+            if draft {
+                return Ok(said("Added to your review"));
+            }
+            forget_gitlab(hub, None);
+            Ok(said(format!("Commented on !{}", m.iid)))
+        }
+        Action::DraftEdit { mr: key, id, body } => {
+            let m = find_mr(hub, &key)?;
+            if body.trim().is_empty() {
+                return Err("The comment is empty".into());
+            }
+            crate::gitlab::edit_draft(&m, id, body.trim())?;
+            Ok(Done::default())
+        }
+        Action::DraftDelete { mr: key, id } => {
+            crate::gitlab::delete_draft(&find_mr(hub, &key)?, id)?;
+            Ok(said("Deleted the draft comment"))
+        }
+        Action::FinishReview { mr: key, summary, approve, head } => {
+            let m = find_mr(hub, &key)?;
+            if !summary.trim().is_empty() {
+                crate::gitlab::add_note(&m, summary.trim(), None, true)?;
+            }
+            if !crate::gitlab::drafts(&m)?.is_empty() {
+                crate::gitlab::publish_drafts(&m)?;
+            }
+            if approve && !m.approved {
+                crate::gitlab::approve(&m, true)?;
+            }
+            if let Some(h) = head.as_deref().filter(|h| super::review::is_sha(h)) {
+                super::review::mark_reviewed(&key, h);
+            }
+            forget_gitlab(hub, None);
+            Ok(said(if approve { format!("Published your review and approved !{}", m.iid) } else { format!("Published your review on !{}", m.iid) }))
+        }
+        Action::MrApprove { mr: key, approve, head } => {
+            let m = find_mr(hub, &key)?;
+            crate::gitlab::approve(&m, approve)?;
+            if let Some(h) = head.as_deref().filter(|h| approve && super::review::is_sha(h)) {
+                super::review::mark_reviewed(&key, h);
+            }
+            forget_gitlab(hub, None);
+            Ok(said(if approve { format!("Approved !{}", m.iid) } else { format!("Revoked your approval of !{}", m.iid) }))
         }
         Action::GitlabRefresh => {
             let paths: Vec<String> = hub.snapshot().workspaces.iter().filter(|w| w.mr.is_some()).map(|w| w.path.clone()).collect();

@@ -5,6 +5,7 @@ import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
 import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, Pipeline, Refresh, Search, Sparkles, Terminal, X } from "./icons";
 import { Markdown } from "./Markdown";
+import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
 import { Badge, Button, Empty, Spinner } from "./ui";
 
 function duration(s: number | null): string {
@@ -241,10 +242,18 @@ function OpenButtons(p: { mr: Mr }) {
   );
 }
 
+const DETAIL_TABS: { id: DetailTab; label: string; key: string }[] = [
+  { id: "overview", label: "Overview", key: "Esc" },
+  { id: "commits", label: "Commits", key: "L" },
+  { id: "changes", label: "Changes", key: "D" },
+];
+
 function MrDetail(p: { mr: Mr }) {
   const m = () => p.mr;
+  const review = createReview(m);
+  const count = (t: DetailTab) => (t === "commits" ? review.data()?.commits?.length : t === "changes" ? review.data()?.files.length : undefined);
   return (
-    <div class="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-8">
+    <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", detailTab() === "overview" ? "max-w-3xl" : "max-w-[110rem]")}>
       <div class="flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-3">
         <span>{m().project}</span>
         <span>·</span>
@@ -276,11 +285,66 @@ function MrDetail(p: { mr: Mr }) {
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
         <OpenButtons mr={m()} />
+        <Button size="sm" variant={chatMr() === m().key ? "secondary" : "ghost"} onClick={() => setChatMr(chatMr() === m().key ? null : m().key)} title="Claude in the MR's checkout, next to the diff">
+          <Chat size={13} /> Chat
+        </Button>
+        <Show when={isReview(m())}>
+          <Button
+            size="sm"
+            variant={m().approved ? "ghost" : "approve"}
+            loading={isBusy(`approve-mr:${m().key}`)}
+            onClick={() => act({ type: "mr_approve", mr: m().key, approve: !m().approved, head: review.data()?.version?.head }, { key: `approve-mr:${m().key}` })}
+          >
+            <Check size={13} /> {m().approved ? "Revoke approval" : "Approve"}
+          </Button>
+        </Show>
         <a href={m().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
           Open in GitLab <External size={12} />
         </a>
       </div>
 
+      <div class="mt-5 flex gap-1 border-b border-line text-[13px]" role="tablist">
+        <For each={DETAIL_TABS}>
+          {(t) => (
+            <button
+              role="tab"
+              aria-selected={detailTab() === t.id}
+              title={`${t.label} (${t.key})`}
+              onClick={() => setDetailTab(t.id)}
+              class={cls("-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition-colors", detailTab() === t.id ? "border-accent text-fg" : "border-transparent text-fg-2 hover:text-fg")}
+            >
+              {t.label}
+              <Show when={count(t.id) != null}>
+                <span class="rounded-full bg-hover px-1.5 text-[11px] tabular-nums text-fg-3">{count(t.id)}</span>
+              </Show>
+            </button>
+          )}
+        </For>
+      </div>
+
+      <Switch>
+        <Match when={detailTab() === "commits"}>
+          <div class="mt-4">
+            <Commits review={review} />
+          </div>
+        </Match>
+        <Match when={detailTab() === "changes"}>
+          <div class="mt-4">
+            <Changes mr={m()} review={review} thread={(t) => <ThreadBox mr={m()} thread={t} />} />
+          </div>
+        </Match>
+        <Match when={detailTab() === "overview"}>
+          <Overview mr={m()} />
+        </Match>
+      </Switch>
+    </div>
+  );
+}
+
+function Overview(p: { mr: Mr }) {
+  const m = () => p.mr;
+  return (
+    <>
       <Show when={m().jobs.length}>
         <Pipe mr={m()} />
       </Show>
@@ -300,7 +364,7 @@ function MrDetail(p: { mr: Mr }) {
           </div>
         </Section>
       </Show>
-    </div>
+    </>
   );
 }
 
@@ -442,6 +506,11 @@ export function Gitlab() {
     listEl?.querySelector<HTMLElement>(`[data-key="${CSS.escape(k ?? "")}"]`)?.scrollIntoView({ block: "nearest" });
   });
 
+  const chat = createMemo(() => {
+    const m = current()?.mr;
+    return m && chatMr() === m.key ? m : null;
+  });
+
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.target as HTMLElement).closest("input,textarea,[contenteditable],.xterm")) return;
@@ -480,9 +549,15 @@ export function Gitlab() {
       case "R":
         void act({ type: "gitlab_refresh" });
         break;
+      case "d":
+      case "l":
+        if (!cur?.mr) return;
+        setDetailTab(e.key === "d" ? "changes" : "commits");
+        break;
       case "Escape":
         if (!selected()) return;
-        go({ view: "gitlab", key: null });
+        if (cur?.mr && detailTab() !== "overview") setDetailTab("overview");
+        else go({ view: "gitlab", key: null });
         break;
       default:
         return;
@@ -494,7 +569,7 @@ export function Gitlab() {
 
   return (
     <div class="flex h-full min-h-0">
-      <div class={cls("flex min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r", selected() && "hidden lg:flex")}>
+      <div class={cls("flex min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r", selected() && "hidden lg:flex", chat() && "lg:hidden 2xl:flex")}>
         <header class="px-4 pb-2 pt-4 sm:px-5">
           <div class="flex items-center gap-2">
             <h1 class="text-[20px] font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
@@ -584,6 +659,7 @@ export function Gitlab() {
           )}
         </Show>
       </div>
+      <Show when={chat()}>{(m) => <ReviewChat mr={m()} />}</Show>
     </div>
   );
 }

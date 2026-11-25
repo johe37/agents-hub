@@ -63,6 +63,7 @@ fn mr(m: &Mr, ws: Option<&Workspace>) -> Value {
                 "place": t.place(),
                 "path": t.path,
                 "line": t.line,
+                "old_line": t.old_line,
                 "notes": t.notes.iter().map(|n| json!({"id": n.id, "author": n.author, "body": n.body})).collect::<Vec<_>>(),
                 "prompt": t.as_prompt(m),
             })

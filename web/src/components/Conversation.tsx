@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createResource, createSignal, on, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { getJSON, type Agent, type ConversationItem } from "../api";
 import { act, isBusy, tilde } from "../store";
 import { cls, toolLine } from "../util";
@@ -88,7 +88,8 @@ function group(items: ConversationItem[]) {
   return out;
 }
 
-export function Conversation(p: { agent: Agent }) {
+/** action adds a control under each answer from Claude. */
+export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.Element }) {
   const a = () => p.agent;
   // Reload when the transcript changes; a working agent writes many times a second, so at most twice a second.
   const [tick, setTick] = createSignal(a().activity);
@@ -147,7 +148,12 @@ export function Conversation(p: { agent: Agent }) {
                     )}
                   </Match>
                   <Match when={g.kind === "msg" && g.item.kind === "assistant" && g.item}>
-                    {(m) => <Markdown text={m().text} class="text-[14px] leading-relaxed text-fg animate-fade-in" />}
+                    {(m) => (
+                      <div>
+                        <Markdown text={m().text} class="text-[14px] leading-relaxed text-fg animate-fade-in" />
+                        {p.action?.(m().text)}
+                      </div>
+                    )}
                   </Match>
                 </Switch>
               )}
