@@ -220,6 +220,7 @@ export interface State {
   web_theme: string;
   home: string;
   warnings: string[];
+  version: string;
 }
 
 export type ConversationItem =

@@ -16,6 +16,7 @@ const EMPTY: State = {
   web_theme: readStored("config-theme") ?? "jugglr",
   home: "",
   warnings: [],
+  version: "",
 };
 
 export const [state, setState] = createStore<State>(structuredClone(EMPTY));

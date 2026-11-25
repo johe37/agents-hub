@@ -245,6 +245,7 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
         "web_theme": cfg.web_theme,
         "home": crate::config::home(),
         "warnings": cfg.warnings,
+        "version": env!("CARGO_PKG_VERSION"),
     })
 }
 

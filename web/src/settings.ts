@@ -42,7 +42,8 @@ export const [notifyInFocus, setNotifyInFocus] = setting<boolean>("notify-in-foc
 export const TERM_SIZES = [11, 12, 13, 14, 15, 16, 18];
 export const [termFontSize, setTermFontSize] = setting<number>("term-font-size", 13, (v) => TERM_SIZES.includes(v as number));
 
-export const [showUsage, setShowUsage] = setting<boolean>("show-usage", true);
+export const [showFiveHour, setShowFiveHour] = setting<boolean>("show-five-hour", true);
+export const [showWeekly, setShowWeekly] = setting<boolean>("show-weekly", true);
 
 export function resetBrowserSettings() {
   try {

@@ -27,10 +27,12 @@ import {
   setNotifyInFocus,
   setNotifySound,
   setNotifyWaiting,
-  setShowUsage,
+  setShowFiveHour,
+  setShowWeekly,
   setTabsMode,
   setTermFontSize,
-  showUsage,
+  showFiveHour,
+  showWeekly,
   tabsMode,
   termFontSize,
 } from "../settings";
@@ -157,8 +159,11 @@ export function Settings() {
                   ]}
                 />
               </Row>
-              <Row label="Usage limits" hint="The 5-hour and weekly meters in the sidebar">
-                <Switch label="Usage limits" on={showUsage()} onChange={setShowUsage} />
+              <Row label="5-hour limit" hint="Meter in the sidebar">
+                <Switch label="5-hour limit" on={showFiveHour()} onChange={setShowFiveHour} />
+              </Row>
+              <Row label="Weekly limit" hint="Meter in the sidebar">
+                <Switch label="Weekly limit" on={showWeekly()} onChange={setShowWeekly} />
               </Row>
             </Section>
 
@@ -206,13 +211,15 @@ export function Settings() {
               <Row label="Sound" hint="Only for agents that wait for you">
                 <Switch label="Sound" on={notifySound()} onChange={setNotifySound} disabled={!granted()} />
               </Row>
-              <Row label="Also when jugglr has focus">
-                <Switch label="Also when jugglr has focus" on={notifyInFocus()} onChange={setNotifyInFocus} disabled={!granted()} />
+              <Row label="Notify while jugglr is in view" hint="Also when the tab is visible and focused">
+                <Switch label="Notify while jugglr is in view" on={notifyInFocus()} onChange={setNotifyInFocus} disabled={!granted()} />
               </Row>
             </Section>
 
             <Section title="About">
               <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12.5px]">
+                <dt class="text-fg-3">Version</dt>
+                <dd class="font-mono text-fg-2">{state.version || "…"}</dd>
                 <dt class="text-fg-3">Server</dt>
                 <dd class="truncate font-mono text-fg-2">{location.host}</dd>
                 <dt class="text-fg-3">Connection</dt>
@@ -232,7 +239,7 @@ export function Settings() {
                   class="text-danger"
                   onClick={() =>
                     ask({
-                      title: "Reset this browser?",
+                      title: "Reset settings?",
                       body: "It forgets all settings, the theme, the layout and the last shown windows. The page then loads again.",
                       confirm: "Reset",
                       danger: true,
@@ -240,7 +247,7 @@ export function Settings() {
                     })
                   }
                 >
-                  Reset this browser
+                  Reset settings
                 </Button>
               </div>
             </Section>

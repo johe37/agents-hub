@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
 import { act, chatWorkspace, closeChat, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
-import { showUsage, tabsMode } from "../settings";
+import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, age, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
@@ -117,6 +117,16 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         <img src="/logo.png" alt="" class="size-7" />
         <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         <span class={cls("ml-auto size-2 rounded-full", connection() === "live" ? "bg-idle" : connection() === "connecting" ? "bg-waiting" : "bg-danger")} title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"} />
+        <IconButton
+          label="Settings (,)"
+          onClick={() => {
+            p.onNavigate?.();
+            setSettingsOpen(true);
+          }}
+          class="size-7 max-md:-mr-2"
+        >
+          <Cog size={15} />
+        </IconButton>
         <IconButton label="Hide the sidebar (|)" onClick={toggleNav} class="-mr-2 hidden size-7 md:inline-grid">
           <PanelLeft size={15} />
         </IconButton>
@@ -366,29 +376,16 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         </Show>
       </div>
 
-      <div class="border-t border-line px-4 py-3">
-        <Show when={state.usage && showUsage()}>
-          <div class="mb-3 flex flex-col gap-2">
-            <Show when={state.usage!.five_hour}>
-              <Meter label="5-hour limit" w={state.usage!.five_hour!} />
-            </Show>
-            <Show when={state.usage!.seven_day}>
-              <Meter label="Weekly limit" w={state.usage!.seven_day!} />
-            </Show>
-          </div>
-        </Show>
-        <button
-          class="-mx-1.5 flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg"
-          onClick={() => {
-            p.onNavigate?.();
-            setSettingsOpen(true);
-          }}
-          title="Settings (,)"
-        >
-          <Cog size={15} />
-          Settings
-        </button>
-      </div>
+      <Show when={(showFiveHour() && state.usage?.five_hour) || (showWeekly() && state.usage?.seven_day)}>
+        <div class="flex flex-col gap-2 border-t border-line px-4 py-3">
+          <Show when={showFiveHour() && state.usage!.five_hour}>
+            <Meter label="5-hour limit" w={state.usage!.five_hour!} />
+          </Show>
+          <Show when={showWeekly() && state.usage!.seven_day}>
+            <Meter label="Weekly limit" w={state.usage!.seven_day!} />
+          </Show>
+        </div>
+      </Show>
     </div>
   );
 }
