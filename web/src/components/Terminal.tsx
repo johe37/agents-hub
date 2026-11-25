@@ -56,6 +56,19 @@ const LIGHT: ITheme = {
 };
 
 /** A live tmux window. Typing here is typing in the window itself. */
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/**
+ * What macOS terminals send for their text-editing keys. xterm.js sends Option+arrow as a
+ * modified arrow, which shells and Claude Code do not read as a word move.
+ */
+function macKey(e: KeyboardEvent): string | undefined {
+  const only = (m: "alt" | "meta") => (m === "alt" ? e.altKey && !e.metaKey : e.metaKey && !e.altKey) && !e.ctrlKey && !e.shiftKey;
+  if (only("alt")) return { ArrowLeft: "\x1bb", ArrowRight: "\x1bf" }[e.key];
+  if (only("meta")) return { ArrowLeft: "\x01", ArrowRight: "\x05", Backspace: "\x15" }[e.key];
+  return undefined;
+}
+
 export function Terminal(p: { window: string; focus?: boolean }) {
   let host!: HTMLDivElement;
   const [phase, setPhase] = createSignal<"connecting" | "open" | "closed">("connecting");
@@ -109,6 +122,12 @@ export function Terminal(p: { window: string; focus?: boolean }) {
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "k") {
         openPalette();
+        return false;
+      }
+      const seq = MAC && e.type === "keydown" ? macKey(e) : undefined;
+      if (seq) {
+        e.preventDefault();
+        if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(seq));
         return false;
       }
       return true;
