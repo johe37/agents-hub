@@ -119,6 +119,7 @@ const KEYS: [string, [string, string][]][] = [
       [`${MOD} K`, "Search and run anything"],
       ["Ctrl ⇧ K", "Palette, from inside a terminal"],
       ["N", "New agent with a task"],
+      ["⇧ C", "New chat: Claude outside any repo"],
       ["O", "Open a workspace"],
       ["G A / G L", "Go to agents / GitLab"],
       ["W", "Next agent that needs you"],

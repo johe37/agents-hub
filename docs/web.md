@@ -26,6 +26,9 @@ is: it does not restart it, also after an update.
   in it: Claude or a terminal. The workspace opens with only that window.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not
   open yet, and Claude starts with the task as its first prompt.
+- **New chat** (`Shift+C`). Ask Claude something that belongs to no repo. Claude starts in
+  `chat_dir` (`~/chats` by default), as `C` does in the terminal hub. The sidebar lists the
+  chats under **Chats**; click one to open it.
 - **Voice chat.** Click the microphone in a reply box and talk. When you stop, it is sent; when
   Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
   permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses

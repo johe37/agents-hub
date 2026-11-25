@@ -6,6 +6,7 @@ import {
   configTheme,
   enableNotifications,
   go,
+  newChat,
   paletteMode,
   paletteOpen,
   route,
@@ -23,7 +24,7 @@ import {
 import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
 import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
@@ -125,6 +126,7 @@ export function Palette() {
     const ws = here();
     const commands: Item[] = [
       { id: "new-agent", group: "Actions", title: "New agent…", hint: "Start Claude with a task", icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
+      { id: "new-chat", group: "Actions", title: "New chat…", hint: "Claude outside any repo", icon: <Chat size={15} />, keywords: "claude question ask", run: () => (close(), newChat()) },
       ...(ws
         ? [
             { id: "new-term", group: "Actions", title: `New terminal in ${ws.name}`, icon: <Terminal size={15} />, keywords: "shell", run: () => (close(), act({ type: "new_window", workspace: ws.name, kind: "shell" }, { quiet: true }).then((r) => r.ok && r.window && go({ view: "workspace", name: ws.name, window: r.window }))) },

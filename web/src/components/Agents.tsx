@@ -1,10 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "../api";
-import { act, agentRoute, ask, go, isBusy, loaded, now, setComposer, state, store } from "../store";
+import { act, agentRoute, ask, go, isBusy, loaded, newChat, now, setComposer, state, store } from "../store";
 import { STATUS, age, alive, cls, fuzzyWords, modelName, money } from "../util";
 import { AgentCard } from "./AgentCard";
 import { Conversation } from "./Conversation";
-import { Bot, Branch, Check, Chevron, Done, Play, Search, Sparkles, Trash } from "./icons";
+import { Bot, Branch, Chat, Check, Chevron, Done, Play, Search, Sparkles, Trash } from "./icons";
 import { Badge, Button, Empty, Kbd, StatusDot, StatusPill } from "./ui";
 
 const GROUPS: { title: string; test: (a: Agent) => boolean; collapsed?: boolean }[] = [
@@ -106,6 +106,9 @@ export function Agents() {
               data-filter
             />
           </label>
+          <Button variant="secondary" onClick={newChat} kbd="⇧C">
+            <Chat size={15} /> New chat
+          </Button>
           <Button variant="primary" onClick={() => setComposer({ path: null })} kbd="N">
             <Sparkles size={15} /> New agent
           </Button>

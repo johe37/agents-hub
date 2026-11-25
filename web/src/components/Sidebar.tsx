@@ -1,8 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
-import { act, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
+import { act, chatWorkspace, closeChat, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, newChat, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, ChevronDown, Git, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
+import { Bell, BellOff, Bot, Chat, ChevronDown, Git, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon } from "./ui";
@@ -93,7 +93,11 @@ function Meter(p: { label: string; w: UsageWindow }) {
 
 export function Sidebar(p: { onNavigate?: () => void }) {
   const r = route;
-  const workspaces = createMemo(() => [...state.workspaces].sort((a, b) => a.name.localeCompare(b.name)));
+  const workspaces = createMemo(() => state.workspaces.filter((w) => w.path !== state.chat_dir).sort((a, b) => a.name.localeCompare(b.name)));
+  const chats = createMemo(() => {
+    const ws = chatWorkspace();
+    return ws ? ws.windows.filter((w) => w.kind === "agent").map((win) => ({ ws, win })) : [];
+  });
   const active = (name: string) => {
     const x = r();
     return x.view === "workspace" && x.name === name;
@@ -252,6 +256,59 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             );
           }}
         </For>
+
+        <div class="mt-4 flex items-center px-2 pb-1">
+          <span class="text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3">Chats</span>
+          <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={newChat} title="New chat (⇧C)">
+            <Plus size={14} />
+          </button>
+        </div>
+        <For each={chats()} fallback={<div class="px-2.5 py-1.5 text-[12.5px] text-fg-3">No chats. Press ⇧C to start one.</div>}>
+          {({ ws, win }) => {
+            const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
+            const on = () => {
+              const x = r();
+              return x.view === "workspace" && x.name === ws.name && x.window === win.id;
+            };
+            return (
+              <a
+                href={href({ view: "workspace", name: ws.name, window: win.id })}
+                onClick={(e) => {
+                  e.preventDefault();
+                  p.onNavigate?.();
+                  go({ view: "workspace", name: ws.name, window: win.id });
+                }}
+                class={cls("group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors", on() ? "bg-hover" : "hover:bg-hover/70")}
+              >
+                <Chat size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
+                <div class="min-w-0 flex-1">
+                  <div class={cls("truncate text-[13px]", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
+                  <Show when={a()}>
+                    <div class="truncate text-[11.5px] text-fg-3">{age(a()!.timestamp, now())} ago</div>
+                  </Show>
+                </div>
+                <Show when={a()}>
+                  <span class="group-hover:hidden">
+                    <StatusDot status={a()!.status} size={7} />
+                  </span>
+                </Show>
+                <button
+                  class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeChat(ws, win);
+                  }}
+                  aria-label={`Close chat ${a()?.title ?? win.name}`}
+                  title="Close chat"
+                >
+                  <X size={12} />
+                </button>
+              </a>
+            );
+          }}
+        </For>
+
         <Show when={state.closed.length}>
           <button
             class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"

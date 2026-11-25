@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, on }
 import { getJSON } from "../api";
 import { act, composer, go, isBusy, setComposer, state } from "../store";
 import { basename, cls, fuzzyWords } from "../util";
-import { Folder, Git, Sparkles } from "./icons";
+import { Chat, Folder, Git, Sparkles } from "./icons";
 import { Button, Kbd } from "./ui";
 
 type Dirs = { dirs: [string, boolean][]; recent: string[]; home: string };
@@ -62,14 +62,15 @@ export function NewAgent() {
       .map(([, p, repo]) => [p, repo] as [string, boolean]);
   });
 
+  const chat = () => !!composer()?.chat;
   const close = () => setComposer(null);
   const start = async () => {
     const p = path().trim();
-    if (!p) return pathEl.focus();
+    if (!p) return pathEl?.focus();
     const r = await act({ type: "new_agent", path: p, prompt: prompt().trim() || undefined }, { key: "new-agent" });
     if (!r.ok) return;
     try {
-      localStorage.setItem(LAST, p);
+      if (!chat()) localStorage.setItem(LAST, p);
     } catch {
       /* ignore */
     }
@@ -90,7 +91,7 @@ export function NewAgent() {
         <div
           class="w-full max-w-2xl overflow-hidden rounded-2xl border border-line-strong bg-raised shadow-float animate-pop-in"
           role="dialog"
-          aria-label="New agent"
+          aria-label={chat() ? "New chat" : "New agent"}
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === "Escape") close();
@@ -102,93 +103,98 @@ export function NewAgent() {
         >
           <div class="flex items-center gap-2 px-5 pt-4">
             <div class="grid size-7 place-items-center rounded-lg bg-accent-soft text-accent">
-              <Sparkles size={15} />
+              {chat() ? <Chat size={15} /> : <Sparkles size={15} />}
             </div>
-            <h2 class="text-[15px] font-semibold text-fg">New agent</h2>
-          </div>
-
-          <div class="relative px-5 pt-4">
-            <label class="mb-1.5 block text-[12px] font-medium text-fg-2">Where</label>
-            <div class="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-bg px-3 focus-within:border-accent/60">
-              <Folder size={14} class="text-fg-3" />
-              <input
-                ref={pathEl}
-                value={short(path())}
-                onFocus={(e) => {
-                  setPicking(true);
-                  e.currentTarget.select();
-                }}
-                onBlur={() => setTimeout(() => setPicking(false), 120)}
-                onInput={(e) => {
-                  setPath(e.currentTarget.value);
-                  setTyped(e.currentTarget.value);
-                  setSel(0);
-                  setPicking(true);
-                }}
-                onKeyDown={(e) => {
-                  if (!picking()) return;
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSel((s) => Math.min(s + 1, options().length - 1));
-                  } else if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSel((s) => Math.max(s - 1, 0));
-                  } else if ((e.key === "Enter" || e.key === "Tab") && !e.ctrlKey && options()[sel()]) {
-                    e.preventDefault();
-                    choose(options()[sel()][0]);
-                  }
-                }}
-                placeholder="Search a repo, or type a path"
-                class="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-3"
-                spellcheck={false}
-                autocomplete="off"
-              />
-            </div>
-            <Show when={picking() && options().length}>
-              <div class="absolute inset-x-5 top-full z-10 mt-1 overflow-hidden rounded-xl border border-line-strong bg-raised p-1 shadow-float animate-pop-in">
-                <For each={options()}>
-                  {([p, repo], i) => (
-                    <button
-                      class={cls("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left", sel() === i() ? "bg-hover" : "")}
-                      onMouseMove={() => setSel(i())}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        choose(p);
-                      }}
-                    >
-                      <span class="text-fg-3">{repo ? <Git size={14} /> : <Folder size={14} />}</span>
-                      <span class="text-[13px] font-medium text-fg">{basename(p)}</span>
-                      <span class="ml-auto truncate pl-3 font-mono text-[11.5px] text-fg-3">{short(p)}</span>
-                    </button>
-                  )}
-                </For>
-              </div>
+            <h2 class="text-[15px] font-semibold text-fg">{chat() ? "New chat" : "New agent"}</h2>
+            <Show when={chat()}>
+              <span class="ml-auto font-mono text-[11.5px] text-fg-3">{short(path())}</span>
             </Show>
           </div>
 
+          <Show when={!chat()}>
+            <div class="relative px-5 pt-4">
+              <label class="mb-1.5 block text-[12px] font-medium text-fg-2">Where</label>
+              <div class="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-bg px-3 focus-within:border-accent/60">
+                <Folder size={14} class="text-fg-3" />
+                <input
+                  ref={pathEl}
+                  value={short(path())}
+                  onFocus={(e) => {
+                    setPicking(true);
+                    e.currentTarget.select();
+                  }}
+                  onBlur={() => setTimeout(() => setPicking(false), 120)}
+                  onInput={(e) => {
+                    setPath(e.currentTarget.value);
+                    setTyped(e.currentTarget.value);
+                    setSel(0);
+                    setPicking(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if (!picking()) return;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setSel((s) => Math.min(s + 1, options().length - 1));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setSel((s) => Math.max(s - 1, 0));
+                    } else if ((e.key === "Enter" || e.key === "Tab") && !e.ctrlKey && options()[sel()]) {
+                      e.preventDefault();
+                      choose(options()[sel()][0]);
+                    }
+                  }}
+                  placeholder="Search a repo, or type a path"
+                  class="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-3"
+                  spellcheck={false}
+                  autocomplete="off"
+                />
+              </div>
+              <Show when={picking() && options().length}>
+                <div class="absolute inset-x-5 top-full z-10 mt-1 overflow-hidden rounded-xl border border-line-strong bg-raised p-1 shadow-float animate-pop-in">
+                  <For each={options()}>
+                    {([p, repo], i) => (
+                      <button
+                        class={cls("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left", sel() === i() ? "bg-hover" : "")}
+                        onMouseMove={() => setSel(i())}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          choose(p);
+                        }}
+                      >
+                        <span class="text-fg-3">{repo ? <Git size={14} /> : <Folder size={14} />}</span>
+                        <span class="text-[13px] font-medium text-fg">{basename(p)}</span>
+                        <span class="ml-auto truncate pl-3 font-mono text-[11.5px] text-fg-3">{short(p)}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
           <div class="px-5 pt-4">
-            <label class="mb-1.5 block text-[12px] font-medium text-fg-2">Task</label>
+            <label class="mb-1.5 block text-[12px] font-medium text-fg-2">{chat() ? "Message" : "Task"}</label>
             <textarea
               ref={promptEl}
               value={prompt()}
               onFocus={() => setPicking(false)}
               onInput={(e) => setPrompt(e.currentTarget.value)}
               rows={6}
-              placeholder="Describe what Claude should do. Leave it empty to start Claude without a prompt."
+              placeholder={chat() ? "Ask Claude anything. Leave it empty to start Claude without a prompt." : "Describe what Claude should do. Leave it empty to start Claude without a prompt."}
               class="w-full resize-y rounded-xl border border-line-strong bg-bg px-3.5 py-3 text-[14px] leading-relaxed text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
             />
           </div>
 
           <div class="flex items-center gap-3 px-5 pb-4 pt-3">
             <span class="text-[12px] text-fg-3">
-              The workspace opens if it is not open yet. <Kbd>{"Ctrl ↵"}</Kbd> starts.
+              {chat() ? "Outside any repo." : "The workspace opens if it is not open yet."} <Kbd>{"Ctrl ↵"}</Kbd> starts.
             </span>
             <div class="ml-auto flex gap-2">
               <Button variant="ghost" onClick={close}>
                 Cancel
               </Button>
               <Button variant="primary" onClick={start} loading={isBusy("new-agent")}>
-                <Sparkles size={14} /> {prompt().trim() ? "Start agent" : "Open Claude"}
+                <Sparkles size={14} /> {prompt().trim() ? (chat() ? "Start chat" : "Start agent") : "Open Claude"}
               </Button>
             </div>
           </div>

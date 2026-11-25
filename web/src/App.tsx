@@ -16,6 +16,7 @@ import {
   connection,
   diffView,
   go,
+  newChat,
   helpOpen,
   openPalette,
   paletteOpen,
@@ -98,6 +99,9 @@ export function App() {
         setComposer({ path: r.view === "workspace" ? (state.workspaces.find((w) => w.name === r.name)?.path ?? null) : r.view === "open" ? r.path : null });
         break;
       }
+      case "C":
+        newChat();
+        break;
       case "o":
         if (route().view === "agents" || route().view === "gitlab") return;
         openPalette("open");

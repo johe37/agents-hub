@@ -454,7 +454,33 @@ export const [paletteOpen, setPaletteOpen] = createSignal(false);
 export type PaletteMode = "all" | "open" | "agent" | "theme";
 export const [paletteMode, setPaletteMode] = createSignal<PaletteMode>("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
-export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string } | null>(null);
+export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string; chat?: boolean } | null>(null);
+export const newChat = () => setComposer({ path: state.chat_dir, chat: true });
+/** The workspace of chat_dir, for questions that belong to no repo. */
+export const chatWorkspace = () => state.workspaces.find((w) => w.path === state.chat_dir);
+
+/** Close a chat's window. Ask first only when Claude works. */
+export function closeChat(ws: Workspace, w: Win) {
+  const run = () => {
+    // tmux closes the session with its last window.
+    const what = ws.windows.length > 1 ? { window: w.id } : { window: w.id, workspace: ws.name };
+    const before = () => {
+      const here = route();
+      if (here.view === "workspace" && here.name === ws.name && here.window === w.id) go({ view: "agents" });
+    };
+    void actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
+  };
+  const stopped = stops(w);
+  if (!stopped) return run();
+  const a = w.agent ? store.agentsByKey().get(w.agent) : undefined;
+  ask({
+    title: `Close chat “${a?.title ?? w.name}”?`,
+    body: "It stops in the middle of its turn. You can resume the session later from the agent list.",
+    confirm: "Close",
+    danger: true,
+    run,
+  });
+}
 /** Text to put in an agent's reply box, to edit before sending. */
 export const [draft, setDraft] = createSignal<{ agent: string; text: string } | null>(null);
 export const [confirmBox, setConfirmBox] = createSignal<{
