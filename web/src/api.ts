@@ -221,6 +221,7 @@ export interface State {
   home: string;
   warnings: string[];
   version: string;
+  commit: string;
 }
 
 export type ConversationItem =

@@ -17,6 +17,7 @@ const EMPTY: State = {
   home: "",
   warnings: [],
   version: "",
+  commit: "",
 };
 
 export const [state, setState] = createStore<State>(structuredClone(EMPTY));

@@ -246,6 +246,7 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
         "home": crate::config::home(),
         "warnings": cfg.warnings,
         "version": env!("CARGO_PKG_VERSION"),
+        "commit": env!("JUGGLR_COMMIT"),
     })
 }
 

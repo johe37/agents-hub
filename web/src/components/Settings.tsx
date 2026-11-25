@@ -220,6 +220,10 @@ export function Settings() {
               <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12.5px]">
                 <dt class="text-fg-3">Version</dt>
                 <dd class="font-mono text-fg-2">{state.version || "…"}</dd>
+                <Show when={state.commit}>
+                  <dt class="text-fg-3">Commit</dt>
+                  <dd class="font-mono text-fg-2">{state.commit}</dd>
+                </Show>
                 <dt class="text-fg-3">Server</dt>
                 <dd class="truncate font-mono text-fg-2">{location.host}</dd>
                 <dt class="text-fg-3">Connection</dt>
