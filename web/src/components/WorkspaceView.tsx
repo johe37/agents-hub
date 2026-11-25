@@ -6,7 +6,8 @@ import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
 import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon } from "./ui";
-import { focus, showPanel, toggleFocus, togglePanel } from "../layout";
+import { focus, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
+import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
 
@@ -17,7 +18,7 @@ function fileCode(code: string) {
   return { letter: c === "?" ? "U" : c, tone: FILE_TONE[c] ?? "text-fg-2", title: code === "??" ? "Untracked" : code };
 }
 
-/** Chat or terminal for each agent window; chat first, as it reads better. */
+/** Chat or terminal for each agent window you switched; the others follow agentView. */
 const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
 
 function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
@@ -268,16 +269,19 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const mode = () => {
     const w = current();
     if (!w || w.kind !== "agent") return "terminal";
-    return modes()[w.id] ?? "terminal";
+    const v = agentView();
+    return modes()[w.id] ?? (v === "last" ? lastAgentView() : v);
   };
-  const setMode = (m: "chat" | "terminal") => {
+  const setMode = (m: "chat" | "terminal", picked = true) => {
     const w = current();
-    if (w) setModes((s) => ({ ...s, [w.id]: m }));
+    if (!w) return;
+    setModes((s) => ({ ...s, [w.id]: m }));
+    if (picked) setLastAgentView(m);
   };
   // A draft for this window's agent waits in the chat's reply box, so show the chat.
   createEffect(() => {
     const d = draft();
-    if (d && agentOf(current())?.key === d.agent) setMode("chat");
+    if (d && agentOf(current())?.key === d.agent) setMode("chat", false);
   });
 
   const open = (kind: "claude" | "shell") =>
@@ -309,6 +313,21 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       run,
     });
   };
+
+  // With the tree only, the sidebar lists the windows. Without the sidebar (hidden, or a phone) the tabs come back.
+  const tabsHidden = () => tabsMode() === "tree" && showNav();
+  const newWindowMenu = (cls_: string) => (
+    <MenuButton
+      label="New window (c, t)"
+      icon={<Show when={isBusy("new:claude") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
+      size="sm"
+      class={cls_}
+      items={[
+        { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
+        { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
+      ]}
+    />
+  );
 
   const closeWorkspace = () => {
     const w = ws();
@@ -421,6 +440,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               )}
             </Show>
             <div class="ml-auto flex items-center gap-1">
+              <Show when={tabsHidden()}>{newWindowMenu("hidden md:inline-grid")}</Show>
               <MenuButton
                 label="Workspace actions"
                 icon={<More size={16} />}
@@ -441,7 +461,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
             </div>
           </header>
 
-          <nav class="flex items-center gap-1 border-b border-line bg-panel/60 px-2 sm:px-3">
+          <nav class={cls("flex items-center gap-1 border-b border-line bg-panel/60 px-2 sm:px-3", tabsHidden() && "md:hidden")}>
             <div
               ref={tabs}
               class="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -497,16 +517,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 }}
               </For>
             </div>
-            <MenuButton
-              label="New window (c, t)"
-              icon={<Show when={isBusy("new:claude") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
-              size="sm"
-              class="ml-0.5 shrink-0"
-              items={[
-                { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
-                { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
-              ]}
-            />
+            {newWindowMenu("ml-0.5 shrink-0")}
           </nav>
 
           <div class="flex min-h-0 flex-1">

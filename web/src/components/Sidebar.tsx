@@ -1,8 +1,9 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
-import { act, chatWorkspace, closeChat, closeWorkspace, connection, enableNotifications, go, href, notifyPermission, now, isBusy, newChat, openPalette, reopen, route, setHelpOpen, state, store, theme } from "../store";
+import { act, chatWorkspace, closeChat, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { showUsage, tabsMode } from "../settings";
 import { MOD, age, cls, until, worst } from "../util";
-import { Bell, BellOff, Bot, Chat, ChevronDown, Git, Keyboard, Moon, PanelLeft, Plus, Search, Sun, Undo, X } from "./icons";
+import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon } from "./ui";
@@ -35,18 +36,26 @@ function storedList(key: string): string[] {
   }
 }
 
-const [expanded, setExpanded] = createSignal(new Set(storedList("nav-expanded")));
-const isExpanded = (name: string) => expanded().has(name);
-const toggleExpanded = (name: string) => {
-  const next = new Set(expanded());
-  if (!next.delete(name)) next.add(name);
-  setExpanded(next);
-  try {
-    localStorage.setItem("nav-expanded", JSON.stringify([...next]));
-  } catch {
-    /* ignore */
-  }
-};
+function storedSet(key: string) {
+  const [get, set] = createSignal(new Set(storedList(key)));
+  const toggle = (name: string) => {
+    const next = new Set(get());
+    if (!next.delete(name)) next.add(name);
+    set(next);
+    try {
+      localStorage.setItem(key, JSON.stringify([...next]));
+    } catch {
+      /* ignore */
+    }
+  };
+  return [get, toggle] as const;
+}
+
+// The tree starts collapsed next to tabs, and open when it is the only way to pick a window.
+const [expanded, toggleExpanded] = storedSet("nav-expanded");
+const [collapsed, toggleCollapsed] = storedSet("nav-collapsed");
+const isExpanded = (name: string) => (tabsMode() === "tree" ? !collapsed().has(name) : expanded().has(name));
+const toggleTree = (name: string) => (tabsMode() === "tree" ? toggleCollapsed(name) : toggleExpanded(name));
 
 function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; count?: number; tone?: "waiting"; active: boolean; onNavigate?: () => void }) {
   return (
@@ -161,7 +170,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           {(w) => {
             const agents = () => store.byWorkspace().get(w.name) ?? [];
             const waiting = () => agents().filter((a) => a.status === "waiting").length;
-            const tree = () => w.windows.length > 1;
+            const tree = () => tabsMode() !== "tabs" && w.windows.length > (tabsMode() === "tree" ? 0 : 1);
+            const open = () => isExpanded(w.name);
             return (
               <div>
                 <a
@@ -182,12 +192,12 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        toggleExpanded(w.name);
+                        toggleTree(w.name);
                       }}
-                      aria-expanded={isExpanded(w.name)}
-                      aria-label={`${isExpanded(w.name) ? "Collapse" : "Expand"} ${w.name}`}
+                      aria-expanded={open()}
+                      aria-label={`${open() ? "Collapse" : "Expand"} ${w.name}`}
                     >
-                      <ChevronDown size={12} class={cls("transition-transform", !isExpanded(w.name) && "-rotate-90")} />
+                      <ChevronDown size={12} class={cls("transition-transform", !open() && "-rotate-90")} />
                     </button>
                   </Show>
                   <StatusDot status={worst(agents())} size={7} />
@@ -218,7 +228,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                     <X size={12} />
                   </button>
                 </a>
-                <Show when={tree() && isExpanded(w.name)}>
+                <Show when={tree() && open()}>
                   <div class="mb-1 ml-[13px] flex flex-col gap-px border-l border-line pl-1.5">
                     <For each={w.windows}>
                       {(win) => {
@@ -357,7 +367,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       </div>
 
       <div class="border-t border-line px-4 py-3">
-        <Show when={state.usage}>
+        <Show when={state.usage && showUsage()}>
           <div class="mb-3 flex flex-col gap-2">
             <Show when={state.usage!.five_hour}>
               <Meter label="5-hour limit" w={state.usage!.five_hour!} />
@@ -367,19 +377,17 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             </Show>
           </div>
         </Show>
-        <div class="-mx-1.5 flex items-center gap-0.5">
-          <IconButton label={notifyPermission() === "granted" ? "Notifications are on" : "Turn on notifications"} onClick={() => notifyPermission() !== "granted" && enableNotifications()} active={notifyPermission() === "granted"}>
-            <Show when={notifyPermission() === "granted"} fallback={<BellOff size={15} />}>
-              <Bell size={15} />
-            </Show>
-          </IconButton>
-          <IconButton label={`Theme: ${theme().label}`} onClick={() => openPalette("theme")}>
-            {theme().mode === "dark" ? <Moon size={15} /> : <Sun size={15} />}
-          </IconButton>
-          <IconButton label="Keyboard shortcuts (?)" onClick={() => setHelpOpen(true)}>
-            <Keyboard size={15} />
-          </IconButton>
-        </div>
+        <button
+          class="-mx-1.5 flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+          onClick={() => {
+            p.onNavigate?.();
+            setSettingsOpen(true);
+          }}
+          title="Settings (,)"
+        >
+          <Cog size={15} />
+          Settings
+        </button>
       </div>
     </div>
   );

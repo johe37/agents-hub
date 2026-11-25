@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createRoot, createSignal } from "solid
 import { createStore, reconcile } from "solid-js/store";
 import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Win, type Workspace } from "./api";
 import { apply, choiceLabel, isChoice, resolve } from "./themes";
+import { notifyFinished, notifyInFocus, notifySound, notifyWaiting } from "./settings";
 import { STATUS, alive } from "./util";
 import { voiceTurn } from "./voice";
 
@@ -309,9 +310,10 @@ function notifyChanges(next: State) {
     const finished = a.status === "idle" && before === "working";
     if (!ask && !finished) continue;
     voiceTurn(a);
-    if (notifyPermission() !== "granted" || (document.hasFocus() && document.visibilityState === "visible")) continue;
+    if (notifyPermission() !== "granted" || !(ask ? notifyWaiting() : notifyFinished())) continue;
+    if (!notifyInFocus() && document.hasFocus() && document.visibilityState === "visible") continue;
     const body = ask ? (a.message ?? "Waiting for you") : (a.reply?.slice(0, 180) ?? "Finished its turn");
-    const n = new Notification(`${ask ? "⏳" : "✓"} ${a.name}: ${a.title}`, { body, tag: a.key, silent: !ask });
+    const n = new Notification(`${ask ? "⏳" : "✓"} ${a.name}: ${a.title}`, { body, tag: a.key, silent: !ask || !notifySound() });
     n.onclick = () => {
       window.focus();
       go(ask ? { view: "agents" } : agentRoute(a));
@@ -454,6 +456,7 @@ export const [paletteOpen, setPaletteOpen] = createSignal(false);
 export type PaletteMode = "all" | "open" | "agent" | "theme";
 export const [paletteMode, setPaletteMode] = createSignal<PaletteMode>("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
+export const [settingsOpen, setSettingsOpen] = createSignal(false);
 export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string; chat?: boolean } | null>(null);
 export const newChat = () => setComposer({ path: state.chat_dir, chat: true });
 /** The workspace of chat_dir, for questions that belong to no repo. */

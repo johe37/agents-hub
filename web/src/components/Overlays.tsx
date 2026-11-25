@@ -125,6 +125,7 @@ const KEYS: [string, [string, string][]][] = [
       ["W", "Next agent that needs you"],
       ["|", "Hide or show the sidebar"],
       ["Z", "Focus mode: only the content"],
+      [",", "Settings"],
       ["?", "This help"],
     ],
   ],

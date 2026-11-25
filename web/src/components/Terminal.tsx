@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { wsURL } from "../api";
 import { openPalette, theme } from "../store";
+import { termFontSize } from "../settings";
 import { Refresh } from "./icons";
 import { Button, Spinner } from "./ui";
 
@@ -51,7 +52,7 @@ export function Terminal(p: { window: string; focus?: boolean }) {
     await document.fonts.load('13px "JetBrains Mono Variable"').catch(() => undefined);
     term = new XTerm({
       fontFamily: '"JetBrains Mono Variable", ui-monospace, Menlo, monospace',
-      fontSize: 13,
+      fontSize: termFontSize(),
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
@@ -135,6 +136,17 @@ export function Terminal(p: { window: string; focus?: boolean }) {
     const t = theme().term;
     if (term) term.options.theme = t;
   });
+  createEffect(
+    on(
+      termFontSize,
+      (size) => {
+        if (!term) return;
+        term.options.fontSize = size;
+        refit();
+      },
+      { defer: true },
+    ),
+  );
   createEffect(() => {
     if (p.focus && phase() === "open") term?.focus();
   });

@@ -6,6 +6,7 @@ import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
 import { Confirm, DiffModal, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
+import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { Edge, IconButton } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
@@ -23,6 +24,8 @@ import {
   route,
   setComposer,
   setHelpOpen,
+  setSettingsOpen,
+  settingsOpen,
   state,
   store,
   theme,
@@ -77,7 +80,7 @@ export function App() {
       return;
     }
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (paletteOpen() || composer() || confirmBox() || diffView() || helpOpen()) return;
+    if (paletteOpen() || composer() || confirmBox() || diffView() || helpOpen() || settingsOpen()) return;
     const t = e.target as HTMLElement;
     if (t.closest("input,textarea,select,[contenteditable],.xterm")) return;
     const k = e.key;
@@ -125,6 +128,9 @@ export function App() {
         break;
       case "?":
         setHelpOpen(true);
+        break;
+      case ",":
+        setSettingsOpen(true);
         break;
       case "/": {
         const f = document.querySelector<HTMLInputElement>("[data-filter]");
@@ -206,6 +212,7 @@ export function App() {
       <NewAgent />
       <DiffModal />
       <Help />
+      <Settings />
       <Confirm />
       <Toasts />
     </div>

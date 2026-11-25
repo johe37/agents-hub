@@ -16,6 +16,7 @@ import {
   reopen,
   setComposer,
   setHelpOpen,
+  setSettingsOpen,
   setPaletteOpen,
   setThemePreview,
   state,
@@ -24,7 +25,7 @@ import {
 import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Cog, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot } from "./ui";
 import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
@@ -189,6 +190,7 @@ export function Palette() {
       { id: "nav", group: "Layout", title: showNav() ? "Hide the sidebar" : "Show the sidebar", hint: "|", icon: <PanelLeft size={15} />, keywords: "navigation collapse", run: () => (close(), toggleNav()) },
       ...(route().view === "workspace" ? [{ id: "panel", group: "Layout", title: showPanel() ? "Hide the side panel" : "Show the side panel", hint: "\\", icon: <PanelRight size={15} />, keywords: "right git", run: () => (close(), togglePanel()) }] : []),
       ...(route().view === "gitlab" ? [{ id: "list", group: "Layout", title: showList() ? "Hide the list" : "Show the list", hint: "B", icon: <PanelLeft size={15} />, keywords: "merge requests collapse", run: () => (close(), toggleList()) }] : []),
+      { id: "settings", group: "Settings", title: "Settings…", hint: ",", icon: <Cog size={15} />, keywords: "preferences options", run: () => (close(), setSettingsOpen(true)) },
       { id: "help", group: "Settings", title: "Keyboard shortcuts", icon: <Keyboard size={15} />, run: () => (close(), setHelpOpen(true)) },
     ];
     // Directories only join the list when you search: then you can open any repo from here.
