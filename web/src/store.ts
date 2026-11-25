@@ -1,6 +1,6 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { post, wsURL, type Action, type ActionResult, type Agent, type State } from "./api";
+import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Workspace } from "./api";
 import { STATUS, alive } from "./util";
 import { voiceTurn } from "./voice";
 
@@ -274,6 +274,21 @@ export async function openDir(path: string) {
   if (!r.ok) return;
   if (r.workspace) go({ view: "workspace", name: r.workspace, window: null });
   else go({ view: "open", path: r.path ?? path });
+}
+
+/** Ask, then close the workspace; it goes to the recently closed ones. */
+export function closeWorkspace(w: Workspace) {
+  ask({
+    title: `Close workspace “${w.name}”?`,
+    body: `All ${w.windows.length} window${w.windows.length === 1 ? "" : "s"} close, agents included. Files stay as they are. You can open it again under Recently closed.`,
+    confirm: "Close workspace",
+    danger: true,
+    run: () =>
+      act({ type: "close_workspace", workspace: w.name }).then((r) => {
+        const here = route();
+        if (r.ok && here.view === "workspace" && here.name === w.name) go({ view: "inbox" });
+      }),
+  });
 }
 
 export async function reopen(id: string) {

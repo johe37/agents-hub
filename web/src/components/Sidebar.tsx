@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import type { UsageWindow } from "../api";
-import { act, connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, themePref } from "../store";
+import { act, closeWorkspace, connection, cycleTheme, enableNotifications, go, href, notifyPermission, now, isBusy, openPalette, reopen, route, setHelpOpen, state, store, themePref } from "../store";
 import { MOD, age, cls, until, worst } from "../util";
 import { Bell, BellOff, Bot, ChevronDown, Git, Inbox, Keyboard, Monitor, Moon, Plus, Search, Sun, Undo, X } from "./icons";
 import { attention } from "../gitlab";
@@ -154,8 +154,20 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                   </Show>
                 </div>
                 <Show when={waiting()}>
-                  <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-[#1d1405]">{waiting()}</span>
+                  <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-[#1d1405] group-hover:hidden">{waiting()}</span>
                 </Show>
+                <button
+                  class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeWorkspace(w);
+                  }}
+                  aria-label={`Close workspace ${w.name}`}
+                  title="Close workspace"
+                >
+                  <X size={12} />
+                </button>
               </a>
             );
           }}

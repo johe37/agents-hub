@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
-import { act, ask, draft, go, isBusy, now, setDiffView, state, store } from "../store";
+import { act, ask, closeWorkspace as closeWs, draft, go, isBusy, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -233,14 +233,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
 
   const closeWorkspace = () => {
     const w = ws();
-    if (!w) return;
-    ask({
-      title: `Close workspace “${w.name}”?`,
-      body: `All ${w.windows.length} window${w.windows.length === 1 ? "" : "s"} close, agents included. Files stay as they are.`,
-      confirm: "Close workspace",
-      danger: true,
-      run: () => act({ type: "close_workspace", workspace: w.name }).then((r) => r.ok && go({ view: "inbox" })),
-    });
+    if (w) closeWs(w);
   };
 
   const [renaming, setRenaming] = createSignal(false);
