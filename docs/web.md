@@ -78,7 +78,8 @@ An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** 
   and press `Enter`. If no Claude runs there, the hub checks the code out and starts one.
   **Chat** in the MR's header opens the panel too.
 - **Comment** (`c`). **Add to review** keeps the comment as a draft in GitLab, like "Start a
-  review" there. **Comment now** posts it at once. Under an answer from Claude, **Comment with
+  review" there. **Comment now** posts it at once. The comment shows in its place right away,
+  marked "Sending…"; if GitLab refuses it, the form comes back with your text. Under an answer from Claude, **Comment with
   this** opens a comment with that text on the lines you asked about.
 - **Finish review** publishes your drafts, with a summary if you write one, and approves the
   MR if you tick the box. **Approve** in the header approves without a review.

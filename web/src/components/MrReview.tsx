@@ -234,6 +234,8 @@ function linesLabel(sel: DiffLine[]): string {
 /** A selection from FILE to FILE is the whole file. */
 const FILE = -1;
 
+let pendingSeq = 0;
+
 function askPrompt(mr: Mr, f: ParsedFile, sel: DiffLine[], mode: Mode, v: MrChanges["version"]): string {
   const s = (x: string) => x.slice(0, 12);
   const path = f.new_path || f.old_path;
@@ -359,6 +361,34 @@ export function Commits(p: { review: Review }) {
   );
 }
 
+/** A comment shown at once, until GitLab's copy of it comes back. */
+interface Pending {
+  id: number;
+  path: string;
+  line: number | null;
+  old_line: boolean;
+  body: string;
+  draft: boolean;
+  sent: boolean;
+}
+
+function PendingBox(p: { note: Pending }) {
+  return (
+    <article class={cls("max-w-3xl overflow-hidden rounded-xl border bg-panel animate-pop-in", p.note.draft ? "border-waiting/40" : "border-line")}>
+      <header class={cls("flex items-center gap-2 border-b border-line px-3 py-1.5 text-[12px]", p.note.draft ? "bg-waiting-soft/40" : "bg-raised")}>
+        <Badge tone={p.note.draft ? "waiting" : "neutral"}>{p.note.draft ? "Draft" : "Comment"}</Badge>
+        <span class="flex items-center gap-1.5 text-fg-3">
+          <Show when={!p.note.sent} fallback={<Check size={12} class="text-idle" />}>
+            <Spinner size={12} />
+          </Show>
+          {!p.note.sent ? "Sending…" : p.note.draft ? "Added to your review" : "Posted on GitLab"}
+        </span>
+      </header>
+      <Markdown text={p.note.body} class="px-3.5 py-2.5 text-[13px]" />
+    </article>
+  );
+}
+
 function DraftBox(p: { mr: Mr; draft: DraftNote; onChange: () => void }) {
   const [editing, setEditing] = createSignal(false);
   const [text, setText] = createSignal("");
@@ -405,16 +435,16 @@ function DraftBox(p: { mr: Mr; draft: DraftNote; onChange: () => void }) {
   );
 }
 
-function CommentForm(p: { label: string; text: string; onText: (t: string) => void; busy: boolean; onSubmit: (draft: boolean) => void; onCancel: () => void }) {
+function CommentForm(p: { label: string; text: string; onText: (t: string) => void; onSubmit: (draft: boolean) => void; onCancel: () => void }) {
   return (
     <div class="max-w-3xl rounded-xl border border-line-strong bg-panel p-2.5">
       <div class="mb-1.5 text-[12px] text-fg-3">Comment on {p.label}</div>
       <TextBox value={p.text} onInput={p.onText} placeholder="Write a comment… (Ctrl+Enter adds it to your review)" onSubmit={() => p.text.trim() && p.onSubmit(true)} onCancel={p.onCancel} autofocus />
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" disabled={!p.text.trim()} loading={p.busy} onClick={() => p.onSubmit(true)} title="Keep it as a draft until you finish the review">
+        <Button size="sm" variant="primary" disabled={!p.text.trim()} onClick={() => p.onSubmit(true)} title="Keep it as a draft until you finish the review">
           Add to review
         </Button>
-        <Button size="sm" disabled={!p.text.trim() || p.busy} onClick={() => p.onSubmit(false)} title="Post it on GitLab now">
+        <Button size="sm" disabled={!p.text.trim()} onClick={() => p.onSubmit(false)} title="Post it on GitLab now">
           Comment now
         </Button>
         <Button size="sm" variant="ghost" onClick={p.onCancel}>
@@ -463,9 +493,11 @@ interface FileCtx {
   askFile: (f: ParsedFile) => void;
 }
 
+type Group = { threads: Thread[]; drafts: DraftNote[]; pending: Pending[] };
+
 const lineKeys = (l: DiffLine) => (l.type === "del" ? [`o${l.old}`] : l.type === "add" ? [`n${l.new}`] : l.type === "ctx" ? [`n${l.new}`, `o${l.old}`] : []);
 
-function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: () => void; threads: Thread[]; drafts: DraftNote[]; open: boolean; onOpen: (o: boolean) => void; ctx: FileCtx }) {
+function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: () => void; threads: Thread[]; drafts: DraftNote[]; pending: Pending[]; open: boolean; onOpen: (o: boolean) => void; ctx: FileCtx }) {
   const [full, setFull] = createSignal(false);
   // An MR can change hundreds of files: draw a diff only when it comes near the screen.
   const [near, setNear] = createSignal(false);
@@ -481,17 +513,18 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
   // Threads and drafts sit under their line; one whose line is not in the diff goes on top.
   const placed = createMemo(() => {
     const shown = new Set(p.f.lines.flatMap(lineKeys));
-    const map = new Map<string, { threads: Thread[]; drafts: DraftNote[] }>();
-    const loose = { threads: [] as Thread[], drafts: [] as DraftNote[] };
+    const map = new Map<string, Group>();
+    const loose: Group = { threads: [], drafts: [], pending: [] };
     const put = (line: number | null, old: boolean, add: (g: typeof loose) => void) => {
       const k = line == null ? null : `${old ? "o" : "n"}${line}`;
       if (k && shown.has(k)) {
-        if (!map.has(k)) map.set(k, { threads: [], drafts: [] });
+        if (!map.has(k)) map.set(k, { threads: [], drafts: [], pending: [] });
         add(map.get(k)!);
       } else add(loose);
     };
     for (const t of p.threads) put(t.line, t.old_line, (g) => g.threads.push(t));
     for (const d of p.drafts) put(d.line, d.old_line, (g) => g.drafts.push(d));
+    for (const n of p.pending) put(n.line, n.old_line, (g) => g.pending.push(n));
     return { map, loose };
   });
 
@@ -504,12 +537,13 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
     return f && f.file === p.f.name ? f : null;
   };
   const label = (a: number, b: number) => linesLabel(p.f.lines.slice(a, b + 1));
-  const Notes = (q: { g: { threads: Thread[]; drafts: DraftNote[] } }) => (
+  const Notes = (q: { g: Group }) => (
     <div class="flex flex-col gap-2">
       {q.g.threads.map((t) => p.ctx.thread(t))}
       {q.g.drafts.map((d) => (
         <DraftBox mr={p.ctx.mr} draft={d} onChange={p.ctx.review.reloadDrafts} />
       ))}
+      <For each={q.g.pending}>{(n) => <PendingBox note={n} />}</For>
     </div>
   );
 
@@ -542,7 +576,6 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
           label={form() ? label(Math.min(form()!.a, form()!.b), Math.max(form()!.a, form()!.b)) : ""}
           text={form()?.text ?? ""}
           onText={p.ctx.setFormText}
-          busy={isBusy(`note:${p.ctx.mr.key}`)}
           onSubmit={(draft) => p.ctx.submit(p.f, draft)}
           onCancel={p.ctx.closeForm}
         />
@@ -550,7 +583,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
     </div>
   );
 
-  const looseCount = () => placed().loose.threads.length + placed().loose.drafts.length;
+  const looseCount = () => placed().loose.threads.length + placed().loose.drafts.length + placed().loose.pending.length;
   const fileForm = () => form()?.a === FILE;
   return (
     <section ref={el} id={`mr-file-${p.index}`} class="scroll-mt-2 rounded-xl border border-line bg-panel">
@@ -598,7 +631,6 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
                 label="the whole file"
                 text={form()?.text ?? ""}
                 onText={p.ctx.setFormText}
-                busy={isBusy(`note:${p.ctx.mr.key}`)}
                 onSubmit={(draft) => p.ctx.submit(p.f, draft)}
                 onCancel={p.ctx.closeForm}
               />
@@ -685,6 +717,17 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
   const [open, setOpen] = createSignal<Record<string, boolean>>({});
   const [sel, setSel] = createSignal<{ file: string; a: number; b: number } | null>(null);
   const [form, setForm] = createSignal<{ file: string; a: number; b: number; text: string } | null>(null);
+  const [pending, setPending] = createSignal<Pending[]>([]);
+  // A sent comment goes when GitLab's copy of it shows: a draft once the drafts reload, a comment
+  // once the MR's threads refresh.
+  createEffect(() => {
+    const ds = p.review.drafts();
+    const ts = p.mr.threads;
+    const same = (n: Pending, x: { path: string | null; line: number | null; old_line: boolean }, body: string | undefined) =>
+      x.path === n.path && x.line === n.line && x.old_line === n.old_line && body?.trim() === n.body;
+    const left = pending().filter((n) => !n.sent || !(n.draft ? ds.some((d) => same(n, d, d.body)) : ts.some((t) => same(n, t, t.notes[0]?.body))));
+    if (left.length !== pending().length) setPending(left);
+  });
   const [finishing, setFinishing] = createSignal(false);
   const [summary, setSummary] = createSignal("");
   createEffect(
@@ -694,6 +737,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
         setOpen({});
         setSel(null);
         setForm(null);
+        setPending([]);
       },
       { defer: true },
     ),
@@ -754,17 +798,34 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       setForm({ file: f.name, a: FILE, b: FILE, text: form()?.text ?? "" });
     },
     closeForm: () => (setForm(null), setSel(null)),
+    // The comment shows at once where it goes; if GitLab refuses it, the form comes back with it.
     submit: async (f, draft) => {
       const fm = form();
       const v = p.review.data()?.version;
-      if (!fm || !v) return;
+      if (!fm || !v || !fm.text.trim()) return;
       const a = Math.min(fm.a, fm.b);
       const b = Math.max(fm.a, fm.b);
-      const pos = a === FILE ? filePosition(v, f) : await position(v, f, f.lines[a], f.lines[b]);
-      const r = await act({ type: "mr_note", mr: p.mr.key, body: fm.text, position: pos, draft }, { key: `note:${p.mr.key}` });
-      if (!r.ok) return;
+      const last = a === FILE ? null : f.lines[b];
+      const note: Pending = {
+        id: ++pendingSeq,
+        path: f.name,
+        line: last ? (last.type === "del" ? last.old! : last.new!) : null,
+        old_line: last?.type === "del",
+        body: fm.text.trim(),
+        draft,
+        sent: false,
+      };
+      setPending((x) => [...x, note]);
       setForm(null);
       setSel(null);
+      const pos = a === FILE ? filePosition(v, f) : await position(v, f, f.lines[a], f.lines[b]);
+      const r = await act({ type: "mr_note", mr: p.mr.key, body: fm.text, position: pos, draft }, { key: `note:${p.mr.key}:${note.id}`, quiet: true });
+      if (!r.ok) {
+        setPending((x) => x.filter((n) => n.id !== note.id));
+        if (!form()) (setSel(a === FILE ? null : { file: fm.file, a: fm.a, b: fm.b }), setForm(fm));
+        return;
+      }
+      setPending((x) => x.map((n) => (n.id === note.id ? { ...n, sent: true } : n)));
       if (draft) p.review.reloadDrafts();
     },
     ask: (f) => {
@@ -913,6 +974,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
                       onViewed={() => markViewed(f, i() + 1)}
                       threads={onFile(p.mr.threads, f)}
                       drafts={onFile(drafts(), f)}
+                      pending={onFile(pending(), f)}
                       open={isOpen(f)}
                       onOpen={(o) => setOpen((x) => ({ ...x, [f.name]: o }))}
                       ctx={ctx}
