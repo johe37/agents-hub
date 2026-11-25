@@ -135,10 +135,12 @@ export function Badge(p: { children: JSX.Element; tone?: "neutral" | "accent" | 
   );
 }
 
-export function Empty(p: { icon: JSX.Element; title: string; children?: JSX.Element; class?: string }) {
+export function Empty(p: { icon: JSX.Element; image?: string; title: string; children?: JSX.Element; class?: string }) {
   return (
     <div class={cls("flex flex-col items-center justify-center px-6 py-16 text-center animate-fade-in", p.class)}>
-      <div class="mb-4 grid size-12 place-items-center rounded-2xl border border-line bg-panel text-fg-3 shadow-soft">{p.icon}</div>
+      <Show when={p.image} fallback={<div class="mb-4 grid size-12 place-items-center rounded-2xl border border-line bg-panel text-fg-3 shadow-soft">{p.icon}</div>}>
+        <img src={p.image} alt="" class="mb-3 size-24" />
+      </Show>
       <div class="text-[15px] font-semibold text-fg">{p.title}</div>
       <div class="mt-1 max-w-sm text-fg-2">{p.children}</div>
     </div>

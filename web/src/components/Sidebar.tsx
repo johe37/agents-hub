@@ -129,7 +129,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   return (
     <div class="flex h-full w-full flex-col">
       <div class="flex items-center gap-2.5 px-4 pb-2 pt-4">
-        <img src="/logo.png" alt="" class="size-10" />
+        <img src={store.live().some((a) => a.status === "working") ? "/logo-juggling.webp" : "/logo.png"} alt="" class="size-10" />
         <span class="text-[16px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         <span
           class={cls(

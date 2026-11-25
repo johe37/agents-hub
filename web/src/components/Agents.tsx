@@ -122,7 +122,7 @@ export function Agents() {
             <Show
               when={waiting().length}
               fallback={
-                <Empty icon={<Check size={20} />} title={working() ? "We are the best jugglr…" : "No balls to juggle…"} class="rounded-2xl border border-dashed border-line py-8">
+                <Empty icon={<Check size={20} />} image={working() ? "/logo-juggling.webp" : undefined} title={working() ? "We are the best jugglr…" : "No balls to juggle…"} class="rounded-2xl border border-dashed border-line py-8">
                   Agents that ask for permission or wait for your reply show up here. Answer them without leaving this page.
                 </Empty>
               }
