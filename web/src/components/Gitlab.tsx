@@ -290,14 +290,6 @@ function Overview(p: { mr: Mr }) {
   const m = () => p.mr;
   return (
     <>
-      <Section title={`Open threads ${m().threads.length ? m().threads.length : ""}`}>
-        <Show when={m().threads.length} fallback={<div class="rounded-xl border border-dashed border-line px-4 py-5 text-center text-fg-3">No open threads.</div>}>
-          <div class="flex flex-col gap-3">
-            <For each={m().threads}>{(t) => <ThreadBox mr={m()} thread={t} />}</For>
-          </div>
-        </Show>
-      </Section>
-
       <Show when={m().description.trim()}>
         <Section title="Description">
           <div class="rounded-xl border border-line bg-panel px-4 py-3">
@@ -305,6 +297,14 @@ function Overview(p: { mr: Mr }) {
           </div>
         </Section>
       </Show>
+
+      <Section title={`Open threads ${m().threads.length ? m().threads.length : ""}`}>
+        <Show when={m().threads.length} fallback={<div class="rounded-xl border border-dashed border-line px-4 py-5 text-center text-fg-3">No open threads.</div>}>
+          <div class="flex flex-col gap-3">
+            <For each={m().threads}>{(t) => <ThreadBox mr={m()} thread={t} />}</For>
+          </div>
+        </Show>
+      </Section>
     </>
   );
 }

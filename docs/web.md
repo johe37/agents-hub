@@ -37,7 +37,7 @@ is: it does not restart it, also after an update.
   you, waiting, ready to merge, drafts) and **Issues**; `1`, `2` and `3` switch, `/` filters,
   and a click on a group title folds it. The count in the menu is what needs you: new reviews,
   and your MRs with a failed pipeline or open threads. Each item has a detail pane: the
-  open review threads, the description and the MR's pipelines. Reply in a thread or resolve
+  description, the open review threads and the MR's pipelines. Reply in a thread or resolve
   it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review
   prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
