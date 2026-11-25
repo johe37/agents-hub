@@ -24,13 +24,15 @@ pub enum Action {
     Adopt { agent: String },
     NewWindow { workspace: String, kind: String },
     NewAgent { path: String, prompt: Option<String> },
-    OpenWorkspace { path: String },
+    /// Without kind, only finds the open workspace for path; with it, opens one with a window of that kind.
+    OpenWorkspace { path: String, kind: Option<String> },
     CloseWorkspace { workspace: String },
     CloseWindow { window: String },
     RenameWorkspace { workspace: String, name: String },
     Rescan,
     /// Check out a merge request and open a workspace for it, or find the one that has it.
-    Checkout { mr: String },
+    /// With kind, the workspace opens (if it is not open) with a window of that kind; without, only the code is checked out.
+    Checkout { mr: String, kind: Option<String> },
     /// The local clone of a GitLab project.
     FindClone { project: String },
     ThreadReply { mr: String, thread: String, text: String, resolve: bool },
@@ -75,14 +77,28 @@ fn short_id(a: &Agent) -> Result<String, String> {
     Ok(id[..8.min(id.len())].to_string())
 }
 
-/// The workspace for path: one that is open, or a new one.
-fn workspace_for(hub: &Hub, path: &str) -> Result<String, String> {
+/// The open workspace for path, if any.
+fn open_for(hub: &Hub, path: &str) -> Option<String> {
     let real = tmux::canonical(path);
-    let open = hub.snapshot().workspaces.iter().find(|w| tmux::canonical(&w.path) == real).map(|w| w.name.clone());
-    match open {
-        Some(name) => Ok(name),
-        None => tmux::ensure_workspace(&real),
-    }
+    hub.snapshot().workspaces.iter().find(|w| tmux::canonical(&w.path) == real).map(|w| w.name.clone())
+}
+
+/// The name a new workspace for path gets: a review checkout says so.
+fn workspace_name(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    let base = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    if p.starts_with(crate::gitlab::reviews_dir()) { format!("review-{base}") } else { base }
+}
+
+/// A new workspace for path whose first window is kind, and that window's id.
+fn new_workspace(path: &str, kind: &str, command: Option<&str>) -> Result<(String, Option<String>), String> {
+    let session = tmux::ensure_workspace_with(path, &workspace_name(path), kind, command)?;
+    let w = tmux::call(&["list-windows", "-t", &format!("={session}:"), "-F", "#{window_id}"])?.lines().next().map(String::from);
+    Ok((session, w))
+}
+
+fn check_kind(kind: &str) -> Result<(), String> {
+    if matches!(kind, "claude" | "shell" | "nvim") { Ok(()) } else { Err(format!("Unknown window kind {kind}")) }
 }
 
 /// A window in session: a pre-started one from the pool when there is one, which shows its prompt at once.
@@ -180,9 +196,15 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 return Err("This agent still runs".into());
             }
             let id = a.session_id().filter(|id| crate::hooks::valid_id(id)).ok_or("This agent has no session id")?;
-            let session = workspace_for(hub, &a.path)?;
-            let w = tmux::open_window(&session, &a.path, "claude", Some(&format!("claude --resume {id}")))?;
-            Ok(Done { message: Some(format!("Resumed in {session}")), workspace: Some(session), window: Some(w), path: None })
+            let command = format!("claude --resume {id}");
+            let (session, w) = match open_for(hub, &a.path) {
+                Some(session) => {
+                    let w = tmux::open_window(&session, &a.path, "claude", Some(&command))?;
+                    (session, Some(w))
+                }
+                None => new_workspace(&a.path, "claude", Some(&command))?,
+            };
+            Ok(Done { message: Some(format!("Resumed in {session}")), workspace: Some(session), window: w, path: None })
         }
         Action::CloseAgent { agent: key } => {
             let a = agent(hub, &key)?;
@@ -221,8 +243,13 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let path = crate::config::expand(path.trim());
             std::fs::create_dir_all(&path).map_err(|e| format!("Could not create {}: {e}", shorten(&path)))?;
             let path = tmux::canonical(&path);
-            let session = workspace_for(hub, &path)?;
             let prompt = prompt.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+            let Some(session) = open_for(hub, &path) else {
+                let command = prompt.as_ref().map_or_else(|| "claude".to_string(), |p| format!("claude {}", tmux::shell_quote(p)));
+                let (session, w) = new_workspace(&path, "claude", Some(&command))?;
+                let message = if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened Claude in {session}") };
+                return Ok(Done { message: Some(message), workspace: Some(session), window: w, path: Some(path) });
+            };
             let w = match &prompt {
                 // A pre-started Claude is ready to read input, so the prompt can be typed in at once.
                 Some(p) => match tmux::spare_for(&path, Some("claude")) {
@@ -240,13 +267,24 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let message = if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened Claude in {session}") };
             Ok(Done { message: Some(message), workspace: Some(session), window: Some(w), path: None })
         }
-        Action::OpenWorkspace { path } => {
+        Action::OpenWorkspace { path, kind } => {
             let path = crate::config::expand(path.trim());
             if !std::path::Path::new(&path).is_dir() {
                 return Err(format!("{} is not a directory", shorten(&path)));
             }
-            let session = workspace_for(hub, &path)?;
-            Ok(Done { message: None, workspace: Some(session), window: None, path: None })
+            let path = tmux::canonical(&path);
+            let open = open_for(hub, &path);
+            let Some(kind) = kind else {
+                return Ok(Done { workspace: open, path: Some(path), ..Done::default() });
+            };
+            check_kind(&kind)?;
+            let command = crate::app::window_command(&kind);
+            if let Some(session) = open {
+                let w = window(&session, &path, &kind, command)?;
+                return Ok(Done { workspace: Some(session), window: Some(w), path: Some(path), ..Done::default() });
+            }
+            let (session, w) = new_workspace(&path, &kind, command)?;
+            Ok(Done { message: Some(format!("Opened {session}")), workspace: Some(session), window: w, path: Some(path) })
         }
         Action::CloseWorkspace { workspace } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
@@ -286,25 +324,29 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let _ = hub.cmd.lock().unwrap().send(Cmd::Rescan);
             Ok(said("Scanning for repos"))
         }
-        Action::Checkout { mr: key } => {
+        Action::Checkout { mr: key, kind } => {
+            if let Some(k) = &kind {
+                check_kind(k)?;
+            }
             let m = find_mr(hub, &key)?;
             let (open, review) = {
                 let snap = hub.snapshot();
                 (mr_workspace(&m, &snap).map(|w| (w.name.clone(), w.path.clone())), snap.reviews.iter().any(|r| mr_key(r) == key))
             };
             if let Some((name, path)) = open {
-                return Ok(Done { workspace: Some(name), path: Some(path), ..Done::default() });
+                let w = match &kind {
+                    Some(k) => Some(window(&name, &path, k, crate::app::window_command(k))?),
+                    None => None,
+                };
+                return Ok(Done { workspace: Some(name), window: w, path: Some(path), ..Done::default() });
             }
             let repo = clone_of(hub, &m.project)?;
-            let (dir, name) = if review {
-                (crate::gitlab::checkout(&repo, &m)?, format!("review-{}-{}", m.repo(), m.iid))
-            } else {
-                let dir = crate::gitlab::checkout_branch(&repo, &m, &m.branch_dir())?;
-                let name = std::path::Path::new(&dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                (dir, name)
+            let dir = if review { crate::gitlab::checkout(&repo, &m)? } else { crate::gitlab::checkout_branch(&repo, &m, &m.branch_dir())? };
+            let Some(k) = kind else {
+                return Ok(Done { message: Some(format!("Checked out !{}", m.iid)), path: Some(dir), ..Done::default() });
             };
-            let session = tmux::ensure_workspace_named(&dir, &name)?;
-            Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), path: Some(dir), ..Done::default() })
+            let (session, w) = new_workspace(&dir, &k, crate::app::window_command(&k))?;
+            Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), window: w, path: Some(dir) })
         }
         Action::FindClone { project } => Ok(Done { path: Some(clone_of(hub, &project)?), ..Done::default() }),
         Action::ThreadReply { mr: key, thread, text, resolve } => {
@@ -341,7 +383,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             } else {
                 // A review or branch checkout is deleted on close: check the merge request out again.
                 let m = c.mr.as_ref().ok_or_else(|| format!("{} is gone", shorten(&c.path)))?;
-                match run(hub, Action::Checkout { mr: format!("{}!{}", m.project_id, m.iid) }) {
+                match run(hub, Action::Checkout { mr: format!("{}!{}", m.project_id, m.iid), kind: None }) {
                     Ok(Done { path: Some(p), .. }) => p,
                     Ok(_) => return Err("The checkout gave no directory".into()),
                     Err(e) => return Err(format!("{} is gone, and checking out !{} again failed: {e}", shorten(&c.path), m.iid)),

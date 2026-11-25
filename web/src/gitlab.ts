@@ -19,10 +19,10 @@ export function pipelineTone(p: string | null): "add" | "danger" | "waiting" | "
 }
 
 /** Give prompt to a free Claude in the workspace, to edit before sending; else start a new one with it. */
-function toClaude(workspace: string, path: string, prompt: string) {
-  const agents = state.agents.filter((a) => a.workspace === workspace && a.window && a.reachable && (a.status === "idle" || a.status === "waiting"));
+function toClaude(workspace: string | null, path: string, prompt: string) {
+  const agents = state.agents.filter((a) => workspace && a.workspace === workspace && a.window && a.reachable && (a.status === "idle" || a.status === "waiting"));
   const a = agents.find((x) => x.status === "idle") ?? agents[0];
-  if (a?.window) {
+  if (workspace && a?.window) {
     go({ view: "workspace", name: workspace, window: a.window });
     setDraft({ agent: a.key, text: prompt });
   } else {
@@ -30,22 +30,14 @@ function toClaude(workspace: string, path: string, prompt: string) {
   }
 }
 
-/** The MR's code in a workspace: the one that has it, or a new checkout. */
-async function checkout(m: Mr) {
-  const r = await act({ type: "checkout", mr: m.key }, { key: `checkout:${m.key}` });
-  return r.ok && r.workspace && r.path ? { workspace: r.workspace, path: r.path } : null;
-}
-
 /** Open the MR's code with a window of kind; Claude gets the review prompt (for a review) to edit first. */
 export async function openMr(m: Mr, kind: Kind, prompt?: string) {
-  const ws = await checkout(m);
-  if (!ws) return;
-  if (kind === "claude") {
-    const p = prompt ?? (isReview(m) ? m.review_prompt : "");
-    if (p) return toClaude(ws.workspace, ws.path, p);
-  }
-  const r = await act({ type: "new_window", workspace: ws.workspace, kind }, { quiet: true });
-  if (r.ok && r.window) go({ view: "workspace", name: ws.workspace, window: r.window });
+  const p = kind === "claude" ? (prompt ?? (isReview(m) ? m.review_prompt : "")) : "";
+  // With a prompt to edit, only check the code out: the workspace opens with the agent you start.
+  const r = await act({ type: "checkout", mr: m.key, kind: p ? undefined : kind }, { key: `checkout:${m.key}` });
+  if (!r.ok || !r.path) return;
+  if (p) return toClaude(r.workspace ?? null, r.path, p);
+  if (r.workspace) go({ view: "workspace", name: r.workspace, window: r.window ?? null });
 }
 
 export async function startIssue(i: Issue) {

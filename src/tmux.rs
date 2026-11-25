@@ -475,13 +475,18 @@ pub fn ensure_workspace(path: &str) -> Result<String, String> {
 
 /// The workspace for path, or a new one named name with a shell, without switching to it.
 pub fn ensure_workspace_named(path: &str, name: &str) -> Result<String, String> {
+    ensure_workspace_with(path, name, "shell", None)
+}
+
+/// The workspace for path, or a new one named name whose first window is window running command.
+pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Option<&str>) -> Result<String, String> {
     let real = canonical(path);
     let panes: Vec<Pane> = list_all_panes().into_iter().filter(|p| !p.session.starts_with('_')).collect();
     if let Some(p) = panes.iter().find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real) {
         return Ok(p.session.clone());
     }
     let name = unique_session_name(name, &list_sessions());
-    let args = chain(&create_commands(&name, path, "shell", None, None));
+    let args = chain(&create_commands(&name, path, window, command, None));
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     check(run(&refs))?;
     Ok(name)

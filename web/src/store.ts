@@ -30,7 +30,8 @@ export type Route =
   | { view: "agents" }
   | { view: "gitlab"; key: string | null }
   | { view: "workspace"; name: string; window: string | null }
-  | { view: "agent"; key: string };
+  | { view: "agent"; key: string }
+  | { view: "open"; path: string };
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
@@ -44,6 +45,9 @@ function parse(hash: string): Route {
       break;
     case "a":
       if (parts[1]) return { view: "agent", key: parts.slice(1).join("/") };
+      break;
+    case "open":
+      if (parts[1]) return { view: "open", path: parts.slice(1).join("/") };
       break;
   }
   return { view: "inbox" };
@@ -61,6 +65,8 @@ export function href(r: Route): string {
       return `#/w/${encodeURIComponent(r.name)}${r.window ? "/" + encodeURIComponent(r.window) : ""}`;
     case "agent":
       return `#/a/${encodeURIComponent(r.key)}`;
+    case "open":
+      return `#/open/${encodeURIComponent(r.path)}`;
   }
 }
 
@@ -260,6 +266,14 @@ export function cycleTheme() {
     /* ignore */
   }
   toast(`Theme: ${next}`);
+}
+
+/** Go to the workspace for path, or to the page that opens one with what you pick. */
+export async function openDir(path: string) {
+  const r = await act({ type: "open_workspace", path }, { key: `open:${path}`, quiet: true });
+  if (!r.ok) return;
+  if (r.workspace) go({ view: "workspace", name: r.workspace, window: null });
+  else go({ view: "open", path: r.path ?? path });
 }
 
 export async function reopen(id: string) {

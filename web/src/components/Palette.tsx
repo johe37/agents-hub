@@ -9,6 +9,7 @@ import {
   paletteMode,
   paletteOpen,
   route,
+  openDir,
   reopen,
   setComposer,
   setHelpOpen,
@@ -80,7 +81,7 @@ export function Palette() {
       run: (mod) => {
         close();
         if (mod) return setComposer({ path: p });
-        act({ type: "open_workspace", path: p }, { quiet: true }).then((r) => r.ok && r.workspace && go({ view: "workspace", name: r.workspace, window: null }));
+        void openDir(p);
       },
     }));
   });
@@ -183,7 +184,7 @@ export function Palette() {
         run: (mod) => {
           close();
           if (mod) return setComposer({ path: q });
-          act({ type: "open_workspace", path: q }, { quiet: true }).then((r) => r.ok && r.workspace && go({ view: "workspace", name: r.workspace, window: null }));
+          void openDir(q);
         },
       });
     }

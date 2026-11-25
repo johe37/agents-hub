@@ -22,6 +22,8 @@ is: it does not restart it, also after an update.
   chat: its conversation, with the tool calls folded, and a box to reply. Shells and editors
   are live terminals in the page. The side panel lists the agents, the merge request and the
   changed files; click a file to see its diff.
+- **Open a workspace** (`o`). Pick a directory. If it has no workspace yet, choose what starts
+  in it: Claude, a terminal or an editor. The workspace opens with only that window.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not
   open yet, and Claude starts with the task as its first prompt.
 - **Voice chat.** Click the microphone in a reply box and talk. When you stop, it is sent; when

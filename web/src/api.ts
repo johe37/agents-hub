@@ -193,12 +193,12 @@ export type Action =
   | { type: "adopt"; agent: string }
   | { type: "new_window"; workspace: string; kind: "claude" | "shell" | "nvim" }
   | { type: "new_agent"; path: string; prompt?: string }
-  | { type: "open_workspace"; path: string }
+  | { type: "open_workspace"; path: string; kind?: "claude" | "shell" | "nvim" }
   | { type: "close_workspace"; workspace: string }
   | { type: "close_window"; window: string }
   | { type: "rename_workspace"; workspace: string; name: string }
   | { type: "rescan" }
-  | { type: "checkout"; mr: string }
+  | { type: "checkout"; mr: string; kind?: "claude" | "shell" | "nvim" }
   | { type: "find_clone"; project: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }

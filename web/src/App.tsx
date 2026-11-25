@@ -4,6 +4,7 @@ import { Gitlab } from "./components/Gitlab";
 import { Menu } from "./components/icons";
 import { Inbox } from "./components/Inbox";
 import { NewAgent } from "./components/NewAgent";
+import { OpenWorkspace } from "./components/OpenWorkspace";
 import { Confirm, DiffModal, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Sidebar } from "./components/Sidebar";
@@ -98,7 +99,7 @@ export function App() {
       case "n":
       case "N": {
         const r = route();
-        setComposer({ path: r.view === "workspace" ? (state.workspaces.find((w) => w.name === r.name)?.path ?? null) : null });
+        setComposer({ path: r.view === "workspace" ? (state.workspaces.find((w) => w.name === r.name)?.path ?? null) : r.view === "open" ? r.path : null });
         break;
       }
       case "o":
@@ -175,6 +176,9 @@ export function App() {
             </Match>
             <Match when={route().view === "gitlab"}>
               <Gitlab />
+            </Match>
+            <Match when={(() => { const r = route(); return r.view === "open" ? r : null; })()}>
+              {(r) => <OpenWorkspace path={r().path} />}
             </Match>
             <Match when={(() => { const r = route(); return r.view === "workspace" ? r : null; })()}>
               {(r) => <WorkspaceView name={r().name} window={r().window} />}

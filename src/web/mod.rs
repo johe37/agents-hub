@@ -308,7 +308,9 @@ async fn action(State(hub): State<Arc<Hub>>, Json(body): Json<Value>) -> Respons
 async fn dirs(State(hub): State<Arc<Hub>>) -> Json<Value> {
     let snap = hub.snapshot();
     let dirs: Vec<Value> = snap.dirs.iter().map(|(p, repo)| json!([p, repo])).collect();
-    Json(json!({"dirs": dirs, "recent": snap.recent_dirs, "home": crate::config::home()}))
+    // A review checkout is deleted when its workspace closes, but stays among the recent ones.
+    let recent: Vec<&String> = snap.recent_dirs.iter().filter(|p| std::path::Path::new(p).is_dir()).collect();
+    Json(json!({"dirs": dirs, "recent": recent, "home": crate::config::home()}))
 }
 
 async fn conversation(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
