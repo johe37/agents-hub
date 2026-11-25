@@ -236,6 +236,7 @@ export type Action =
   | { type: "open_workspace"; path: string; kind?: "claude" | "shell" | "nvim" }
   | { type: "close_workspace"; workspace: string }
   | { type: "close_window"; window: string }
+  | { type: "move_window"; window: string; before: string | null }
   | { type: "rename_workspace"; workspace: string; name: string }
   | { type: "rescan" }
   | { type: "checkout"; mr: string; kind?: "claude" | "shell" | "nvim" }

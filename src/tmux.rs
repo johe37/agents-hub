@@ -641,6 +641,30 @@ pub fn kill_window(window_id: &str) -> Res {
     simple(&["kill-window", "-t", window_id])
 }
 
+/// Swaps windows instead of moving them, so the session keeps its indexes even with gaps between them.
+pub fn move_window(session: &str, window_id: &str, before: Option<&str>) -> Result<(), String> {
+    let mut cur: Vec<String> = call(&["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}"])?.lines().map(String::from).collect();
+    let mut want = cur.clone();
+    want.retain(|w| w != window_id);
+    let at = match before {
+        Some(b) => want.iter().position(|w| w == b).ok_or("That window is gone")?,
+        None => want.len(),
+    };
+    want.insert(at, window_id.to_string());
+    if want.len() != cur.len() {
+        return Err("This window is gone".into());
+    }
+    for k in 0..want.len() {
+        if cur[k] == want[k] {
+            continue;
+        }
+        let j = cur.iter().position(|w| *w == want[k]).ok_or("The windows changed")?;
+        call(&["swap-window", "-d", "-s", &want[k], "-t", &cur[k]])?;
+        cur.swap(k, j);
+    }
+    Ok(())
+}
+
 pub fn rename_session(session: &str, new: &str) -> Res {
     simple(&["rename-session", "-t", &format!("={session}"), new])
 }

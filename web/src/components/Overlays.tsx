@@ -142,6 +142,7 @@ const KEYS: [string, [string, string][]][] = [
     [
       ["[ / ]", "Previous / next window"],
       ["Alt 1–9", "Window by number"],
+      ["Alt Shift ← / →", "Move the window left / right"],
       ["C / T", "New Claude / terminal"],
       ["V", "Chat or terminal for an agent"],
       ["M", "Mark the agent done"],

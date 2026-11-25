@@ -161,14 +161,28 @@ export async function act(action: Action, opts: { key?: string; quiet?: boolean 
 const hidden = { workspaces: new Map<string, { done: boolean }>(), windows: new Map<string, { done: boolean }>() };
 let raw: State | null = null;
 
+/** Window order per workspace after a move, shown at once. An entry stays until the hub's state has that order, or the move fails. */
+const orders = new Map<string, { ids: string[]; done: boolean }>();
+
+function ordered(w: Workspace): Workspace {
+  const o = orders.get(w.name);
+  if (!o) return w;
+  const rank = (id: string) => {
+    const i = o.ids.indexOf(id);
+    return i < 0 ? o.ids.length : i;
+  };
+  return { ...w, windows: [...w.windows].sort((a, b) => rank(a.id) - rank(b.id)) };
+}
+
 function visible(s: State): State {
-  if (!hidden.workspaces.size && !hidden.windows.size) return s;
+  if (!hidden.workspaces.size && !hidden.windows.size && !orders.size) return s;
   const gone = (ws: string | null, win: string | null) => (ws !== null && hidden.workspaces.has(ws)) || (win !== null && hidden.windows.has(win));
   return {
     ...s,
     workspaces: s.workspaces
       .filter((w) => !hidden.workspaces.has(w.name))
-      .map((w) => (w.windows.some((x) => hidden.windows.has(x.id)) ? { ...w, windows: w.windows.filter((x) => !hidden.windows.has(x.id)) } : w)),
+      .map((w) => (w.windows.some((x) => hidden.windows.has(x.id)) ? { ...w, windows: w.windows.filter((x) => !hidden.windows.has(x.id)) } : w))
+      .map(ordered),
     agents: s.agents.filter((a) => !(alive(a.status) && gone(a.workspace, a.window))),
   };
 }
@@ -176,6 +190,10 @@ function visible(s: State): State {
 function prune(s: State) {
   for (const [name, h] of hidden.workspaces) if (h.done && !s.workspaces.some((w) => w.name === name)) hidden.workspaces.delete(name);
   for (const [id, h] of hidden.windows) if (h.done && !s.workspaces.some((w) => w.windows.some((x) => x.id === id))) hidden.windows.delete(id);
+  for (const [name, o] of orders) {
+    const ids = s.workspaces.find((w) => w.name === name)?.windows.map((x) => x.id) ?? [];
+    if (o.done && ids.join() === o.ids.filter((id) => ids.includes(id)).join()) orders.delete(name);
+  }
 }
 
 function show() {
@@ -204,6 +222,30 @@ export async function actHiding(
   if (raw) prune(raw);
   show();
   return r;
+}
+
+/** Put a window right before another one, or last when before is null, and show the new order before the hub answers. */
+export async function moveWindow(workspace: string, window: string, before: string | null): Promise<void> {
+  const ids = state.workspaces.find((w) => w.name === workspace)?.windows.map((x) => x.id);
+  if (!ids || before === window) return;
+  const want = ids.filter((id) => id !== window);
+  const at = before === null ? want.length : want.indexOf(before);
+  if (at < 0) return;
+  want.splice(at, 0, window);
+  if (want.join() === ids.join()) return;
+  const o = { ids: want, done: false };
+  orders.set(workspace, o);
+  show();
+  const r = await act({ type: "move_window", window, before }, { quiet: true });
+  if (orders.get(workspace) !== o) return;
+  if (!r.ok) orders.delete(workspace);
+  else {
+    o.done = true;
+    // A move made elsewhere at the same time would otherwise keep this order on screen.
+    setTimeout(() => orders.get(workspace) === o && (orders.delete(workspace), show()), 5000);
+  }
+  if (raw) prune(raw);
+  show();
 }
 
 let socket: WebSocket | null = null;

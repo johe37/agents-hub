@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
-import { act, actHiding, ask, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, now, setDiffView, state, stops, store } from "../store";
+import { act, actHiding, ask, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, now, setDiffView, state, stops, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -169,6 +169,83 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     );
   });
 
+  // Drag a tab to move its window. A mouse drags once it moves a little.
+  // A finger must hold the tab still first, because a finger that moves scrolls the tab row.
+  const [drag, setDrag] = createSignal<{ id: string; before: string | null } | null>(null);
+  let press: { id: string; x: number; pointer: number; touch: boolean; timer?: number } | null = null;
+  let dragged = false;
+
+  const dropBefore = (x: number): string | null => {
+    for (const el of tabs?.querySelectorAll<HTMLElement>("[data-win]") ?? []) {
+      const r = el.getBoundingClientRect();
+      if (x < r.left + r.width / 2) return el.dataset.win!;
+    }
+    return null;
+  };
+  /** Dropping here leaves the window where it is. */
+  const inPlace = (d: { id: string; before: string | null }) => {
+    const wins = ws()?.windows ?? [];
+    const i = wins.findIndex((x) => x.id === d.id);
+    return d.before === d.id || d.before === (wins[i + 1]?.id ?? null);
+  };
+
+  const endPress = () => {
+    if (press?.timer) clearTimeout(press.timer);
+    press = null;
+    setDrag(null);
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragUp);
+    window.removeEventListener("pointercancel", endPress);
+    window.removeEventListener("touchmove", stopScroll);
+    window.removeEventListener("keydown", onDragKey, true);
+    // The click that follows the drop must not select the tab.
+    setTimeout(() => (dragged = false));
+  };
+  const begin = () => {
+    if (!press) return;
+    dragged = true;
+    setDrag({ id: press.id, before: press.id });
+  };
+  const onDragMove = (e: PointerEvent) => {
+    if (!press || e.pointerId !== press.pointer) return;
+    if (!drag()) {
+      const moved = Math.abs(e.clientX - press.x);
+      if (press.touch && moved > 8) endPress();
+      else if (!press.touch && moved > 5) begin();
+      if (!drag()) return;
+    }
+    setDrag({ id: press.id, before: dropBefore(e.clientX) });
+    const r = tabs!.getBoundingClientRect();
+    if (e.clientX < r.left + 24) tabs!.scrollLeft -= 8;
+    else if (e.clientX > r.right - 24) tabs!.scrollLeft += 8;
+  };
+  const onDragUp = (e: PointerEvent) => {
+    if (!press || e.pointerId !== press.pointer) return;
+    const d = drag();
+    endPress();
+    if (d && !inPlace(d)) moveWindow(p.name, d.id, d.before);
+  };
+  const stopScroll = (e: TouchEvent) => drag() && e.preventDefault();
+  const onDragKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !drag()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    endPress();
+  };
+  const onTabDown = (e: PointerEvent, id: string) => {
+    if (e.button !== 0 || (e.target as Element).closest("button")) return;
+    endPress();
+    const touch = e.pointerType === "touch";
+    press = { id, x: e.clientX, pointer: e.pointerId, touch };
+    if (touch) press.timer = window.setTimeout(begin, 400);
+    window.addEventListener("pointermove", onDragMove);
+    window.addEventListener("pointerup", onDragUp);
+    window.addEventListener("pointercancel", endPress);
+    window.addEventListener("touchmove", stopScroll, { passive: false });
+    window.addEventListener("keydown", onDragKey, true);
+  };
+  onCleanup(endPress);
+
   // Without a window in the URL, show the last one shown here, else the one that needs you, else the first agent, else the first window.
   // A window just opened is in the URL before the hub lists it: give it a moment to show up.
   createEffect(() => {
@@ -252,7 +329,10 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     const wins = ws()?.windows ?? [];
     const i = wins.findIndex((w) => w.id === p.window);
     const k = e.altKey ? e.code.replace(/^Digit/, "") : e.key;
-    if (e.altKey && /^[1-9]$/.test(k)) {
+    if (e.altKey && e.shiftKey && (k === "ArrowLeft" || k === "ArrowRight")) {
+      const j = k === "ArrowLeft" ? i - 1 : i + 1;
+      if (i >= 0 && j >= 0 && j < wins.length) moveWindow(p.name, wins[i].id, k === "ArrowLeft" ? wins[j].id : (wins[j + 1]?.id ?? null));
+    } else if (e.altKey && /^[1-9]$/.test(k)) {
       const w = wins[+k - 1];
       if (w) go({ view: "workspace", name: p.name, window: w.id });
     } else if (e.altKey) return;
@@ -372,15 +452,22 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 {(win, i) => {
                   const a = () => agentOf(win);
                   const active = () => win.id === p.window;
+                  const d = () => drag();
+                  const markerBefore = () => d() && !inPlace(d()!) && d()!.before === win.id;
+                  const markerAfter = () => d() && !inPlace(d()!) && d()!.before === null && i() === w().windows.length - 1;
                   return (
                     <div
                       role="tab"
                       aria-selected={active()}
+                      data-win={win.id}
                       class={cls(
-                        "group relative flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg px-3 text-[13px] transition-colors",
+                        "group relative flex h-10 shrink-0 cursor-pointer select-none items-center gap-2 rounded-t-lg px-3 text-[13px] transition-colors",
                         active() ? "text-fg" : "text-fg-2 hover:text-fg",
+                        d()?.id === win.id && "cursor-grabbing opacity-50",
                       )}
-                      onClick={() => go({ view: "workspace", name: p.name, window: win.id })}
+                      onPointerDown={(e) => onTabDown(e, win.id)}
+                      onContextMenu={(e) => drag() && e.preventDefault()}
+                      onClick={() => dragged || go({ view: "workspace", name: p.name, window: win.id })}
                       onAuxClick={(e) => e.button === 1 && closeWindow(win)}
                       title={`${win.command} · Alt+${i() + 1}`}
                     >
@@ -401,6 +488,9 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       </button>
                       <Show when={active()}>
                         <span class="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-accent" />
+                      </Show>
+                      <Show when={markerBefore() || markerAfter()}>
+                        <span class={cls("absolute inset-y-2 w-[2px] rounded-full bg-accent", markerBefore() ? "-left-[3px]" : "-right-[3px]")} />
                       </Show>
                     </div>
                   );

@@ -28,6 +28,8 @@ pub enum Action {
     OpenWorkspace { path: String, kind: Option<String> },
     CloseWorkspace { workspace: String },
     CloseWindow { window: String },
+    /// Put window right before another window of its workspace, or last without one.
+    MoveWindow { window: String, before: Option<String> },
     RenameWorkspace { workspace: String, name: String },
     Rescan,
     /// Check out a merge request and open a workspace for it, or find the one that has it.
@@ -321,6 +323,17 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 return Err("This window is gone".into());
             }
             res(tmux::kill_window(&window))?;
+            Ok(Done::default())
+        }
+        Action::MoveWindow { window, before } => {
+            let session = hub
+                .snapshot()
+                .workspaces
+                .iter()
+                .find(|w| w.windows.iter().any(|win| win.window_id == window))
+                .map(|w| w.name.clone())
+                .ok_or("This window is gone")?;
+            tmux::move_window(&session, &window, before.as_deref())?;
             Ok(Done::default())
         }
         Action::RenameWorkspace { workspace, name } => {
