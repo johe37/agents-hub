@@ -14,6 +14,7 @@ mod tmux;
 mod transcript;
 mod ui;
 mod usage;
+mod web;
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -21,12 +22,13 @@ use std::process::ExitCode;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | restart | stop [-y] | report | statusline | install-hooks [-y]
+const USAGE: &str = "usage: claude-hub [<dir> | <query>] | ui [--no-mouse] | web [--port N] [--no-open] | restart | stop [-y] | report | statusline | install-hooks [-y]
 
 Open the claude-hub workspace manager. Give a directory to open a workspace there,
 or a search query to open the picker with it.
 
   ui              run the hub UI in the current terminal, without the tmux engine
+  web             run the hub as a web app on 127.0.0.1 (default port 7420) and open it
   restart         restart a frozen hub UI; workspaces and agents keep running
   stop            stop the tmux engine and close all workspaces and agents
   report          hook handler: read hook JSON from stdin
@@ -134,6 +136,33 @@ fn run_ui(cfg: config::Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+const WEB_PORT: u16 = 7420;
+
+fn run_web(args: &[String]) -> ExitCode {
+    let port = match args.iter().position(|a| a == "--port").map(|i| args.get(i + 1).and_then(|p| p.parse::<u16>().ok())) {
+        Some(Some(p)) => p,
+        Some(None) => {
+            eprintln!("claude-hub: --port needs a number");
+            return ExitCode::FAILURE;
+        }
+        None => WEB_PORT,
+    };
+    // SAFETY: no other thread runs yet. Without these, tmux calls would act on the terminal the server started in.
+    unsafe {
+        std::env::remove_var("TMUX");
+        std::env::remove_var("TMUX_PANE");
+    }
+    let cfg = config::load();
+    let exe = exe();
+    let conf = tmux::write_config(&exe, &cfg.hub_key);
+    if tmux::server_running() {
+        tmux::source_config(&conf, &cfg.hub_key);
+    }
+    // The hub UI keeps the pools of ready shells and Claudes; the web app only uses them.
+    tmux::ensure_hub(&exe, &conf);
+    web::run(cfg, port, !args.iter().any(|a| a == "--no-open"))
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let first = args.first().map(String::as_str);
@@ -152,6 +181,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("restart") => restart(),
+        Some("web") => run_web(&args[1..]),
         Some("stop") => stop(args.iter().any(|a| a == "-y" || a == "--yes")),
         Some("ui") => {
             let mut cfg = config::load();

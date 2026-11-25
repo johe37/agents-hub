@@ -2,7 +2,7 @@
 
 ## Tests
 
-`cargo test` runs the tests. A GitHub workflow runs them on every push to master and on pull
+`cargo test` runs the tests. `npm run check` in `web/` type-checks the web app. A GitHub workflow runs them on every push to master and on pull
 requests.
 
 ## Demo

@@ -72,7 +72,7 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn transcript_file(&self) -> Option<&str> {
+    pub fn transcript_file(&self) -> Option<&str> {
         self.session.as_ref().and_then(|s| s.transcript_path.as_deref()).or(self.transcript_path.as_deref())
     }
 
@@ -357,7 +357,7 @@ impl Collector {
     }
 
     fn collect(&mut self) -> Snapshot {
-        if tmux::hub_in_use() {
+        if self.cfg.passive || tmux::hub_in_use() {
             self.hub_seen = Instant::now();
         }
         let seen = self.hub_seen.elapsed() < UNSEEN;
@@ -384,7 +384,9 @@ impl Collector {
             .collect();
 
         let mut workspaces = self.workspaces(&panes, &in_hub);
-        self.previews(&mut workspaces, &all_panes);
+        if !self.cfg.passive {
+            self.previews(&mut workspaces, &all_panes);
+        }
 
         let git = &self.git;
         let statuses = par_map(&workspaces, |ws| git.repo_root(&ws.path).map(|r| git.status(&r)));
@@ -407,16 +409,18 @@ impl Collector {
                 recent.push(s.cwd.clone());
             }
         }
-        if self.cfg.prewarm {
+        if self.cfg.prewarm && !self.cfg.passive {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
-        if !self.adopted {
-            self.adopted = true;
-            self.adopt_claudes(&all_panes, &workspaces);
+        if !self.cfg.passive {
+            if !self.adopted {
+                self.adopted = true;
+                self.adopt_claudes(&all_panes, &workspaces);
+            }
+            self.fill_claude(&all_panes, &started);
         }
-        self.fill_claude(&all_panes, &started);
         let inbox = if self.cfg.gitlab() { self.inbox.get(seen, &self.cfg.sections) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
         Snapshot {
             workspaces,

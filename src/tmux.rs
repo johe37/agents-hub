@@ -592,6 +592,28 @@ pub fn resume(session_id: &str, path: &str) -> Res {
     new_window(&session, path, "claude", Some(&format!("claude --resume {session_id}")), None)
 }
 
+/// Run a tmux command on the hub server and return its output.
+pub fn call(args: &[&str]) -> Result<String, String> {
+    let out = run(args).ok_or("tmux not found")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() { "tmux failed".into() } else { err });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Open a window in session without switching to it, and return its window id.
+pub fn open_window(session: &str, cwd: &str, name: &str, command: Option<&str>) -> Result<String, String> {
+    let target = format!("={session}:");
+    let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", cwd, "-n", name];
+    args.extend(command);
+    call(&args)
+}
+
+pub fn shell_quote(s: &str) -> String {
+    quote(s)
+}
+
 /// Stream the pane's output to a file, for the preview in the hub.
 pub fn pipe_pane(pane_id: &str, path: &str) {
     run(&["pipe-pane", "-O", "-t", pane_id, &format!("cat >> {}", quote(path))]);

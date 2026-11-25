@@ -87,6 +87,9 @@ pub struct Config {
     /// Problems in the config file, for the hub to show.
     #[serde(skip)]
     pub warnings: Vec<String>,
+    /// Only read state; leave pools and pane logs to the hub UI. Set by the web server.
+    #[serde(skip)]
+    pub passive: bool,
 }
 
 const SECTIONS: [(&str, Section); 7] = [
@@ -119,6 +122,7 @@ impl Default for Config {
             chat_dir: "~/chats".into(),
             sections: SECTIONS.iter().map(|(_, s)| *s).collect(),
             warnings: vec![],
+            passive: false,
         }
     }
 }

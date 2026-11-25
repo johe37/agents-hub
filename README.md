@@ -9,13 +9,15 @@ One place for your Claude Code sessions and the terminals around them.
 - **GitLab.** Your merge requests with their review threads, the reviews you are asked for, and
   your issues, each in its own section.
 - **Keyboard and mouse.** Vim-style keys, and the mouse works too.
+- **Web app.** `claude-hub web` opens the hub in the browser: an inbox to answer agents, chats,
+  live terminals, diffs and notifications.
 - **Keeps running.** Close the terminal, run `claude-hub` again, and everything is where you
   left it.
 
 ## Install
 
-Requires Linux, tmux, Rust (cargo) and Claude Code. `e` opens nvim, so install it if you want
-that key. The GitLab sections need [`glab`](https://gitlab.com/gitlab-org/cli), logged in with
+Requires Linux, tmux, Rust (cargo) and Claude Code. The web app also needs Node.js (npm) to
+build. `e` opens nvim, so install it if you want that key. The GitLab sections need [`glab`](https://gitlab.com/gitlab-org/cli), logged in with
 `glab auth login`.
 
 ```sh
@@ -54,6 +56,7 @@ Press `n` to open your first workspace, then `c` to start Claude in it.
 
 - [Using the hub](docs/usage.md): workspaces, agents, the panel, the picker, every key and the mouse
 - [GitLab](docs/gitlab.md): merge requests, review threads, reviews and issues
+- [The web app](docs/web.md): the hub in the browser
 - [Configuration](docs/configuration.md): every setting, and which sections the list shows
 - [How it works](docs/how-it-works.md): hooks, tmux, previews, restart and stop
 - [Development](docs/development.md): tests, the demo and releases

@@ -32,13 +32,20 @@ pub fn report() {
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let tmux = std::env::var("TMUX").unwrap_or_default();
-    let record = json!({
+    let dir = events_dir();
+    let mut record = json!({
         "time": now,
         "tmux": tmux.split(',').next().unwrap_or(""),
         "tmux_pane": std::env::var("TMUX_PANE").unwrap_or_default(),
         "event": event,
     });
-    let dir = events_dir();
+    // A permission prompt names no tool; the PreToolUse event before it holds what Claude asks to run.
+    if event["hook_event_name"] == "Notification" {
+        let previous = std::fs::read(dir.join(format!("{id}.json"))).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+        if let Some(prev) = previous.filter(|p| p["event"]["hook_event_name"] == "PreToolUse") {
+            record["pending_tool"] = json!({"name": prev["event"]["tool_name"], "input": prev["event"]["tool_input"]});
+        }
+    }
     let _ = std::fs::create_dir_all(&dir);
     // Write and rename: the rename bumps the directory mtime, which the hub watches.
     let tmp = dir.join(format!(".{id}.{}", std::process::id()));

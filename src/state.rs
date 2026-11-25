@@ -42,6 +42,8 @@ pub struct Session {
     pub notification_type: Option<String>,
     pub tool: Option<String>,
     pub permission_mode: Option<String>,
+    /// The tool call a permission prompt asks about: {name, input}.
+    pub pending_tool: Option<Value>,
     path: PathBuf,
 }
 
@@ -94,6 +96,7 @@ fn read_event(path: PathBuf) -> Option<Session> {
         notification_type: opt(&event["notification_type"]).filter(|_| waiting),
         tool: (name == "PreToolUse").then(|| tool_summary(event["tool_name"].as_str(), &event["tool_input"])).flatten(),
         permission_mode: opt(&event["permission_mode"]),
+        pending_tool: Some(record["pending_tool"].clone()).filter(|t| waiting && t.is_object()),
         path,
     })
 }
