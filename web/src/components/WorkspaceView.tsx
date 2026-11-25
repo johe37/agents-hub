@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
 import { act, ask, draft, go, isBusy, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
@@ -176,12 +176,18 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const agentOf = (w: Win | null) => (w?.agent ? store.agentsByKey().get(w.agent) : undefined);
 
   // Without a window in the URL, show the one that needs you, else the first agent, else the first window.
+  // A window just opened is in the URL before the hub lists it: give it a moment to show up.
   createEffect(() => {
     const w = ws();
     if (!w || current()) return;
-    const pick =
-      w.windows.find((x) => agentOf(x)?.status === "waiting") ?? w.windows.find((x) => x.kind === "agent") ?? w.windows[0];
-    if (pick) go({ view: "workspace", name: w.name, window: pick.id }, true);
+    const pickOne = () => {
+      const pick =
+        w.windows.find((x) => agentOf(x)?.status === "waiting") ?? w.windows.find((x) => x.kind === "agent") ?? w.windows[0];
+      if (pick) go({ view: "workspace", name: w.name, window: pick.id }, true);
+    };
+    if (!p.window) return pickOne();
+    const t = setTimeout(() => untrack(current) || pickOne(), 4000);
+    onCleanup(() => clearTimeout(t));
   });
 
   const mode = () => {
@@ -410,7 +416,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
 
           <div class="flex min-h-0 flex-1">
             <main class="flex min-w-0 flex-1 flex-col">
-              <Show when={current()}>
+              <Show when={current()} fallback={<div class="grid flex-1 place-items-center"><Spinner size={18} /></div>}>
                 {(win) => (
                   <>
                     <Show when={win().kind === "agent" && agentOf(win())}>
