@@ -4,8 +4,8 @@ import { act, ask, go, isBusy, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Done, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Empty, IconButton, StatusDot, StatusPill } from "./ui";
+import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, Code, External, FileDiff, Layers, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { Badge, Button, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill } from "./ui";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
 
@@ -337,19 +337,15 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               )}
             </Show>
             <div class="ml-auto flex items-center gap-1">
-              <Button size="sm" variant="ghost" onClick={() => open("claude")} loading={isBusy("new:claude")} title="New Claude (c)">
-                <Plus size={14} /> Agent
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => open("shell")} loading={isBusy("new:shell")} title="New terminal (t)">
-                <Plus size={14} /> Terminal
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => open("nvim")} loading={isBusy("new:nvim")} title="New editor (e)" class="hidden sm:inline-flex">
-                <Plus size={14} /> Editor
-              </Button>
-              <div class="mx-1 h-5 w-px bg-line" />
-              <IconButton label="Close workspace" onClick={closeWorkspace}>
-                <Trash size={15} />
-              </IconButton>
+              <MenuButton
+                label="Workspace actions"
+                icon={<More size={16} />}
+                align="right"
+                items={[
+                  { label: "Rename", icon: <Rename size={14} />, run: () => setRenaming(true) },
+                  { label: "Close workspace", icon: <Trash size={14} />, danger: true, run: closeWorkspace },
+                ]}
+              />
               <IconButton label="Toggle side panel (\)" active={panelOpen()} onClick={togglePanel} class="hidden lg:inline-grid">
                 <Layers size={15} />
               </IconButton>
@@ -395,6 +391,17 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 );
               }}
             </For>
+            <MenuButton
+              label="New window (c, t, e)"
+              icon={<Show when={isBusy("new:claude") || isBusy("new:shell") || isBusy("new:nvim")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
+              size="sm"
+              class="ml-0.5"
+              items={[
+                { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
+                { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
+                { label: "Editor", icon: <Code size={14} />, hint: "E", run: () => open("nvim") },
+              ]}
+            />
           </nav>
 
           <div class="flex min-h-0 flex-1">

@@ -1,4 +1,5 @@
-import { Show, splitProps, type JSX } from "solid-js";
+import { For, Show, createSignal, onCleanup, splitProps, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
 import type { Status } from "../api";
 import { STATUS, cls } from "../util";
 
@@ -143,5 +144,105 @@ export function Hint(p: { label: string; keys?: string[] }) {
         ))}
       </Show>
     </span>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: JSX.Element;
+  hint?: string;
+  danger?: boolean;
+  run: () => void;
+}
+
+/** A button that opens a small menu. The menu is fixed to the screen, so a scrolling parent never cuts it off. */
+export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuItem[]; align?: "left" | "right"; class?: string; size?: "sm" | "md" }) {
+  const [pos, setPos] = createSignal<{ top: number; left?: number; right?: number } | null>(null);
+  let btn!: HTMLButtonElement;
+  let menu: HTMLDivElement | undefined;
+  const close = () => setPos(null);
+  const open = () => {
+    const r = btn.getBoundingClientRect();
+    setPos(p.align === "right" ? { top: r.bottom + 4, right: window.innerWidth - r.right } : { top: r.bottom + 4, left: r.left });
+    queueMicrotask(() => menu?.querySelector<HTMLButtonElement>("button")?.focus({ focusVisible: false } as FocusOptions));
+  };
+  const outside = (e: MouseEvent) => {
+    const t = e.target as Node;
+    if (pos() && !menu?.contains(t) && !btn.contains(t)) close();
+  };
+  document.addEventListener("mousedown", outside);
+  window.addEventListener("resize", close);
+  onCleanup(() => {
+    document.removeEventListener("mousedown", outside);
+    window.removeEventListener("resize", close);
+  });
+  const move = (e: KeyboardEvent) => {
+    const items = [...(menu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown") items[(i + 1) % items.length]?.focus();
+    else if (e.key === "ArrowUp") items[(i - 1 + items.length) % items.length]?.focus();
+    else if (e.key === "Escape" || e.key === "Tab") {
+      close();
+      btn.focus();
+    } else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  return (
+    <>
+      <button
+        ref={btn}
+        aria-label={p.label}
+        title={p.label}
+        aria-haspopup="menu"
+        aria-expanded={!!pos()}
+        onClick={() => (pos() ? close() : open())}
+        class={cls(
+          "inline-grid shrink-0 place-items-center rounded-lg text-fg-2 transition-colors hover:bg-hover hover:text-fg",
+          (p.size ?? "md") === "md" ? "size-8" : "size-7",
+          pos() && "bg-hover text-fg",
+          p.class,
+        )}
+      >
+        {p.icon}
+      </button>
+      <Show when={pos()}>
+        {(at) => (
+          <Portal>
+            <div
+              ref={menu}
+              role="menu"
+              onKeyDown={move}
+              class="fixed z-[60] min-w-[12rem] rounded-xl border border-line-strong bg-raised p-1 shadow-float animate-pop-in"
+              style={{ top: `${at().top}px`, left: at().left != null ? `${at().left}px` : undefined, right: at().right != null ? `${at().right}px` : undefined }}
+            >
+              <For each={p.items}>
+                {(it) => (
+                  <button
+                    role="menuitem"
+                    class={cls(
+                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-hover focus:bg-hover",
+                      it.danger ? "text-danger" : "text-fg",
+                    )}
+                    onClick={() => {
+                      close();
+                      it.run();
+                    }}
+                  >
+                    <Show when={it.icon}>
+                      <span class={cls("grid w-4 place-items-center", !it.danger && "text-fg-3")}>{it.icon}</span>
+                    </Show>
+                    <span class="flex-1">{it.label}</span>
+                    <Show when={it.hint}>
+                      <span class="kbd">{it.hint}</span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Portal>
+        )}
+      </Show>
+    </>
   );
 }
