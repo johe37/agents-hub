@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createRoot, createSignal } from "solid-js";
+import { batch, createEffect, createMemo, createRoot, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Workspace } from "./api";
+import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Win, type Workspace } from "./api";
 import { apply, choiceLabel, isChoice, resolve } from "./themes";
 import { STATUS, alive } from "./util";
 import { voiceTurn } from "./voice";
@@ -103,7 +103,7 @@ let toastId = 0;
 export function toast(text: string, error = false, action?: Toast["action"]) {
   const id = ++toastId;
   setToasts((t) => [...t.slice(-3), { id, text, error, action }]);
-  setTimeout(() => dismiss(id), error ? 8000 : 3500);
+  setTimeout(() => dismiss(id), error || action ? 8000 : 3500);
 }
 export function dismiss(id: number) {
   setToasts((t) => t.filter((x) => x.id !== id));
@@ -137,6 +137,55 @@ export async function act(action: Action, opts: { key?: string; quiet?: boolean 
 
 // ---- Live state
 
+/** What a close removes, hidden at once. An entry stays until the hub's state no longer has it, or the close fails. */
+const hidden = { workspaces: new Map<string, { done: boolean }>(), windows: new Map<string, { done: boolean }>() };
+let raw: State | null = null;
+
+function visible(s: State): State {
+  if (!hidden.workspaces.size && !hidden.windows.size) return s;
+  const gone = (ws: string | null, win: string | null) => (ws !== null && hidden.workspaces.has(ws)) || (win !== null && hidden.windows.has(win));
+  return {
+    ...s,
+    workspaces: s.workspaces
+      .filter((w) => !hidden.workspaces.has(w.name))
+      .map((w) => (w.windows.some((x) => hidden.windows.has(x.id)) ? { ...w, windows: w.windows.filter((x) => !hidden.windows.has(x.id)) } : w)),
+    agents: s.agents.filter((a) => !(alive(a.status) && gone(a.workspace, a.window))),
+  };
+}
+
+function prune(s: State) {
+  for (const [name, h] of hidden.workspaces) if (h.done && !s.workspaces.some((w) => w.name === name)) hidden.workspaces.delete(name);
+  for (const [id, h] of hidden.windows) if (h.done && !s.workspaces.some((w) => w.windows.some((x) => x.id === id))) hidden.windows.delete(id);
+}
+
+function show() {
+  if (raw) setState(reconcile(visible(raw), { key: "key", merge: false }));
+}
+
+/** Run an action that closes a workspace or window, and hide it before the hub answers. `before` runs with the hiding, e.g. to leave the page. */
+export async function actHiding(
+  action: Action,
+  what: { workspace?: string; window?: string },
+  opts: { key?: string; quiet?: boolean; before?: () => void } = {},
+): Promise<ActionResult> {
+  const entries: [Map<string, { done: boolean }>, string, { done: boolean }][] = [];
+  if (what.workspace) entries.push([hidden.workspaces, what.workspace, { done: false }]);
+  if (what.window) entries.push([hidden.windows, what.window, { done: false }]);
+  batch(() => {
+    for (const [m, k, h] of entries) m.set(k, h);
+    opts.before?.();
+    show();
+  });
+  const r = await act(action, opts);
+  for (const [m, k, h] of entries) {
+    if (r.ok) h.done = true;
+    else if (m.get(k) === h) m.delete(k);
+  }
+  if (raw) prune(raw);
+  show();
+  return r;
+}
+
 let socket: WebSocket | null = null;
 let retry = 0;
 const seen = new Map<string, string>();
@@ -152,8 +201,10 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data as string);
     if (msg.type === "state" && msg.data) {
-      notifyChanges(msg.data as State);
-      setState(reconcile(msg.data as State, { key: "key", merge: false }));
+      raw = msg.data as State;
+      prune(raw);
+      notifyChanges(raw);
+      show();
       setLoaded(true);
     } else if (msg.type === "notice") {
       toast(msg.text, msg.error);
@@ -296,19 +347,43 @@ export async function openDir(path: string) {
   else go({ view: "open", path: r.path ?? path });
 }
 
-/** Ask, then close the workspace; it goes to the recently closed ones. */
+/** What closing the window would stop that Undo cannot bring back, if anything. */
+export function stops(w: Win): string | null {
+  if (w.kind === "agent") {
+    const a = w.agent ? store.agentsByKey().get(w.agent) : undefined;
+    return a?.status === "working" ? `“${a.title}” is working` : null;
+  }
+  if (w.kind === "editor") return `${w.command} in ${w.name} may have unsaved changes`;
+  if (w.kind === "process") return `${w.command} runs in ${w.name}`;
+  return w.running ? `${w.running} runs in ${w.name}` : null;
+}
+
+/** Close the workspace; it goes to the recently closed ones, so Undo opens it again. Ask first only when something runs. */
 export function closeWorkspace(w: Workspace) {
+  const running = w.windows.map(stops).filter((x): x is string => x !== null);
+  if (!running.length) return closeNow(w);
   ask({
     title: `Close workspace “${w.name}”?`,
-    body: `All ${w.windows.length} window${w.windows.length === 1 ? "" : "s"} close, agents included. Files stay as they are. You can open it again under Recently closed.`,
+    body: `${running.join(". ")}. That stops, and Undo cannot start it again.`,
     confirm: "Close workspace",
     danger: true,
-    run: () =>
-      act({ type: "close_workspace", workspace: w.name }).then((r) => {
-        const here = route();
-        if (r.ok && here.view === "workspace" && here.name === w.name) go({ view: "inbox" });
-      }),
+    run: () => closeNow(w),
   });
+}
+
+async function closeNow(w: Workspace) {
+  const before = () => {
+    const here = route();
+    if (here.view === "workspace" && here.name === w.name) go({ view: "inbox" });
+  };
+  const r = await actHiding({ type: "close_workspace", workspace: w.name }, { workspace: w.name }, { quiet: true, before });
+  if (!r.ok) return;
+  const undo = () => {
+    const c = state.closed.find((c) => c.path === w.path);
+    if (c) reopen(c.id);
+    else toast(`${w.name} is not among the recently closed`, true);
+  };
+  toast(r.message ?? `Closed ${w.name}`, false, { label: "Undo", run: undo });
 }
 
 export async function reopen(id: string) {

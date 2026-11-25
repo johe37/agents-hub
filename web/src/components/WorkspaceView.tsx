@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent, Win, Workspace } from "../api";
-import { act, ask, closeWorkspace as closeWs, draft, go, isBusy, now, setDiffView, state, store } from "../store";
+import { act, actHiding, ask, closeWorkspace as closeWs, draft, go, isBusy, now, setDiffView, state, stops, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -204,17 +204,21 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
 
   const closeWindow = (w: Win) => {
     const a = agentOf(w);
-    const run = () =>
-      act({ type: "close_window", window: w.id }, { quiet: true }).then((r) => {
-        if (r.ok && p.window === w.id) {
-          const rest = ws()?.windows.filter((x) => x.id !== w.id) ?? [];
-          if (rest[0]) go({ view: "workspace", name: p.name, window: rest[0].id }, true);
-        }
-      });
-    if (w.kind === "shell") return run();
+    const run = () => {
+      const rest = ws()?.windows.filter((x) => x.id !== w.id) ?? [];
+      // tmux closes the session with its last window.
+      const what = rest.length ? { window: w.id } : { window: w.id, workspace: p.name };
+      const before = () => {
+        if (!rest.length) go({ view: "inbox" });
+        else if (p.window === w.id) go({ view: "workspace", name: p.name, window: rest[0].id }, true);
+      };
+      actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
+    };
+    const stopped = stops(w);
+    if (!stopped) return run();
     ask({
       title: a ? `Close agent “${a.title}”?` : `Close ${w.name}?`,
-      body: a ? "This ends its Claude session. You can resume it later from the agent list." : `The window runs ${w.command}. It stops.`,
+      body: a ? "It stops in the middle of its turn. You can resume the session later from the agent list." : `${stopped}. It stops.`,
       confirm: "Close",
       danger: true,
       run,
