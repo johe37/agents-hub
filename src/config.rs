@@ -11,15 +11,19 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
 }
 
 pub fn state_dir() -> PathBuf {
-    xdg("XDG_STATE_HOME", ".local/state").join("claude-hub")
+    xdg("XDG_STATE_HOME", ".local/state").join("jugglr")
 }
 
 pub fn cache_dir() -> PathBuf {
-    xdg("XDG_CACHE_HOME", ".cache").join("claude-hub")
+    xdg("XDG_CACHE_HOME", ".cache").join("jugglr")
+}
+
+pub fn config_dir() -> PathBuf {
+    xdg("XDG_CONFIG_HOME", ".config").join("jugglr")
 }
 
 fn config_path() -> PathBuf {
-    xdg("XDG_CONFIG_HOME", ".config").join("claude-hub/config.toml")
+    config_dir().join("config.toml")
 }
 
 pub fn expand(path: &str) -> String {

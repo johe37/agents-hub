@@ -949,7 +949,7 @@ impl App {
                     _ => {
                         let s = a.session.as_ref().and_then(|s| s.tmux_session.as_ref());
                         let where_ = s.map_or("its own terminal".into(), |s| format!("tmux session '{s}'"));
-                        self.notify(format!("This agent runs outside Claude Hub, in {where_}. Switch to it there."), false);
+                        self.notify(format!("This agent runs outside Jugglr, in {where_}. Switch to it there."), false);
                         return;
                     }
                 }
@@ -1126,7 +1126,7 @@ impl App {
 
     fn adopt(&mut self) {
         let Some(a) = self.current_agent().filter(|a| a.workspace.is_none() && a.status.alive()) else {
-            self.notify("Only agents outside Claude Hub can be adopted", true);
+            self.notify("Only agents outside Jugglr can be adopted", true);
             return;
         };
         let (Some(pid), Some(id)) = (a.pid, a.session_id().map(String::from)) else {
@@ -1135,7 +1135,7 @@ impl App {
         };
         let path = a.path.clone();
         let cut = if matches!(a.status, Status::Working | Status::Waiting) { " It is in the middle of a turn, which gets cut off." } else { "" };
-        let question = format!("Adopt '{}'? It stops where it runs now and continues in a Claude Hub workspace for {}.{cut}", a.title(), shorten(&path));
+        let question = format!("Adopt '{}'? It stops where it runs now and continues in a Jugglr workspace for {}.{cut}", a.title(), shorten(&path));
         self.modal = Some(Modal::Confirm { question, then: Box::new(move || tmux::adopt(pid, &id, &path)), yes: false, done: None });
     }
 
@@ -1162,7 +1162,7 @@ impl App {
                     return;
                 }
                 let (Some(ws), Some(w)) = (a.workspace.clone(), a.window_id.clone()) else {
-                    self.notify("This agent runs outside Claude Hub. Close it in its own terminal, or press a to adopt it.", true);
+                    self.notify("This agent runs outside Jugglr. Close it in its own terminal, or press a to adopt it.", true);
                     return;
                 };
                 (format!("Close agent '{}' in '{ws}'? This ends its Claude session.", a.title()), Box::new(move || tmux::kill_window(&w)))
@@ -1334,7 +1334,7 @@ impl App {
         self.finish(r);
     }
 
-    /// Pick up a request from `claude-hub <query>` run in another terminal.
+    /// Pick up a request from `jugglr <query>` run in another terminal.
     fn check_request(&mut self) {
         let path = tmux::request_file();
         let Ok(query) = std::fs::read_to_string(&path) else { return };

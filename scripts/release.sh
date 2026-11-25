@@ -31,7 +31,7 @@ fi
 
 previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
 log=$(git log --no-merges --format='- %s%n%w(0,2,2)%b' ${previous:+"$previous.."}HEAD)
-prompt="Write release notes for claude-hub $version, a TUI that manages Claude Code sessions \
+prompt="Write release notes for jugglr $version, a TUI that manages Claude Code sessions \
 in tmux, from the commit messages on stdin. Write for users: group the changes under the \
 plain-text headings New, Changed and Fixed (leave out empty ones), one short bullet each, \
 merge commits that belong together, and skip internal changes such as refactors and docs. \

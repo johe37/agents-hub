@@ -1100,7 +1100,7 @@ mod tests {
 
     #[test]
     fn checks_out_the_branch_next_to_the_clone() {
-        let dir = std::env::temp_dir().join(format!("claude-hub-mine-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jugglr-mine-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let sh = |cwd: &Path, args: &[&str]| {

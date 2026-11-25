@@ -1,4 +1,4 @@
-//! The Claude Code hook (`claude-hub report`) and its installer.
+//! The Claude Code hook (`jugglr report`) and its installer.
 
 use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -60,18 +60,18 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 fn is_ours(command: &str) -> bool {
-    command.ends_with("claude-hub report") || command.ends_with("claude_hub/hook.sh")
+    command.ends_with("jugglr report") || command.ends_with("claude-hub report") || command.ends_with("claude_hub/hook.sh")
 }
 
 pub fn install(yes: bool) -> i32 {
-    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "claude-hub".into());
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "jugglr".into());
     let command = format!("{exe} report");
     let path = home().join(".claude/settings.json");
     let mut settings: Value = match std::fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("claude-hub: {} is not valid JSON: {e}", path.display());
+                eprintln!("jugglr: {} is not valid JSON: {e}", path.display());
                 return 1;
             }
         },
@@ -91,7 +91,7 @@ pub fn install(yes: bool) -> i32 {
         if groups.iter().any(|g| hooks_of(g).iter().any(|h| h["command"] == command.as_str())) {
             continue;
         }
-        // Replace older claude-hub hooks, such as the Python hook.sh.
+        // Replace older hooks, from claude-hub or the Python hook.sh.
         for g in groups.iter_mut() {
             let kept: Vec<Value> =
                 hooks_of(g).into_iter().filter(|h| !is_ours(h["command"].as_str().unwrap_or(""))).collect();
@@ -108,7 +108,7 @@ pub fn install(yes: bool) -> i32 {
     // The status line is the only place Claude Code passes on plan usage. Keep one the user set up.
     let status_command = format!("{exe} statusline");
     let current = settings["statusLine"]["command"].as_str().unwrap_or("").to_string();
-    let set_status = current != status_command && (current.is_empty() || current.ends_with("claude-hub statusline"));
+    let set_status = current != status_command && (current.is_empty() || current.ends_with("jugglr statusline") || current.ends_with("claude-hub statusline"));
     if set_status {
         settings["statusLine"] = json!({"type": "command", "command": status_command});
     } else if current != status_command {
@@ -120,7 +120,7 @@ pub fn install(yes: bool) -> i32 {
         return 0;
     }
     if !changed.is_empty() {
-        println!("Will set '{command}' as the claude-hub hook for these events in {}:", path.display());
+        println!("Will set '{command}' as the jugglr hook for these events in {}:", path.display());
         println!("  {}", changed.join(", "));
     }
     if set_status {
@@ -137,13 +137,13 @@ pub fn install(yes: bool) -> i32 {
         }
     }
     if path.exists() && std::fs::copy(&path, path.with_extension("json.bak")).is_err() {
-        eprintln!("claude-hub: could not back up {}", path.display());
+        eprintln!("jugglr: could not back up {}", path.display());
         return 1;
     }
     let _ = std::fs::create_dir_all(path.parent().unwrap());
     let text = serde_json::to_string_pretty(&settings).unwrap() + "\n";
     if let Err(e) = std::fs::write(&path, text) {
-        eprintln!("claude-hub: {e}");
+        eprintln!("jugglr: {e}");
         return 1;
     }
     println!("Done. Backup saved as settings.json.bak. New Claude sessions will report status.");

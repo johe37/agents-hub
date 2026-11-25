@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn follows_continued_sessions() {
-        let dir = std::env::temp_dir().join(format!("claude-hub-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jugglr-test-{}", std::process::id()));
         let project = dir.join("proj");
         std::fs::create_dir_all(&project).unwrap();
         let line = |v: Value| format!("{v}\n");

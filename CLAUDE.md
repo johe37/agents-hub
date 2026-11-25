@@ -1,4 +1,4 @@
-# Uppdrag: bygg "claude-hub" – en central TUI för mina Claude-sessioner och git-repon
+# Uppdrag: bygg "jugglr" – en central TUI för mina Claude-sessioner och git-repon
 
 ## Bakgrund
 Jag kör Claude Code i terminalen på min utvecklingsmaskin med tmux. Varje git-repo
@@ -14,9 +14,9 @@ att eventuellt testa något i projektet i fråga
 
 ### Statusrapportering via hooks (inte screen-scraping)
 - Använd Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse,
-  Notification, Stop, SessionEnd) som anropar `claude-hub report`.
+  Notification, Stop, SessionEnd) som anropar `jugglr report`.
 - `report` läser hookens JSON från stdin och skriver en statusfil per session till
-  `~/.local/state/claude-hub/<session_id>.json`.
+  `~/.local/state/jugglr/<session_id>.json`.
 - Statusfilen innehåller minst: session_id, cwd, git-repo-rot och gren (om cwd är
   i ett repo), tmux-session/fönster/pane (från $TMUX_PANE om den finns), status,
   senaste hook-händelse, tidsstämpel, transcript_path och, för Notification,
@@ -30,7 +30,7 @@ att eventuellt testa något i projektet i fråga
 - `stale`: ingen uppdatering på länge och processen eller panen finns inte längre
 
 ### Konfiguration
-`~/.config/claude-hub/config.toml`, t.ex.:
+`~/.config/jugglr/config.toml`, t.ex.:
 - `roots = ["~/code"]` – kataloger som skannas efter git-repon (max djup 2)
 - `mouse = true` – musstöd på/av som standard
 - `refresh_seconds = 2`
@@ -41,11 +41,11 @@ Gemensamt för båda vyerna:
 - j/k eller pilar för navigering, `/` för filter, `?` för hjälp, `q` avslutar.
 - Enter hoppar till vald tmux-pane (`switch-client` + `select-window` + `select-pane`).
 - Automatisk uppdatering (filbevakning eller polling enligt `refresh_seconds`).
-- Ska fungera som tmux-popup: `tmux display-popup -E -w 85% -h 75% claude-hub`.
+- Ska fungera som tmux-popup: `tmux display-popup -E -w 85% -h 75% jugglr`.
 - Statusrad längst ner med klickbara knappar för de vanligaste åtgärderna i aktuell vy.
 
 ### Vy 1: Claude-sessioner (agent-centrerad)
-Datakälla: statusfilerna i `~/.local/state/claude-hub/`.
+Datakälla: statusfilerna i `~/.local/state/jugglr/`.
 - En rad per session: repo, gren, status med färg och symbol, tid sedan senaste
   händelse, tmux-plats, senaste notistext.
 - Sortering: `waiting` överst, sedan `working`, `idle`, sist `ended`/`stale`.

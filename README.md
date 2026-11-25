@@ -1,4 +1,6 @@
-# Agents Hub
+<p align="center"><img src="docs/jugglr.png" alt="Jugglr" width="160"></p>
+
+# Jugglr
 
 One place for your Claude Code sessions and the terminals around them.
 
@@ -9,9 +11,9 @@ One place for your Claude Code sessions and the terminals around them.
 - **GitLab.** Your merge requests with their review threads, the reviews you are asked for, and
   your issues, each in its own section.
 - **Keyboard and mouse.** Vim-style keys, and the mouse works too.
-- **Web app.** `claude-hub web` opens the hub in the browser: an inbox to answer agents, chats,
+- **Web app.** `jugglr web` opens the hub in the browser: an inbox to answer agents, chats,
   live terminals, diffs and notifications.
-- **Keeps running.** Close the terminal, run `claude-hub` again, and everything is where you
+- **Keeps running.** Close the terminal, run `jugglr` again, and everything is where you
   left it.
 
 ## Install
@@ -22,19 +24,19 @@ build. `e` opens nvim, so install it if you want that key. The GitLab sections n
 
 ```sh
 cargo install --path .
-claude-hub install-hooks
+jugglr install-hooks
 ```
 
 `install-hooks` shows what it changes in `~/.claude/settings.json` and asks first. Only Claude
 sessions started after it report status.
 
-To update, pull and run `cargo install --path .` again; the next `claude-hub` restarts the hub
+To update, pull and run `cargo install --path .` again; the next `jugglr` restarts the hub
 UI on the new binary.
 
 ## Get started
 
 ```sh
-claude-hub
+jugglr
 ```
 
 Press `n` to open your first workspace, then `c` to start Claude in it.

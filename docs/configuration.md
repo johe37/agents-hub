@@ -1,6 +1,6 @@
 # Configuration
 
-Every key in `~/.config/claude-hub/config.toml`, and how the list sections are chosen.
+Every key in `~/.config/jugglr/config.toml`, and how the list sections are chosen.
 
 ```toml
 roots = ["~/repos"]          # where to look for git repos (any depth)
@@ -22,4 +22,4 @@ without `gitlab-`, in capitals: `gitlab-issues` is **ISSUES**. The hub fetches o
 sections in the list; leave them all out and it does not call `glab` for them. An unknown name is
 skipped, and the hub shows a warning when it starts.
 
-The hub reads the file when it starts. Run `claude-hub restart` after a change.
+The hub reads the file when it starts. Run `jugglr restart` after a change.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake glab for the claude-hub demo: canned GitLab answers."""
+"""Fake glab for the jugglr demo: canned GitLab answers."""
 import json
 import os
 import sys

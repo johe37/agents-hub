@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a claude-hub with made-up workspaces, agents and merge requests, to try changes by hand.
+# Start a jugglr with made-up workspaces, agents and merge requests, to try changes by hand.
 # It runs on its own tmux server with its own HOME, so your real hub is not touched.
 set -euo pipefail
 
@@ -10,13 +10,13 @@ usage() {
 
 KIT=$(cd "$(dirname "$0")/demo" && pwd)
 ROOT=$(cd "$KIT/../.." && pwd)
-D=${XDG_CACHE_HOME:-$HOME/.cache}/claude-hub-demo
+D=${XDG_CACHE_HOME:-$HOME/.cache}/jugglr-demo
 # Socket paths are limited to about 100 characters, so keep the server out of $D.
-export TMUX_TMPDIR=${XDG_RUNTIME_DIR:-/tmp}/claude-hub-demo
+export TMUX_TMPDIR=${XDG_RUNTIME_DIR:-/tmp}/jugglr-demo
 OUTER_TMUX=${TMUX:-}
-ATTACH="TMUX_TMPDIR=$TMUX_TMPDIR tmux -L claude-hub attach -t _hub"
+ATTACH="TMUX_TMPDIR=$TMUX_TMPDIR tmux -L jugglr attach -t _hub"
 
-tmux -L claude-hub kill-server 2>/dev/null || true
+tmux -L jugglr kill-server 2>/dev/null || true
 case ${1:-start} in
 stop)
     rm -rf "$D" "$TMUX_TMPDIR"
@@ -27,7 +27,7 @@ start) ;;
 esac
 
 cargo build --release --quiet --manifest-path "$ROOT/Cargo.toml"
-HUB=$ROOT/target/release/claude-hub
+HUB=$ROOT/target/release/jugglr
 
 rm -rf "$D" "$TMUX_TMPDIR"
 mkdir -p "$D/home" "$D/bin" "$D/remotes" "$TMUX_TMPDIR"
@@ -49,8 +49,8 @@ cat > "$HOME/.gitconfig" <<'EOF'
 [init]
 	defaultBranch = master
 EOF
-mkdir -p "$HOME/.config/claude-hub"
-cat > "$HOME/.config/claude-hub/config.toml" <<'EOF'
+mkdir -p "$HOME/.config/jugglr"
+cat > "$HOME/.config/jugglr/config.toml" <<'EOF'
 roots = ["~/repos"]
 prewarm = false
 prewarm_claude = false
@@ -100,14 +100,14 @@ cd "$HOME"
 for ws in payments-api web-dashboard infra-terraform docs-site; do
     "$HUB" "$R/$ws" </dev/null >/dev/null 2>&1 || true
 done
-t() { tmux -L claude-hub "$@"; }
+t() { tmux -L jugglr "$@"; }
 t new-window -d -t =payments-api: -n claude -c "$R/payments-api" "claude payments"
 t new-window -d -t =payments-api: -n nvim -c "$R/payments-api" "nvim src/webhooks/retry.rs"
 t new-window -d -t =web-dashboard: -n claude -c "$R/web-dashboard" "claude dashboard"
 t new-window -d -t =infra-terraform: -n claude -c "$R/infra-terraform" "claude infra"
 pane() { t display-message -p -t "=$1:claude" '#{pane_id}'; }
 
-python3 "$KIT/events.py" "$HOME" "$HOME/.local/state/claude-hub" "$TMUX_TMPDIR/tmux-$(id -u)/claude-hub" \
+python3 "$KIT/events.py" "$HOME" "$HOME/.local/state/jugglr" "$TMUX_TMPDIR/tmux-$(id -u)/jugglr" \
     "$(pane payments-api)" "$(pane web-dashboard)" "$(pane infra-terraform)"
 
 # The hub previews a terminal from what it prints after the hub starts piping it.
@@ -120,14 +120,14 @@ t send-keys -t =payments-api:nvim C-l
 # Select the waiting agent, so the side panel shows its chat. The hub writes the
 # summary once it knows the agents; before that, w finds nothing to select.
 for _ in $(seq 60); do
-    grep -q waiting "$HOME/.local/state/claude-hub/summary" 2>/dev/null && break
+    grep -q waiting "$HOME/.local/state/jugglr/summary" 2>/dev/null && break
     sleep 0.5
 done
 sleep 1
 t send-keys -t =_hub: w
 
 if [ -t 1 ] && [ -z "$OUTER_TMUX" ]; then
-    exec env TMUX_TMPDIR="$TMUX_TMPDIR" tmux -L claude-hub attach -t _hub
+    exec env TMUX_TMPDIR="$TMUX_TMPDIR" tmux -L jugglr attach -t _hub
 fi
 echo "Demo ready. Attach outside tmux with:"
 echo "  $ATTACH"

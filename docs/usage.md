@@ -23,7 +23,7 @@ A terminal opened before the hub started shows its screen from the next output o
 ## Run
 
 ```sh
-claude-hub
+jugglr
 ```
 
 This starts the hub, or reconnects to it if it already runs. Press `n` to open your
@@ -32,8 +32,8 @@ first workspace.
 Like `goto`, it also takes an argument:
 
 ```sh
-claude-hub .              # open a workspace for this directory (or jump to it)
-claude-hub claude tui     # open the hub with the picker searching for "claude tui"
+jugglr .          # open a workspace for this directory (or jump to it)
+jugglr claude tui # open the hub with the picker searching for "claude tui"
 ```
 
 In the picker (`n`):
@@ -43,14 +43,14 @@ In the picker (`n`):
   the selected directory and lists what is inside it. `→` accepts the grey suggestion.
 - `Enter` opens it (a new workspace starts with a terminal), `Ctrl+O` starts Claude instead.
 
-The directory list is cached in `~/.cache/claude-hub/dirs.tsv`. Press `Ctrl+R` in the
+The directory list is cached in `~/.cache/jugglr/dirs.tsv`. Press `Ctrl+R` in the
 picker after you clone a new repo.
 
 ## Keys
 
 | Where | Key | Action |
 |---|---|---|
-| Anywhere | `Alt+Q` or click **◀ Claude Hub** | Back to the hub |
+| Anywhere | `Alt+Q` or click **◀ Jugglr** | Back to the hub |
 | Hub | `j` / `k` or `↓` / `↑` | Move down / up. A count first moves that many rows: `4j` |
 | Hub | `J` / `K` | Jump to the next / previous workspace, review or section |
 | Hub | `g` / `G`, `Ctrl+B` / `Ctrl+F`, `Ctrl+U` / `Ctrl+D` | First / last row, page up / down, half a page up / down |
@@ -78,7 +78,7 @@ picker after you clone a new repo.
 
 ## Inside a workspace
 
-Inside a workspace, the bar at the top shows where you are: a **◀ Claude Hub** button (click it
+Inside a workspace, the bar at the top shows where you are: a **◀ Jugglr** button (click it
 or press `Alt+Q` to go back), the workspace name and path, its windows (click to switch) and
 how many Claude sessions wait for you.
 
@@ -99,7 +99,7 @@ opens it. Click a terminal in the detail panel to jump to it.
 
 ## Sessions outside the hub
 
-Claude sessions that run outside claude-hub are listed under **OTHER SESSIONS**, marked *outside hub*. The hub
+Claude sessions that run outside jugglr are listed under **OTHER SESSIONS**, marked *outside hub*. The hub
 shows their status and messages and can reply to them, but cannot jump to them. Press `a`
 to adopt one: the hub stops the process and resumes the session with `claude --resume` in
 a new window of the workspace for its directory.

@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::config::{shorten, state_dir};
 use crate::theme::*;
 
-pub const SOCKET_NAME: &str = "claude-hub";
+pub const SOCKET_NAME: &str = "jugglr";
 pub const HUB_SESSION: &str = "_hub";
 pub const POOL_SESSION: &str = "_pool";
 
@@ -150,7 +150,7 @@ set -g status-position top
 set -g status-justify left
 set -g status-style "bg={bar},fg={fg}"
 set -g status-left-length 120
-set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Claude Hub  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
+set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  Jugglr  #[nobold]{label} #[norange,bg={bar}]  #[fg={accent}]◆ #[fg={bright},bold]#S#[nobold,fg={dim}]#{{?@workspace_label,  #{{@workspace_label}},}}   "
 set -g status-right-length 80
 set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""
@@ -175,7 +175,7 @@ bind w choose-tree -Zw -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"
     path.display().to_string()
 }
 
-/// Changes whenever the claude-hub binary is rebuilt.
+/// Changes whenever the jugglr binary is rebuilt.
 fn code_version(exe: &str) -> String {
     std::fs::metadata(exe)
         .and_then(|m| m.modified())

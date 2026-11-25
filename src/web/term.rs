@@ -28,7 +28,7 @@ pub async fn upgrade(ws: WebSocketUpgrade, State(hub): State<Arc<Hub>>, Query(q)
     let Some(session) = session else { return (StatusCode::NOT_FOUND, "This window is gone").into_response() };
     ws.on_upgrade(move |socket| async move {
         if let Err(e) = serve(socket, &session, &window, cols, rows).await {
-            eprintln!("claude-hub: terminal {window}: {e}");
+            eprintln!("jugglr: terminal {window}: {e}");
         }
     })
 }

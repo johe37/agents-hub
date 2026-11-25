@@ -78,12 +78,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   return (
     <div class="flex h-full w-full flex-col">
       <div class="flex items-center gap-2 px-4 pb-2 pt-4">
-        <div class="grid size-7 place-items-center rounded-lg bg-accent text-accent-fg shadow-soft">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M12 2.5 14.2 9.8 21.5 12l-7.3 2.2L12 21.5l-2.2-7.3L2.5 12l7.3-2.2z" />
-          </svg>
-        </div>
-        <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">Claude Hub</span>
+        <img src="/logo.png" alt="" class="size-7" />
+        <span class="text-[14px] font-semibold tracking-[-0.01em] text-fg">Jugglr</span>
         <span class={cls("ml-auto size-2 rounded-full", connection() === "live" ? "bg-idle" : connection() === "connecting" ? "bg-waiting" : "bg-danger")} title={connection() === "live" ? "Live" : connection() === "connecting" ? "Connecting" : "Offline: reconnecting"} />
       </div>
 

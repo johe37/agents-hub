@@ -29,31 +29,31 @@ import {
 } from "./store";
 import { cls } from "./util";
 
+const logo = new Image();
+logo.src = "/favicon.png";
+
 function drawFavicon(waiting: number, dark: boolean) {
+  const link = document.getElementById("favicon") as HTMLLinkElement;
+  if (!waiting) {
+    link.href = "/favicon.png";
+    return;
+  }
+  if (!logo.complete) {
+    logo.onload = () => drawFavicon(waiting, dark);
+    return;
+  }
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const g = c.getContext("2d")!;
-  g.fillStyle = dark ? "#e07b53" : "#c15f3c";
+  g.drawImage(logo, 0, 0, 64, 64);
+  g.fillStyle = "#f0b44c";
+  g.strokeStyle = dark ? "#0c0c0e" : "#fff";
+  g.lineWidth = 5;
   g.beginPath();
-  g.roundRect(4, 4, 56, 56, 14);
+  g.arc(50, 14, 12, 0, Math.PI * 2);
   g.fill();
-  g.fillStyle = dark ? "#160d08" : "#fff";
-  g.beginPath();
-  const star = [32, 13, 37, 27, 51, 32, 37, 37, 32, 51, 27, 37, 13, 32, 27, 27];
-  g.moveTo(star[0], star[1]);
-  for (let i = 2; i < star.length; i += 2) g.lineTo(star[i], star[i + 1]);
-  g.closePath();
-  g.fill();
-  if (waiting) {
-    g.fillStyle = "#f0b44c";
-    g.strokeStyle = dark ? "#0c0c0e" : "#fff";
-    g.lineWidth = 5;
-    g.beginPath();
-    g.arc(50, 14, 12, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
-  }
-  (document.getElementById("favicon") as HTMLLinkElement).href = c.toDataURL();
+  g.stroke();
+  link.href = c.toDataURL();
 }
 
 export function App() {
@@ -64,7 +64,7 @@ export function App() {
   });
   createEffect(() => {
     const n = store.waiting().length;
-    document.title = n ? `(${n}) Claude Hub` : "Claude Hub";
+    document.title = n ? `(${n}) Jugglr` : "Jugglr";
     drawFavicon(n, theme() === "dark");
   });
 
@@ -156,14 +156,15 @@ export function App() {
           <IconButton label="Menu" onClick={() => setDrawer(true)}>
             <Menu size={17} />
           </IconButton>
-          <span class="text-[13px] font-semibold">Claude Hub</span>
+          <img src="/logo.png" alt="" class="size-5" />
+          <span class="text-[13px] font-semibold">Jugglr</span>
           <Show when={store.waiting().length}>
             <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-[11px] font-semibold leading-5 text-[#1d1405]">{store.waiting().length} waiting</span>
           </Show>
         </div>
         <Show when={connection() === "offline"}>
           <div class="border-b border-danger/30 bg-danger-soft px-4 py-1.5 text-center text-[12.5px] text-danger animate-fade-in">
-            Lost the connection to claude-hub. Reconnecting… Is <code class="font-mono">claude-hub web</code> still running?
+            Lost the connection to jugglr. Reconnecting… Is <code class="font-mono">jugglr web</code> still running?
           </div>
         </Show>
         <main class={cls("min-h-0 flex-1", route().view === "workspace" || route().view === "agent" ? "overflow-hidden" : "overflow-y-auto")}>

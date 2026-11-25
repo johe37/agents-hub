@@ -1,12 +1,12 @@
 # The web app
 
-`claude-hub web` runs the hub as a web app on your machine and opens it in the browser.
+`jugglr web` runs the hub as a web app on your machine and opens it in the browser.
 It shows the same workspaces and agents as the terminal hub, and both run at the same time.
 
 ```sh
-claude-hub web              # serve on 127.0.0.1:7420 and open the browser
-claude-hub web --port 8080  # another port
-claude-hub web --no-open    # print the link only
+jugglr web              # serve on 127.0.0.1:7420 and open the browser
+jugglr web --port 8080  # another port
+jugglr web --no-open    # print the link only
 ```
 
 Stop it with `Ctrl+C`. Workspaces and agents keep running. If the hub runs already, the web app uses it as it
@@ -91,7 +91,7 @@ at in both places changes size when you switch between them.
 
 The server listens on 127.0.0.1 only. The link it prints holds a token; opening it stores the
 token in a cookie, and every request needs it. The token is in
-`~/.local/state/claude-hub/web-token`; delete the file to make a new one. The server also
+`~/.local/state/jugglr/web-token`; delete the file to make a new one. The server also
 refuses requests for other host names and from other sites.
 
 Anyone with the token can type into your terminals. Do not share the link.
@@ -100,4 +100,4 @@ Anyone with the token can type into your terminals. Do not share the link.
 
 `cargo build` builds the page with npm (`web/`) and puts it in the binary. Without Node.js the
 binary still builds, without the web app. To work on the page with live reload, run
-`claude-hub web --no-open` and, in `web/`, `npm run dev`.
+`jugglr web --no-open` and, in `web/`, `npm run dev`.

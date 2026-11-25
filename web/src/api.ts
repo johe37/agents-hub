@@ -263,13 +263,13 @@ export async function post(action: Action): Promise<ActionResult> {
   try {
     const r = await fetch("/api/action", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-claude-hub": "1" },
+      headers: { "content-type": "application/json", "x-jugglr": "1" },
       body: JSON.stringify(action),
     });
     if (r.status === 401) return { ok: false, error: "The page lost its key. Open the link from the terminal again." };
     return (await r.json()) as ActionResult;
   } catch (e) {
-    return { ok: false, error: `Claude Hub does not answer: ${(e as Error).message}` };
+    return { ok: false, error: `Jugglr does not answer: ${(e as Error).message}` };
   }
 }
 

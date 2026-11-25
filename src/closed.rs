@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_the_list() {
-        let dir = std::env::temp_dir().join(format!("claude-hub-closed-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jugglr-closed-{}", std::process::id()));
         let path = dir.join("closed.json");
         let mut c = closed("api", "/src/api", 5);
         c.windows.push(ClosedWindow { kind: "agent".into(), name: "claude".into(), command: None, session_id: Some("abc".into()) });

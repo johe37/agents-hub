@@ -1,4 +1,4 @@
-//! `claude-hub web`: the hub as a web app on localhost.
+//! `jugglr web`: the hub as a web app on localhost.
 
 mod actions;
 mod conversation;
@@ -31,7 +31,7 @@ use crate::snapshot::{Cmd, Snapshot};
 #[folder = "web/dist"]
 struct Assets;
 
-const COOKIE: &str = "claude_hub";
+const COOKIE: &str = "jugglr";
 
 pub struct Hub {
     snap: RwLock<Snapshot>,
@@ -87,7 +87,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
     let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("claude-hub: {e}");
+            eprintln!("jugglr: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -95,7 +95,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
         let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("claude-hub: cannot listen on 127.0.0.1:{port}: {e}");
+                eprintln!("jugglr: cannot listen on 127.0.0.1:{port}: {e}");
                 return ExitCode::FAILURE;
             }
         };
@@ -122,7 +122,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
         });
 
         let url = format!("http://127.0.0.1:{port}/?token={}", hub.token);
-        println!("Claude Hub runs at {url}");
+        println!("Jugglr runs at {url}");
         println!("Press Ctrl+C to stop. Workspaces and agents keep running.");
         if open {
             let _ = std::process::Command::new("xdg-open").arg(&url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
@@ -145,7 +145,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             let _ = tokio::signal::ctrl_c().await;
         };
         if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown).await {
-            eprintln!("claude-hub: {e}");
+            eprintln!("jugglr: {e}");
             return ExitCode::FAILURE;
         }
         ExitCode::SUCCESS
@@ -195,13 +195,13 @@ async fn guard(State(hub): State<Arc<Hub>>, req: Request, next: Next) -> Respons
     if !cookie_token(headers).is_some_and(|t| same_token(t, &hub.token)) {
         return (StatusCode::UNAUTHORIZED, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], LOCKED).into_response();
     }
-    if req.method() == axum::http::Method::POST && headers.get("x-claude-hub").is_none() {
+    if req.method() == axum::http::Method::POST && headers.get("x-jugglr").is_none() {
         return (StatusCode::FORBIDDEN, "Missing header").into_response();
     }
     next.run(req).await
 }
 
-const LOCKED: &str = "<!doctype html><meta charset=utf-8><title>Claude Hub</title><body style=\"font:15px system-ui;background:#0b0d12;color:#c9d1e0;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"max-width:28rem;text-align:center\"><h1 style=\"font-size:18px;color:#fff\">Claude Hub is locked</h1><p>Open the link that <code>claude-hub web</code> printed in your terminal. It holds the key to this page.</p></div>";
+const LOCKED: &str = "<!doctype html><meta charset=utf-8><title>Jugglr</title><body style=\"font:15px system-ui;background:#0b0d12;color:#c9d1e0;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"max-width:28rem;text-align:center\"><h1 style=\"font-size:18px;color:#fff\">Jugglr is locked</h1><p>Open the link that <code>jugglr web</code> printed in your terminal. It holds the key to this page.</p></div>";
 
 fn url_decode_query(q: &str) -> HashMap<String, String> {
     q.split('&')
@@ -357,9 +357,9 @@ mod tests {
     #[test]
     fn finds_the_token_among_cookies() {
         let mut h = HeaderMap::new();
-        h.insert(header::COOKIE, HeaderValue::from_static("other=1; claude_hub=abc; x=y"));
+        h.insert(header::COOKIE, HeaderValue::from_static("other=1; jugglr=abc; x=y"));
         assert_eq!(cookie_token(&h), Some("abc"));
-        h.insert(header::COOKIE, HeaderValue::from_static("claude_hubx=abc"));
+        h.insert(header::COOKIE, HeaderValue::from_static("jugglrx=abc"));
         assert_eq!(cookie_token(&h), None);
     }
 

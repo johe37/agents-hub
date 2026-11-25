@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn reads_prompts_replies_and_tool_results() {
-        let dir = std::env::temp_dir().join(format!("claude-hub-conv-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jugglr-conv-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.jsonl");
         let lines = [
