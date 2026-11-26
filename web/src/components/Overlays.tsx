@@ -115,7 +115,8 @@ const KEYS: [string, [string, string][]][] = [
   [
     "GitLab",
     [
-      ["1 / 2 / 3", "To review / my MRs / issues"],
+      ["1 / 2 / 3 / 4", "To-Do / to review / my MRs / issues"],
+      ["x", "Mark the to-do done"],
       ["J / K", "Next / previous"],
       ["/", "Filter"],
       ["C", "Claude: review, branch or issue"],

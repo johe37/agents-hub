@@ -1,4 +1,5 @@
-import type { Issue, Mr } from "./api";
+import { createSignal } from "solid-js";
+import type { Issue, Mr, Todo } from "./api";
 import { act, go, setComposer, setDraft, state } from "./store";
 
 export type Kind = "claude" | "shell";
@@ -49,7 +50,7 @@ export function goWorkspace(m: Mr) {
   if (m.workspace) go({ view: "workspace", name: m.workspace, window: null });
 }
 
-export type Tab = "review" | "mine" | "issues";
+export type Tab = "todo" | "review" | "mine" | "issues";
 
 export interface Entry {
   key: string;
@@ -58,9 +59,46 @@ export interface Entry {
   group: string;
   mr?: Mr;
   issue?: Issue;
+  todo?: Todo;
 }
 
 const running = (p: string | null) => p === "running" || p === "pending" || p === "created" || p === "preparing" || p === "waiting_for_resource";
+
+export const TODO_GROUPS = ["Mentions", "Reviews", "Failed", "Assigned", "Other"];
+
+function todoGroup(t: Todo): string {
+  switch (t.action) {
+    case "mentioned":
+    case "directly_addressed":
+      return "Mentions";
+    case "review_requested":
+    case "approval_required":
+      return "Reviews";
+    case "build_failed":
+    case "unmergeable":
+    case "merge_train_removed":
+      return "Failed";
+    case "assigned":
+      return "Assigned";
+    default:
+      return "Other";
+  }
+}
+
+export const isMention = (t: Todo) => t.action === "mentioned" || t.action === "directly_addressed";
+
+// Done here but maybe not yet gone from the state: hidden at once.
+const [doneTodos, setDoneTodos] = createSignal<number[]>([]);
+
+export const todos = (): Todo[] => state.gitlab.todos.filter((t) => !doneTodos().includes(t.id));
+
+/** Mark one To-Do done, or all of them without t. */
+export async function markDone(t?: Todo) {
+  const ids = t ? [t.id] : todos().map((x) => x.id);
+  setDoneTodos((d) => [...d, ...ids]);
+  const r = await act({ type: "todo_done", id: t?.id }, { key: t ? `todo:${t.id}` : "todo:all" });
+  if (!r.ok) setDoneTodos((d) => d.filter((id) => !ids.includes(id)));
+}
 
 export const REVIEW_GROUPS = ["In progress", "New", "Approved"];
 export const MINE_GROUPS = ["Needs you", "Waiting", "Ready to merge", "Drafts"];
@@ -93,10 +131,17 @@ export function entries(): Entry[] {
     issue,
   }));
   const issueGroups = [...new Set(issues.map((e) => e.group))];
-  return [...reviews.sort(order(REVIEW_GROUPS)), ...mine.sort(order(MINE_GROUPS)), ...issues.sort(order(issueGroups))];
+  const mrs = allMrs();
+  const todo: Entry[] = todos().map((t) => ({
+    key: t.key,
+    tab: "todo",
+    group: todoGroup(t),
+    todo: t,
+    mr: t.target_type === "MergeRequest" ? mrs.find((m) => m.key === t.target) : undefined,
+    issue: t.target_type === "Issue" ? g.issues.find((i) => i.key === t.target) : undefined,
+  }));
+  return [...todo.sort(order(TODO_GROUPS)), ...reviews.sort(order(REVIEW_GROUPS)), ...mine.sort(order(MINE_GROUPS)), ...issues.sort(order(issueGroups))];
 }
 
-/** What needs you on GitLab: reviews not started, and your MRs with a failed pipeline or open threads. */
-export function attention(): number {
-  return entries().filter((e) => (e.tab === "review" && e.group === "New") || (e.tab === "mine" && e.group === "Needs you")).length;
-}
+/** What needs you on GitLab: your pending To-Dos. */
+export const attention = (): number => todos().length;

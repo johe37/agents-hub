@@ -76,6 +76,27 @@ impl Issue {
     }
 }
 
+/// A pending item of your GitLab To-Do list.
+#[derive(Clone, Debug, Default)]
+pub struct Todo {
+    pub id: u64,
+    /// mentioned, directly_addressed, review_requested, assigned, build_failed, ...
+    pub action: String,
+    /// MergeRequest, Issue, Commit, ...
+    pub target_type: String,
+    pub iid: Option<u64>,
+    pub project_id: Option<u64>,
+    /// Full project path, `acme/tools/acme-cli`.
+    pub project: String,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    /// The comment that made it, or GitLab's text for the action.
+    pub body: String,
+    /// Seconds since the epoch.
+    pub created: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     pub id: u64,
@@ -232,6 +253,29 @@ fn parse_issue(v: &Value) -> Option<Issue> {
         author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
         updated: v["updated_at"].as_str().and_then(epoch).unwrap_or(0),
         description: v["description"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+fn parse_todo(v: &Value) -> Option<Todo> {
+    let t = &v["target"];
+    Some(Todo {
+        id: v["id"].as_u64()?,
+        action: v["action_name"].as_str().unwrap_or_default().to_string(),
+        target_type: v["target_type"].as_str().unwrap_or_default().to_string(),
+        iid: t["iid"].as_u64(),
+        project_id: v["project"]["id"].as_u64().or_else(|| t["project_id"].as_u64()),
+        // A group's work item has a group instead of a project.
+        project: v["project"]["path_with_namespace"]
+            .as_str()
+            .or_else(|| t["references"]["full"].as_str().and_then(|r| r.split(['#', '!', '&']).next()))
+            .or_else(|| v["group"]["full_path"].as_str())
+            .unwrap_or_default()
+            .to_string(),
+        title: t["title"].as_str().or_else(|| t["name"].as_str()).unwrap_or_default().to_string(),
+        url: v["target_url"].as_str().unwrap_or_default().to_string(),
+        author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
+        body: v["body"].as_str().unwrap_or_default().to_string(),
+        created: v["created_at"].as_str().and_then(epoch).unwrap_or(0),
     })
 }
 
@@ -430,6 +474,19 @@ fn lower(v: &Value) -> Option<String> {
 fn fetch_issues() -> Result<Vec<Issue>, String> {
     let home = crate::config::home().display().to_string();
     Ok(api_list(&home, "issues?scope=assigned_to_me&state=opened&order_by=updated_at&per_page=50")?.iter().filter_map(parse_issue).collect())
+}
+
+/// Your pending To-Dos, newest first.
+fn fetch_todos() -> Result<Vec<Todo>, String> {
+    let home = crate::config::home().display().to_string();
+    Ok(api_list(&home, "todos?state=pending&per_page=100")?.iter().filter_map(parse_todo).collect())
+}
+
+/// Mark one To-Do done, or all of them without an id.
+pub fn todo_done(id: Option<u64>) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    let path = id.map_or("todos/mark_as_done".to_string(), |id| format!("todos/{id}/mark_as_done"));
+    glab(&home, &["api", "-X", "POST", &path]).map(|_| ())
 }
 
 fn api_list(cwd: &str, path: &str) -> Result<Vec<Value>, String> {
@@ -877,6 +934,7 @@ pub struct Inbox {
     /// Open MRs assigned to you.
     pub assigned: Vec<Mr>,
     pub issues: Vec<Issue>,
+    pub todos: Vec<Todo>,
     /// The first fetch has finished, whether it worked or not.
     pub loaded: bool,
     /// Why the last fetch of a section failed.
@@ -916,12 +974,13 @@ impl InboxCache {
     fn fetch(&self, wanted: &[Section], all: bool) {
         let on = |s| wanted.contains(&s);
         let mrs = |section, list| on(section).then(|| fetch_mrs(list));
-        let (reviews, authored, assigned, issues) = std::thread::scope(|s| {
+        let (reviews, authored, assigned, issues, todos) = std::thread::scope(|s| {
             let reviews = s.spawn(|| mrs(Section::GitlabReviews, "reviewRequestedMergeRequests"));
             let authored = s.spawn(|| mrs(Section::GitlabMergeRequests, "authoredMergeRequests"));
             let assigned = s.spawn(|| mrs(Section::GitlabAssignedMergeRequests, "assignedMergeRequests"));
+            let todos = s.spawn(|| on(Section::GitlabTodos).then(fetch_todos));
             let issues = on(Section::GitlabIssues).then(fetch_issues);
-            (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues)
+            (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues, todos.join().unwrap())
         });
         let mut state = self.state.lock().unwrap();
         let inbox = &mut state.1;
@@ -930,6 +989,7 @@ impl InboxCache {
         put(&mut inbox.authored, &mut inbox.errors, Section::GitlabMergeRequests, authored);
         put(&mut inbox.assigned, &mut inbox.errors, Section::GitlabAssignedMergeRequests, assigned);
         put(&mut inbox.issues, &mut inbox.errors, Section::GitlabIssues, issues);
+        put(&mut inbox.todos, &mut inbox.errors, Section::GitlabTodos, todos);
         inbox.loaded = true;
         // Try again after the TTL, whether it worked or not.
         if all {
@@ -1264,6 +1324,16 @@ mod tests {
         let issue = parse_issue(&serde_json::json!({"iid": 12, "title": "T", "labels": ["bug", "backend"],
             "milestone": {"title": "v2"}, "references": {"full": "acme/tools/acme-cli#12"}})).unwrap();
         assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("acme/tools/acme-cli", "acme-cli", 2, Some("v2")));
+    }
+
+    #[test]
+    fn reads_todo_fields() {
+        let t = parse_todo(&serde_json::json!({"id": 5, "action_name": "mentioned", "target_type": "MergeRequest",
+            "target": {"iid": 140, "title": "Fix parser"}, "project": {"id": 7, "path_with_namespace": "acme/api"},
+            "author": {"username": "anna"}, "body": "@me look", "target_url": "https://g/acme/api/-/merge_requests/140#note_1",
+            "created_at": "2026-11-18T13:42:24Z"})).unwrap();
+        assert_eq!((t.id, t.iid, t.project_id, t.title.as_str(), t.author.as_str()), (5, Some(140), Some(7), "Fix parser", "anna"));
+        assert!(t.created > 0);
     }
 
     #[test]

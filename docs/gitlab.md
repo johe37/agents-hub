@@ -68,6 +68,12 @@ opens Claude in a new window of the workspace for your local clone, with a promp
 the issue typed in but not sent. The prompt asks Claude to make a branch first. The list
 refreshes with the reviews.
 
+## Your To-Dos
+
+The web app's GitLab view starts with a **To-Do** tab: your pending GitLab To-Dos, fetched
+whenever any GitLab section is on. The count next to GitLab in its menu is the number of them.
+Marking one done there marks it done in GitLab. The terminal hub does not show them.
+
 ## Links
 
 Links in the panel (the `!140` line of an MR, "Open the thread in GitLab") are real terminal

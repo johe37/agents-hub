@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::text::Line;
 
-use crate::config::Config;
+use crate::config::{Config, Section};
 use crate::git::{GitCache, GitStatus, load_dir_cache, save_dir_cache, scan_dirs};
 use crate::hooks::events_dir;
 use crate::screens::{ScreenCache, log_path, screens_dir};
@@ -141,6 +141,8 @@ pub struct Snapshot {
     pub assigned: Vec<crate::gitlab::Mr>,
     /// Open issues assigned to you.
     pub issues: Vec<crate::gitlab::Issue>,
+    /// Your pending GitLab To-Dos.
+    pub todos: Vec<crate::gitlab::Todo>,
     /// The GitLab lists are not fetched yet.
     pub inbox_loading: bool,
     pub inbox_errors: Vec<(crate::config::Section, String)>,
@@ -444,7 +446,10 @@ impl Collector {
             }
             self.fill_claude(&all_panes, &started);
         }
-        let inbox = if self.cfg.gitlab() { self.inbox.get(seen, &self.cfg.sections) } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
+        let inbox = if self.cfg.gitlab() {
+            let sections: Vec<Section> = self.cfg.sections.iter().copied().chain([Section::GitlabTodos]).collect();
+            self.inbox.get(seen, &sections)
+        } else { crate::gitlab::Inbox { loaded: true, ..Default::default() } };
         Snapshot {
             workspaces,
             agents,
@@ -455,6 +460,7 @@ impl Collector {
             authored: inbox.authored,
             assigned: inbox.assigned,
             issues: inbox.issues,
+            todos: inbox.todos,
             inbox_loading: !inbox.loaded,
             inbox_errors: inbox.errors,
             inbox_busy: inbox.busy,

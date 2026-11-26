@@ -600,6 +600,7 @@ impl App {
                 Section::GitlabIssues => &mut issue_rows,
                 Section::OtherSessions => &mut other_rows,
                 Section::ClosedSessions => &mut closed_rows,
+                Section::GitlabTodos => continue,
             });
             if !block.is_empty() && !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));

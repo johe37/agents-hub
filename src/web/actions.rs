@@ -43,6 +43,8 @@ pub enum Action {
     /// Commit the staged changes, or all of them when nothing is staged.
     Commit { workspace: String, message: String },
     GitlabRefresh,
+    /// Mark one To-Do done, or all of them without an id.
+    TodoDone { id: Option<u64> },
     /// A comment on an MR, on a diff line with a GitLab position. A draft waits for FinishReview.
     MrNote { mr: String, body: String, position: Option<serde_json::Value>, draft: bool },
     DraftEdit { mr: String, id: u64, body: String },
@@ -155,7 +157,7 @@ fn forget_mr(hub: &Hub, key: &str) {
 
 fn forget_gitlab(hub: &Hub, path: Option<&str>) {
     let cmd = hub.cmd.lock().unwrap();
-    for s in [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues] {
+    for s in [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues, Section::GitlabTodos] {
         let _ = cmd.send(Cmd::ForgetInbox(s));
     }
     if let Some(p) = path {
@@ -522,6 +524,11 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetMr(p));
             }
             Ok(said("Refreshing GitLab"))
+        }
+        Action::TodoDone { id } => {
+            crate::gitlab::todo_done(id)?;
+            let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetInbox(Section::GitlabTodos));
+            Ok(said(if id.is_some() { "Marked done" } else { "Marked all done" }))
         }
     }
 }

@@ -10,7 +10,7 @@ const EMPTY: State = {
   workspaces: [],
   agents: [],
   usage: null,
-  gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [] },
+  gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [], todos: [] },
   closed: [],
   chat_dir: "~/chats",
   web_theme: readStored("config-theme") ?? "jugglr",
