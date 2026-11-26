@@ -12,6 +12,23 @@ jugglr web --no-open    # print the link only
 Stop it with `Ctrl+C`. Workspaces and agents keep running. If the hub runs already, the web app uses it as it
 is: it does not restart it, also after an update.
 
+## Install it as an app
+
+In Chrome, open the page with the link that `jugglr web` printed. Then click the install icon in
+the address bar, or open the menu and pick **Cast, save and share → Install page as app…**. The
+app opens in a window of its own and gets an icon in the Dock and in Launchpad. It works while
+`jugglr web` runs.
+
+In Safari (macOS 14 or later), open the page with the link, then pick **File → Add to Dock…**.
+Safari copies the page's cookies into the app when you add it, so open the link first. The app
+keeps its own cookies after that: if you make a new token, remove the app and add it again.
+
+The browser binds the app to the address, port included. Use the same `--port` each time.
+
+To change the icons, replace the files in `web/public/icons/` and build again. Keep the sizes.
+The maskable icons and `apple-touch-icon.png` fill the whole square; Chrome on macOS and
+Safari cut them to a rounded square.
+
 ## What it does
 
 - **Inbox.** Every agent that waits for you, with what it asks. A permission prompt shows the

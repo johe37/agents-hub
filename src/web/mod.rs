@@ -196,6 +196,10 @@ async fn guard(State(hub): State<Arc<Hub>>, req: Request, next: Next) -> Respons
             return (StatusCode::FORBIDDEN, "Cross-origin request").into_response();
         }
     }
+    // Chrome fetches the manifest and its icons without cookies when it installs the app. They hold no secrets.
+    if is_install_asset(req.uri().path()) {
+        return next.run(req).await;
+    }
     let query: HashMap<String, String> = req.uri().query().map(|q| url_decode_query(q)).unwrap_or_default();
     if let Some(t) = query.get("token") {
         if !same_token(t, &hub.token) {
@@ -216,6 +220,12 @@ async fn guard(State(hub): State<Arc<Hub>>, req: Request, next: Next) -> Respons
         return (StatusCode::FORBIDDEN, "Missing header").into_response();
     }
     next.run(req).await
+}
+
+fn is_install_asset(path: &str) -> bool {
+    let public = path == "/manifest.webmanifest" || path.strip_prefix("/icons/").is_some_and(|f| !f.is_empty() && !f.contains('/'));
+    // Unknown paths fall back to index.html, which must stay behind the token.
+    public && Assets::get(&path[1..]).is_some()
 }
 
 const LOCKED: &str = "<!doctype html><meta charset=utf-8><title>jugglr</title><body style=\"font:15px system-ui;background:#0b0d12;color:#c9d1e0;display:grid;place-items:center;height:100vh;margin:0\"><div style=\"max-width:28rem;text-align:center\"><h1 style=\"font-size:18px;color:#fff\">jugglr is locked</h1><p>Open the link that <code>jugglr web</code> printed in your terminal. It holds the key to this page.</p></div>";
@@ -386,6 +396,16 @@ mod tests {
         assert_eq!(cookie_token(&h), Some("abc"));
         h.insert(header::COOKIE, HeaderValue::from_static("jugglrx=abc"));
         assert_eq!(cookie_token(&h), None);
+    }
+
+    #[test]
+    fn opens_only_install_assets() {
+        assert!(!is_install_asset("/"));
+        assert!(!is_install_asset("/api/events"));
+        assert!(!is_install_asset("/icons/"));
+        assert!(!is_install_asset("/icons/missing.png"));
+        assert!(!is_install_asset("/icons/../index.html"));
+        assert_eq!(mime_guess::from_path("manifest.webmanifest").first_or_octet_stream(), "application/manifest+json");
     }
 
     #[test]
