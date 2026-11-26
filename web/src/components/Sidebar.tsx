@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
-import { act, chatWorkspace, closeChat, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { act, chatWorkspace, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, age, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
@@ -297,17 +297,36 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                               p.onNavigate?.();
                               go({ view: "workspace", name: w.name, window: win.id });
                             }}
+                            onAuxClick={(e) => {
+                              if (e.button !== 1) return;
+                              e.preventDefault();
+                              closeWindow(w, win);
+                            }}
                             title={win.command}
                             class={cls(
-                              "flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] transition-colors",
+                              "group/win flex h-7 items-center gap-2 rounded-md px-2 text-[12.5px] transition-colors",
                               on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
                             )}
                           >
                             <span class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")}>{kindIcon(win, 13)}</span>
                             <span class="min-w-0 flex-1 truncate">{a()?.title ?? win.running ?? win.name}</span>
                             <Show when={a()}>
-                              <StatusDot status={a()!.status} size={6} />
+                              <span class="group-hover/win:hidden">
+                                <StatusDot status={a()!.status} size={6} />
+                              </span>
                             </Show>
+                            <button
+                              class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover/win:grid"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                closeWindow(w, win);
+                              }}
+                              aria-label={`Close window ${a()?.title ?? win.running ?? win.name}`}
+                              title="Close window"
+                            >
+                              <X size={12} />
+                            </button>
                           </a>
                         );
                       }}

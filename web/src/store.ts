@@ -486,6 +486,30 @@ export function closeChat(ws: Workspace, w: Win) {
     run,
   });
 }
+export function closeWindow(ws: Workspace, w: Win) {
+  const run = () => {
+    const rest = ws.windows.filter((x) => x.id !== w.id);
+    // tmux closes the session with its last window.
+    const what = rest.length ? { window: w.id } : { window: w.id, workspace: ws.name };
+    const before = () => {
+      const here = route();
+      if (here.view !== "workspace" || here.name !== ws.name) return;
+      if (!rest.length) go({ view: "agents" });
+      else if (here.window === w.id) go({ view: "workspace", name: ws.name, window: rest[0].id }, true);
+    };
+    void actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
+  };
+  const stopped = stops(w);
+  if (!stopped) return run();
+  const a = w.agent ? store.agentsByKey().get(w.agent) : undefined;
+  ask({
+    title: a ? `Close agent “${a.title}”?` : `Close ${w.name}?`,
+    body: a ? "It stops in the middle of its turn. You can resume the session later from the agent list." : `${stopped}. It stops.`,
+    confirm: "Close",
+    danger: true,
+    run,
+  });
+}
 /** Text to put in an agent's reply box, to edit before sending. */
 export const [draft, setDraft] = createSignal<{ agent: string; text: string } | null>(null);
 export const [confirmBox, setConfirmBox] = createSignal<{
