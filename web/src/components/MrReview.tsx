@@ -12,7 +12,7 @@ import { Badge, Button, IconButton, Spinner } from "./ui";
 
 export type DetailTab = "overview" | "commits" | "changes" | "pipeline";
 
-function load(key: string): string | null {
+export function load(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -20,7 +20,7 @@ function load(key: string): string | null {
   }
 }
 
-function save(key: string, v: string) {
+export function save(key: string, v: string) {
   try {
     localStorage.setItem(key, v);
   } catch {}
@@ -34,8 +34,8 @@ export function setDetailTab(t: DetailTab) {
   save("mr-tab", t);
 }
 
-const [split, setSplitRaw] = createSignal(load("diff-split") === "1");
-const toggleSplit = () => {
+export const [split, setSplitRaw] = createSignal(load("diff-split") === "1");
+export const toggleSplit = () => {
   setSplitRaw(!split());
   save("diff-split", split() ? "1" : "0");
 };
@@ -460,7 +460,7 @@ function CommentForm(p: { label: string; text: string; onText: (t: string) => vo
 }
 
 /** Highlighted HTML per line: old and new text each in one piece, so a comment over several lines stays a comment. */
-function highlightFile(lines: DiffLine[], lang: string): (string | undefined)[] {
+export function highlightFile(lines: DiffLine[], lang: string): (string | undefined)[] {
   const oldIdx: number[] = [];
   const newIdx: number[] = [];
   lines.forEach((l, i) => {

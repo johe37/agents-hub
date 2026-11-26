@@ -1,6 +1,6 @@
 import { batch, createEffect, createMemo, createRoot, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { post, wsURL, type Action, type ActionResult, type Agent, type State, type Win, type Workspace } from "./api";
+import { post, wsURL, type Action, type ActionResult, type Agent, type Commit, type State, type Win, type Workspace } from "./api";
 import { apply, choiceLabel, isChoice, resolve } from "./themes";
 import { notifyFinished, notifyInFocus, notifySound, notifyWaiting } from "./settings";
 import { STATUS, alive } from "./util";
@@ -495,7 +495,7 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   danger?: boolean;
   run: () => void;
 } | null>(null);
-export const [diffView, setDiffView] = createSignal<{ workspace: string; path: string; file: string | null; title: string } | null>(null);
+export const [diffView, setDiffView] = createSignal<{ workspace: string; path: string; file: string | null; title: string; commit?: Commit } | null>(null);
 
 export function openPalette(mode: PaletteMode = "all") {
   setPaletteMode(mode);

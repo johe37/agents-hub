@@ -270,14 +270,17 @@ pub fn commits(path: &str) -> Value {
         .into_iter()
         .find(|b| git_out(&root, &["rev-parse", "--verify", "--quiet", b]).is_some_and(|s| !s.trim().is_empty()));
     let log = |range: &[&str]| {
-        let mut args = vec!["log", "--no-color", "--format=%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ct%x1e"];
+        // The fields end with \x1f; --name-status lists the files after them.
+        let mut args = vec!["log", "--no-color", "--name-status", "--first-parent", "--format=%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ct%x1f"];
         args.extend_from_slice(range);
         let out = git_out(&root, &args).unwrap_or_default();
         out.split('\x1e')
             .filter_map(|rec| {
-                let f: Vec<&str> = rec.trim_start_matches('\n').split('\x1f').collect();
-                let [sha, short, title, body, author, ct] = f[..] else { return None };
-                Some(json!({"sha": sha, "short": short, "title": title, "message": body.trim(), "author": author, "created": ct.trim().parse::<u64>().unwrap_or(0)}))
+                let f: Vec<&str> = rec.split('\x1f').collect();
+                let [sha, short, title, body, author, ct, names] = f[..] else { return None };
+                // "M\tpath", or "R100\told\tnew" for a rename.
+                let files: Vec<_> = names.lines().filter_map(|l| l.split_once('\t')).map(|(code, p)| json!([&code[..1], p.rsplit('\t').next().unwrap_or(p)])).collect();
+                Some(json!({"sha": sha, "short": short, "title": title, "message": body.trim(), "author": author, "created": ct.parse::<u64>().unwrap_or(0), "files": files}))
             })
             .collect::<Vec<_>>()
     };
@@ -346,6 +349,7 @@ mod tests {
         let list = list.as_array().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!((list[0]["title"].as_str(), list[0]["message"].as_str()), (Some("add a"), Some("why")));
+        assert_eq!(list[0]["files"], json!([["A", "a.txt"]]));
         let d = diff(p, None, list[0]["sha"].as_str());
         assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
         std::fs::remove_dir_all(dir).unwrap();

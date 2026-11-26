@@ -991,6 +991,17 @@ pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
     Ok(format!("Pushed {branch} and opened a draft merge request {url}"))
 }
 
+/// Commit what is staged, or every change when nothing is.
+pub fn commit(cwd: &str, message: &str) -> Result<String, String> {
+    // --quiet exits 1 when something is staged.
+    if run(cwd, 5, "git", &["diff", "--cached", "--quiet"]).is_ok() {
+        run(cwd, 30, "git", &["add", "-A"])?;
+    }
+    // Long: a pre-commit hook may lint or test.
+    run(cwd, 300, "git", &["commit", "-q", "-m", message])?;
+    Ok(format!("Committed {}", head(cwd).unwrap_or_default()))
+}
+
 
 /// MRs per (workspace path, branch). Lookups never wait for the network: a stale entry starts a fetch in the background.
 #[derive(Default)]
@@ -1034,6 +1045,26 @@ impl MrCache {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn commits_staged_only_or_everything() {
+        let dir = std::env::temp_dir().join(format!("jugglr-commit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        let git = |args: &[&str]| super::run(p, 5, "git", args).unwrap();
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "t"]);
+        git(&["config", "user.email", "t@t"]);
+        std::fs::write(dir.join("a"), "a").unwrap();
+        std::fs::write(dir.join("b"), "b").unwrap();
+        git(&["add", "a"]);
+        super::commit(p, "staged").unwrap();
+        assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "a");
+        super::commit(p, "rest").unwrap();
+        assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "b");
+        assert!(super::commit(p, "nothing").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     use super::*;
 
     #[test]
