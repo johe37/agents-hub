@@ -12,7 +12,7 @@ import { Badge, Button, IconButton, Spinner } from "./ui";
 
 export type DetailTab = "overview" | "commits" | "changes" | "pipeline";
 
-function load(key: string): string | null {
+export function load(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -20,7 +20,7 @@ function load(key: string): string | null {
   }
 }
 
-function save(key: string, v: string) {
+export function save(key: string, v: string) {
   try {
     localStorage.setItem(key, v);
   } catch {}
@@ -34,8 +34,8 @@ export function setDetailTab(t: DetailTab) {
   save("mr-tab", t);
 }
 
-const [split, setSplitRaw] = createSignal(load("diff-split") === "1");
-const toggleSplit = () => {
+export const [split, setSplitRaw] = createSignal(load("diff-split") === "1");
+export const toggleSplit = () => {
   setSplitRaw(!split());
   save("diff-split", split() ? "1" : "0");
 };
@@ -97,11 +97,15 @@ export function createReview(mr: () => Mr) {
 
 export type Review = ReturnType<typeof createReview>;
 
+/** A Claude in the workspace that can take a prompt, idle ones first. */
+export function workspaceAgent(workspace: string): Agent | undefined {
+  const list = state.agents.filter((a) => a.workspace === workspace && a.window && a.reachable && alive(a.status));
+  return list.find((a) => a.status === "idle") ?? list.find((a) => a.status === "waiting") ?? list[0];
+}
+
 /** A Claude in the MR's checkout that can take a prompt, idle ones first. */
 export function reviewAgent(m: Mr): Agent | undefined {
-  if (!m.workspace) return undefined;
-  const list = state.agents.filter((a) => a.workspace === m.workspace && a.window && a.reachable && alive(a.status));
-  return list.find((a) => a.status === "idle") ?? list.find((a) => a.status === "waiting") ?? list[0];
+  return m.workspace ? workspaceAgent(m.workspace) : undefined;
 }
 
 /** Put text in the reply box of the MR's Claude, in the side panel; start Claude in the checkout first if none runs. */
@@ -224,7 +228,7 @@ const BIG = 1000;
 const span = (xs: number[]) => (xs[0] === xs[xs.length - 1] ? `${xs[0]}` : `${xs[0]}–${xs[xs.length - 1]}`);
 
 /** "lines 12–18", in the new file where it can. */
-function linesLabel(sel: DiffLine[]): string {
+export function linesLabel(sel: DiffLine[]): string {
   const news = sel.filter((l) => l.type !== "del").map((l) => l.new!);
   const olds = sel.filter((l) => l.type === "del").map((l) => l.old!);
   if (!news.length) return `removed lines ${span(olds)}`;
@@ -456,7 +460,7 @@ function CommentForm(p: { label: string; text: string; onText: (t: string) => vo
 }
 
 /** Highlighted HTML per line: old and new text each in one piece, so a comment over several lines stays a comment. */
-function highlightFile(lines: DiffLine[], lang: string): (string | undefined)[] {
+export function highlightFile(lines: DiffLine[], lang: string): (string | undefined)[] {
   const oldIdx: number[] = [];
   const newIdx: number[] = [];
   lines.forEach((l, i) => {

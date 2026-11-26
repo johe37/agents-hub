@@ -974,19 +974,32 @@ pub fn head(cwd: &str) -> Option<String> {
 /// Push the checked-out branch, setting its upstream on the first push, then open a draft MR when asked.
 pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
     let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
-    if run(cwd, 5, "git", &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
-        run(cwd, 120, "git", &["push"])?;
-    } else {
-        let remotes = run(cwd, 5, "git", &["remote"])?;
-        let remote = remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string();
-        run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
-    }
+    // Always push to a same-named branch: an upstream like origin/master (branch made from it) makes a plain push fail.
+    let remote = match run(cwd, 5, "git", &["config", &format!("branch.{branch}.remote")]) {
+        Ok(r) if !r.trim().is_empty() && r.trim() != "." => r.trim().to_string(),
+        _ => {
+            let remotes = run(cwd, 5, "git", &["remote"])?;
+            remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string()
+        }
+    };
+    run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
     if !open_mr {
         return Ok(format!("Pushed {branch}"));
     }
     let out = glab(cwd, &["mr", "create", "--draft", "--fill", "--yes"])?;
     let url = out.lines().map(str::trim).find(|l| l.contains("/merge_requests/")).unwrap_or_default();
     Ok(format!("Pushed {branch} and opened a draft merge request {url}"))
+}
+
+/// Commit what is staged, or every change when nothing is.
+pub fn commit(cwd: &str, message: &str) -> Result<String, String> {
+    // --quiet exits 1 when something is staged.
+    if run(cwd, 5, "git", &["diff", "--cached", "--quiet"]).is_ok() {
+        run(cwd, 30, "git", &["add", "-A"])?;
+    }
+    // Long: a pre-commit hook may lint or test.
+    run(cwd, 300, "git", &["commit", "-q", "-m", message])?;
+    Ok(format!("Committed {}", head(cwd).unwrap_or_default()))
 }
 
 
@@ -1032,6 +1045,26 @@ impl MrCache {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn commits_staged_only_or_everything() {
+        let dir = std::env::temp_dir().join(format!("jugglr-commit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        let git = |args: &[&str]| super::run(p, 5, "git", args).unwrap();
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "t"]);
+        git(&["config", "user.email", "t@t"]);
+        std::fs::write(dir.join("a"), "a").unwrap();
+        std::fs::write(dir.join("b"), "b").unwrap();
+        git(&["add", "a"]);
+        super::commit(p, "staged").unwrap();
+        assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "a");
+        super::commit(p, "rest").unwrap();
+        assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "b");
+        assert!(super::commit(p, "nothing").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     use super::*;
 
     #[test]

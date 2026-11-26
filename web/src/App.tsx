@@ -4,7 +4,8 @@ import { Gitlab } from "./components/Gitlab";
 import { Menu } from "./components/icons";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
-import { Confirm, DiffModal, Help, Toasts } from "./components/Overlays";
+import { ChangesReview } from "./components/ChangesReview";
+import { Confirm, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
@@ -211,7 +212,7 @@ export function App() {
       </div>
       <Palette />
       <NewAgent />
-      <DiffModal />
+      <ChangesReview />
       <Help />
       <Settings />
       <Confirm />

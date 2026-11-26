@@ -1,9 +1,7 @@
-import { For, Show, createEffect, createResource, on } from "solid-js";
-import { getJSON } from "../api";
-import { confirmBox, diffView, dismiss, helpOpen, setConfirmBox, setDiffView, setHelpOpen, toasts } from "../store";
+import { For, Show, createEffect, on } from "solid-js";
+import { confirmBox, dismiss, helpOpen, setConfirmBox, setHelpOpen, toasts } from "../store";
 import { MOD, cls } from "../util";
-import { UnifiedDiff } from "./Diff";
-import { Check, FileDiff, X } from "./icons";
+import { Check, X } from "./icons";
 import { Button, IconButton, Kbd } from "./ui";
 
 export function Toasts() {
@@ -67,43 +65,6 @@ export function Confirm() {
               >
                 {c().confirm}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </Show>
-  );
-}
-
-export function DiffModal() {
-  const [diff] = createResource(diffView, (d) =>
-    getJSON<{ diff: string }>(`/api/diff?path=${encodeURIComponent(d.path)}${d.file ? `&file=${encodeURIComponent(d.file)}` : ""}`),
-  );
-  const close = () => setDiffView(null);
-  return (
-    <Show when={diffView()}>
-      {(d) => (
-        <div
-          class="fixed inset-0 z-50 flex justify-end bg-black/30 backdrop-blur-[2px] animate-fade-in"
-          onMouseDown={(e) => e.target === e.currentTarget && close()}
-          onKeyDown={(e) => e.key === "Escape" && close()}
-          tabIndex={-1}
-          ref={(el) => queueMicrotask(() => el.focus())}
-        >
-          <div class="flex h-full w-full max-w-4xl flex-col border-l border-line-strong bg-bg shadow-float animate-slide-up">
-            <header class="flex items-center gap-2 border-b border-line px-5 py-3">
-              <FileDiff size={16} class="text-fg-3" />
-              <h2 class="truncate font-mono text-[13px] text-fg">{d().title}</h2>
-              <IconButton label="Close (Esc)" class="ml-auto" onClick={close}>
-                <X size={16} />
-              </IconButton>
-            </header>
-            <div class="min-h-0 flex-1 overflow-y-auto p-5">
-              <Show when={!diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
-                <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
-                  <UnifiedDiff text={diff()?.diff ?? ""} />
-                </Show>
-              </Show>
             </div>
           </div>
         </div>

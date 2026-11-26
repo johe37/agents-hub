@@ -259,13 +259,48 @@ fn git_out(cwd: &str, args: &[&str]) -> Option<String> {
     matches!(out.status.code(), Some(0 | 1)).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The change of one file against HEAD, or of the whole checkout. New files show in full.
-pub fn diff(path: &str, file: Option<&str>) -> String {
-    let Some(root) = git_out(path, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()) else {
+fn toplevel(path: &str) -> Option<String> {
+    git_out(path, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).filter(|r| !r.is_empty())
+}
+
+/// The commits on the checked-out branch that the default branch lacks, newest first, at most 10; on the default branch itself, its recent history.
+pub fn commits(path: &str) -> Value {
+    let Some(root) = toplevel(path) else { return json!([]) };
+    // upstream first: in a fork, that is the repo the branch is meant for.
+    let base = ["upstream/HEAD", "upstream/main", "upstream/master", "origin/HEAD", "origin/main", "origin/master", "main", "master"]
+        .into_iter()
+        .find(|b| git_out(&root, &["rev-parse", "--verify", "--quiet", b]).is_some_and(|s| !s.trim().is_empty()));
+    let log = |range: &[&str]| {
+        // The fields end with \x1f; --name-status lists the files after them.
+        let mut args = vec!["log", "--no-color", "--name-status", "--first-parent", "--format=%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ct%x1f"];
+        args.extend_from_slice(range);
+        let out = git_out(&root, &args).unwrap_or_default();
+        out.split('\x1e')
+            .filter_map(|rec| {
+                let f: Vec<&str> = rec.split('\x1f').collect();
+                let [sha, short, title, body, author, ct, names] = f[..] else { return None };
+                // "M\tpath", or "R100\told\tnew" for a rename.
+                let files: Vec<_> = names.lines().filter_map(|l| l.split_once('\t')).map(|(code, p)| json!([&code[..1], p.rsplit('\t').next().unwrap_or(p)])).collect();
+                Some(json!({"sha": sha, "short": short, "title": title, "message": body.trim(), "author": author, "created": ct.parse::<u64>().unwrap_or(0), "files": files}))
+            })
+            .collect::<Vec<_>>()
+    };
+    let own = base.map(|b| log(&["-n", "10", &format!("{b}..HEAD")])).unwrap_or_default();
+    Value::from(if own.is_empty() { log(&["-n", "10", "HEAD"]) } else { own })
+}
+
+/// The change of one file against HEAD, or of the whole checkout, or what one commit changed. New files show in full.
+pub fn diff(path: &str, file: Option<&str>, commit: Option<&str>) -> String {
+    let Some(root) = toplevel(path) else {
         return String::new();
     };
-    let mut text = match file {
-        Some(f) => {
+    let mut text = match (commit, file) {
+        (Some(sha), f) => {
+            let mut args = vec!["show", "--no-color", "--format=", "--first-parent", sha];
+            args.extend(f.map(|f| ["--", f]).into_iter().flatten());
+            git_out(&root, &args).unwrap_or_default()
+        }
+        (None, Some(f)) => {
             let tracked = git_out(&root, &["diff", "HEAD", "--no-color", "--", f]).unwrap_or_default();
             let untracked = git_out(&root, &["ls-files", "--others", "--exclude-standard", "--", f]).unwrap_or_default();
             if tracked.is_empty() && !untracked.trim().is_empty() {
@@ -274,7 +309,7 @@ pub fn diff(path: &str, file: Option<&str>) -> String {
                 tracked
             }
         }
-        None => {
+        (None, None) => {
             let mut all = git_out(&root, &["diff", "HEAD", "--no-color"]).unwrap_or_default();
             let untracked = git_out(&root, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
             for f in untracked.lines().take(50) {
@@ -292,4 +327,34 @@ pub fn diff(path: &str, file: Option<&str>) -> String {
         text.push_str("\n… diff cut off at 1 MB\n");
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branch_commits_and_their_diff() {
+        let dir = std::env::temp_dir().join(format!("jugglr-commits-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        let sh = |args: &[&str]| assert!(Command::new("git").current_dir(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success());
+        sh(&["init", "-q", "-b", "main"]);
+        sh(&["commit", "-q", "--allow-empty", "-m", "base"]);
+        assert_eq!(commits(p).as_array().unwrap().len(), 1, "on the default branch: its history");
+        sh(&["checkout", "-q", "-b", "feature"]);
+        std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+        sh(&["add", "a.txt"]);
+        sh(&["commit", "-q", "-m", "add a", "-m", "why"]);
+        let list = commits(p);
+        let list = list.as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0]["title"].as_str(), list[0]["message"].as_str()), (Some("add a"), Some("why")));
+        assert_eq!(list[0]["files"], json!([["A", "a.txt"]]));
+        let d = diff(p, None, list[0]["sha"].as_str());
+        sh(&["update-ref", "refs/remotes/upstream/master", "HEAD"]);
+        assert_eq!(commits(p).as_array().unwrap().len(), 2, "upstream/master wins over main: nothing on top, so history");
+        assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

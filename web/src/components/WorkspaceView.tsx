@@ -1,10 +1,10 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
-import type { Agent, Win, Workspace } from "../api";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
+import { getJSON, type Agent, type Commit, type Win, type Workspace } from "../api";
 import { act, actHiding, ask, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, now, setDiffView, state, stops, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { ArrowDown, ArrowUp, Bot, Check, Chevron, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
 import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon } from "./ui";
 import { focus, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
@@ -29,6 +29,14 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
     if (!b || !state.gitlab.enabled) return false;
     return g()!.ahead > 0 || (!p.ws.mr && b !== "main" && b !== "master");
   };
+  const [message, setMessage] = createSignal("");
+  // Index column of git's XY code: something is staged.
+  const staged = () => !!g()?.files.some(([code]) => code[0] !== "." && code[0] !== "?");
+  // Refetched when HEAD moves: a commit, checkout or pull.
+  const [commits] = createResource(
+    () => g() && ([p.ws.path, g()!.commit] as const),
+    ([path]) => getJSON<Commit[]>(`/api/diff?path=${encodeURIComponent(path)}&commits=1`),
+  );
   return (
     <aside class="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
       <Show when={p.agents.length}>
@@ -92,7 +100,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
             </span>
           </Show>
           <Show when={g()?.files.length}>
-            <button class="ml-auto text-[12px] text-fg-2 hover:text-fg" onClick={() => setDiffView({ path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
+            <button class="ml-auto text-[12px] text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
               Review all
             </button>
           </Show>
@@ -114,6 +122,27 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
             <ArrowUp size={13} /> {p.ws.mr ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push and open draft MR"}
           </Button>
         </Show>
+        <Show when={g()?.files.length}>
+          <form
+            class="mb-2 flex gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!message().trim()) return;
+              void act({ type: "commit", workspace: p.ws.name, message: message() }, { key: `commit:${p.ws.name}` }).then((r) => r.ok && setMessage(""));
+            }}
+          >
+            <input
+              value={message()}
+              onInput={(e) => setMessage(e.currentTarget.value)}
+              placeholder="Commit message"
+              aria-label="Commit message"
+              class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-raised px-2 text-[12.5px] outline-none placeholder:text-fg-3 focus:border-accent/60"
+            />
+            <Button size="sm" type="submit" disabled={!message().trim()} loading={isBusy(`commit:${p.ws.name}`)} title={staged() ? "Commit the staged changes" : "Commit all changes"}>
+              <Check size={13} /> {staged() ? "Commit staged" : "Commit all"}
+            </Button>
+          </form>
+        </Show>
         <Show when={g()} fallback={<div class="px-1 text-[12.5px] text-fg-3">Not a git repository</div>}>
           <Show when={g()!.files.length} fallback={<div class="px-1 text-[12.5px] text-fg-3">Working tree clean</div>}>
             <div class="flex flex-col">
@@ -127,7 +156,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                     <button
                       class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
                       title={`${c.title}: ${file}`}
-                      onClick={() => setDiffView({ path: p.ws.path, file, title: file })}
+                      onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
                     >
                       <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", c.tone)}>{c.letter}</span>
                       <span class="min-w-0 truncate font-mono text-[12px]">
@@ -145,6 +174,57 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
           </Show>
         </Show>
       </section>
+
+      <Show when={commits()?.length}>
+        <section class="border-t border-line p-3">
+          <h3 class="mb-2 px-1 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Commits</h3>
+          <div class="flex flex-col">
+            <For each={commits()}>
+              {(c) => {
+                const [open, setOpen] = createSignal(false);
+                const show = (file: string | null) => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
+                return (
+                  <div>
+                    <div class="group flex min-w-0 items-start gap-1 rounded-md px-1 py-1 hover:bg-hover">
+                      <button class="mt-0.5 grid size-4 shrink-0 place-items-center text-fg-3 hover:text-fg" aria-label={open() ? "Hide files" : "Show files"} aria-expanded={open()} onClick={() => setOpen(!open())}>
+                        <Chevron size={12} class={cls("transition-transform", open() && "rotate-90")} />
+                      </button>
+                      <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
+                        <div class="truncate text-[12.5px] text-fg">{c.title}</div>
+                        <div class="truncate text-[11px] text-fg-3">
+                          <span class="font-mono">{c.short}</span> · {c.author} · {age(c.created, now())} ago
+                        </div>
+                      </button>
+                      <FileDiff size={13} class="mt-1 shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
+                    </div>
+                    <Show when={open()}>
+                      <div class="mb-1 ml-5 flex flex-col">
+                        <For each={c.files ?? []}>
+                          {([code, file]) => {
+                            const f = fileCode(code);
+                            const i = file.lastIndexOf("/");
+                            return (
+                              <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(file)}>
+                                <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", f.tone)}>{f.letter}</span>
+                                <span class="min-w-0 truncate font-mono text-[12px]">
+                                  <span class="text-fg">{file.slice(i + 1)}</span>
+                                  <Show when={i > 0}>
+                                    <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
+                                  </Show>
+                                </span>
+                              </button>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </section>
+      </Show>
     </aside>
   );
 }

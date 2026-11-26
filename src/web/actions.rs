@@ -40,6 +40,8 @@ pub enum Action {
     ThreadReply { mr: String, thread: String, text: String, resolve: bool },
     /// Push the workspace's branch, opening a draft merge request when it has none.
     Publish { workspace: String },
+    /// Commit the staged changes, or all of them when nothing is staged.
+    Commit { workspace: String, message: String },
     GitlabRefresh,
     /// A comment on an MR, on a diff line with a GitLab position. A draft waits for FinishReview.
     MrNote { mr: String, body: String, position: Option<serde_json::Value>, draft: bool },
@@ -406,6 +408,13 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let r = crate::gitlab::publish(&ws.path, open_mr);
             forget_gitlab(hub, Some(&ws.path));
             Ok(said(r?))
+        }
+        Action::Commit { workspace, message } => {
+            let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
+            if message.trim().is_empty() {
+                return Err("Write a commit message".into());
+            }
+            Ok(said(crate::gitlab::commit(&ws.path, message.trim())?))
         }
         Action::ReopenWorkspace { id } => {
             let c = crate::closed::get(&id).ok_or("It is no longer in the list")?;

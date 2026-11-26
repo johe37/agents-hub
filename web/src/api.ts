@@ -94,6 +94,8 @@ export interface Commit {
   message: string;
   author: string;
   created: number;
+  /** [status letter, path]: only in a workspace's commit list. */
+  files?: [string, string][];
 }
 
 export interface MrChanges {
@@ -258,6 +260,7 @@ export type Action =
   | { type: "find_clone"; project: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
+  | { type: "commit"; workspace: string; message: string }
   | { type: "gitlab_refresh" }
   | { type: "mr_note"; mr: string; body: string; position?: Record<string, unknown>; draft: boolean }
   | { type: "draft_edit"; mr: string; id: number; body: string }
