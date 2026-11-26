@@ -41,7 +41,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
     <aside class="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
       <Show when={p.agents.length}>
         <section class="border-b border-line p-3">
-          <h3 class="mb-2 px-1 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Agents</h3>
+          <h3 class="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Agents</h3>
           <For each={p.agents}>
             {(a) => (
               <button
@@ -50,8 +50,8 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
               >
                 <StatusDot status={a.status} class="mt-[6px]" />
                 <div class="min-w-0 flex-1">
-                  <div class="truncate text-[13px] font-medium text-fg">{a.title}</div>
-                  <div class="truncate text-[12px] text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : `${age(a.timestamp, now())} ago`}</div>
+                  <div class="truncate text-base font-medium text-fg">{a.title}</div>
+                  <div class="truncate text-sm text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : `${age(a.timestamp, now())} ago`}</div>
                 </div>
               </button>
             )}
@@ -63,13 +63,13 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
         {(mr) => (
           <section class="border-b border-line p-3">
             <div class="mb-2 flex items-center px-1">
-              <h3 class="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Merge request</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Merge request</h3>
               <a href={mr().url} target="_blank" rel="noopener" class="ml-auto text-fg-3 hover:text-fg" title="Open in GitLab">
                 <External size={12} />
               </a>
             </div>
             <button class="block w-full rounded-lg px-2 py-1.5 text-left hover:bg-hover" onClick={() => go({ view: "gitlab", key: mr().key })} title="Threads, pipeline and description">
-              <div class="flex items-center gap-1.5 text-[13px] font-medium text-fg">
+              <div class="flex items-center gap-1.5 text-base font-medium text-fg">
                 <span class="text-fg-3">!{mr().iid}</span>
                 <span class="truncate">{mr().title}</span>
               </div>
@@ -93,14 +93,14 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
 
       <section class="flex min-h-0 flex-1 flex-col p-3">
         <div class="mb-2 flex items-center gap-2 px-1">
-          <h3 class="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Changes</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Changes</h3>
           <Show when={g()}>
-            <span class="font-mono text-[11.5px] tabular-nums">
+            <span class="font-mono text-xs tabular-nums">
               <span class="text-add">+{g()!.added}</span> <span class="text-del">−{g()!.removed}</span>
             </span>
           </Show>
           <Show when={g()?.files.length}>
-            <button class="ml-auto text-[12px] text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
+            <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
               Review all
             </button>
           </Show>
@@ -136,15 +136,15 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
               onInput={(e) => setMessage(e.currentTarget.value)}
               placeholder="Commit message"
               aria-label="Commit message"
-              class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-raised px-2 text-[12.5px] outline-none placeholder:text-fg-3 focus:border-accent/60"
+              class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-raised px-2 text-sm outline-none placeholder:text-fg-3 focus:border-accent/60"
             />
             <Button size="sm" type="submit" disabled={!message().trim()} loading={isBusy(`commit:${p.ws.name}`)} title={staged() ? "Commit the staged changes" : "Commit all changes"}>
               <Check size={13} /> {staged() ? "Commit staged" : "Commit all"}
             </Button>
           </form>
         </Show>
-        <Show when={g()} fallback={<div class="px-1 text-[12.5px] text-fg-3">Not a git repository</div>}>
-          <Show when={g()!.files.length} fallback={<div class="px-1 text-[12.5px] text-fg-3">Working tree clean</div>}>
+        <Show when={g()} fallback={<div class="px-1 text-sm text-fg-3">Not a git repository</div>}>
+          <Show when={g()!.files.length} fallback={<div class="px-1 text-sm text-fg-3">Working tree clean</div>}>
             <div class="flex flex-col">
               <For each={g()!.files}>
                 {([code, file]) => {
@@ -158,8 +158,8 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                       title={`${c.title}: ${file}`}
                       onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
                     >
-                      <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", c.tone)}>{c.letter}</span>
-                      <span class="min-w-0 truncate font-mono text-[12px]">
+                      <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
+                      <span class="min-w-0 truncate font-mono text-sm">
                         <span class="text-fg">{file.slice(i + 1)}</span>
                         <Show when={i > 0}>
                           <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
@@ -177,7 +177,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
 
       <Show when={commits()?.length}>
         <section class="border-t border-line p-3">
-          <h3 class="mb-2 px-1 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">Commits</h3>
+          <h3 class="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Commits</h3>
           <div class="flex flex-col">
             <For each={commits()}>
               {(c) => {
@@ -190,8 +190,8 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                         <Chevron size={12} class={cls("transition-transform", open() && "rotate-90")} />
                       </button>
                       <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
-                        <div class="truncate text-[12.5px] text-fg">{c.title}</div>
-                        <div class="truncate text-[11px] text-fg-3">
+                        <div class="truncate text-sm text-fg">{c.title}</div>
+                        <div class="truncate text-xs text-fg-3">
                           <span class="font-mono">{c.short}</span> · {c.author} · {age(c.created, now())} ago
                         </div>
                       </button>
@@ -205,8 +205,8 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                             const i = file.lastIndexOf("/");
                             return (
                               <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(file)}>
-                                <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", f.tone)}>{f.letter}</span>
-                                <span class="min-w-0 truncate font-mono text-[12px]">
+                                <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", f.tone)}>{f.letter}</span>
+                                <span class="min-w-0 truncate font-mono text-sm">
                                   <span class="text-fg">{file.slice(i + 1)}</span>
                                   <Show when={i > 0}>
                                     <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
@@ -453,7 +453,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               <Show
                 when={renaming()}
                 fallback={
-                  <h1 class="group flex min-w-0 items-center gap-1 truncate text-[16px] font-semibold tracking-[-0.01em] text-fg" onDblClick={() => setRenaming(true)}>
+                  <h1 class="group flex min-w-0 items-center gap-1 truncate text-lg font-semibold tracking-[-0.01em] text-fg" onDblClick={() => setRenaming(true)}>
                     {w().name}
                     <button class="opacity-0 transition-opacity group-hover:opacity-100" onClick={() => setRenaming(true)} aria-label="Rename">
                       <Rename size={13} class="text-fg-3" />
@@ -464,7 +464,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 <input
                   value={w().name}
                   ref={(el) => queueMicrotask(() => el.select())}
-                  class="w-48 rounded-md border border-accent/50 bg-raised px-2 py-0.5 text-[15px] font-semibold outline-none"
+                  class="w-48 rounded-md border border-accent/50 bg-raised px-2 py-0.5 text-lg font-semibold outline-none"
                   onKeyDown={(e) => {
                     e.stopPropagation();
                     if (e.key === "Enter") rename(e.currentTarget.value);
@@ -473,11 +473,11 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                   onBlur={(e) => rename(e.currentTarget.value)}
                 />
               </Show>
-              <span class="hidden truncate text-[12.5px] text-fg-3 md:inline">{w().short_path}</span>
+              <span class="hidden truncate text-sm text-fg-3 md:inline">{w().short_path}</span>
             </div>
             <Show when={w().git}>
               {(g) => (
-                <div class="flex items-center gap-1.5 text-[12px] text-fg-2">
+                <div class="flex items-center gap-1.5 text-sm text-fg-2">
                   <Badge>
                     <Branch size={12} /> {g().branch ?? "detached"}
                   </Badge>
@@ -543,7 +543,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       aria-selected={active()}
                       data-win={win.id}
                       class={cls(
-                        "group relative flex h-10 shrink-0 cursor-pointer select-none items-center gap-2 rounded-t-lg px-3 text-[13px] transition-colors",
+                        "group relative flex h-10 shrink-0 cursor-pointer select-none items-center gap-2 rounded-t-lg px-3 text-base transition-colors",
                         active() ? "text-fg" : "text-fg-2 hover:text-fg",
                         d()?.id === win.id && "cursor-grabbing opacity-50",
                       )}
@@ -591,7 +591,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       {(a) => (
                         <div class="flex items-center gap-2 border-b border-line px-4 py-1.5 sm:px-5">
                           <StatusPill status={a().status} />
-                          <span class="min-w-0 truncate text-[12.5px] text-fg-2">
+                          <span class="min-w-0 truncate text-sm text-fg-2">
                             <Switch fallback={a().model ?? ""}>
                               <Match when={a().status === "working"}>{a().tool ?? "Thinking…"}</Match>
                               <Match when={a().status === "waiting"}>{a().message}</Match>
@@ -602,7 +602,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                               <Done size={13} /> Done
                             </Button>
                           </Show>
-                          <div class={cls("flex rounded-lg bg-hover p-0.5 text-[12px]", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
+                          <div class={cls("flex rounded-lg bg-hover p-0.5 text-sm", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
                             <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")} title="Chat (v)">
                               <Chat size={12} /> Chat
                             </button>

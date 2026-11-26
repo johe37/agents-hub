@@ -37,8 +37,8 @@ export function OpenWorkspace(p: { path: string }) {
           <Folder size={18} />
         </span>
         <div class="min-w-0">
-          <h1 class="truncate text-[20px] font-semibold tracking-[-0.02em] text-fg">{basename(p.path)}</h1>
-          <p class="truncate text-[12.5px] text-fg-3">{short()}</p>
+          <h1 class="truncate text-xl font-semibold tracking-[-0.02em] text-fg">{basename(p.path)}</h1>
+          <p class="truncate text-sm text-fg-3">{short()}</p>
         </div>
       </div>
       <p class="mt-6 text-fg-2">What do you want to start in this workspace?</p>
@@ -52,13 +52,13 @@ export function OpenWorkspace(p: { path: string }) {
             >
               <span class="text-fg-2 group-hover:text-accent">{busy(c.kind) ? <Spinner size={20} /> : c.icon()}</span>
               <span class="font-medium text-fg">{c.title}</span>
-              <span class="text-[12.5px] text-fg-3">{c.body}</span>
+              <span class="text-sm text-fg-3">{c.body}</span>
               <span class="kbd absolute right-3 top-3">{c.key}</span>
             </button>
           )}
         </For>
       </div>
-      <button class="mt-4 inline-flex items-center gap-1.5 self-start text-[13px] text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
+      <button class="mt-4 inline-flex items-center gap-1.5 self-start text-base text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
         <Sparkles size={14} /> Or start Claude with a task <span class="kbd">N</span>
       </button>
     </div>

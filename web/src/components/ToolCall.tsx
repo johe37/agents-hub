@@ -14,7 +14,7 @@ function FilePath(p: { path: string }) {
     return i < 0 ? ["", path] : [path.slice(0, i + 1), path.slice(i + 1)];
   };
   return (
-    <div class="truncate font-mono text-[12px]" title={p.path}>
+    <div class="truncate font-mono text-sm" title={p.path}>
       <span class="text-fg-3">{parts()[0]}</span>
       <span class="text-fg">{parts()[1]}</span>
     </div>
@@ -23,7 +23,7 @@ function FilePath(p: { path: string }) {
 
 function Block(p: { children: string; class?: string; prompt?: string }) {
   return (
-    <pre class={cls("max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg", p.class)}>
+    <pre class={cls("max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm leading-relaxed text-fg", p.class)}>
       <Show when={p.prompt}>
         <span class="select-none text-accent">{p.prompt} </span>
       </Show>

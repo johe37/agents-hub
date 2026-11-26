@@ -34,7 +34,7 @@ function MrRow(p: { mr: Mr; tab: Tab; group: string }) {
         <div class="line-clamp-2 break-words text-fg">
           <span class="text-fg-3">!{m().iid}</span> {m().title.replace(/^Draft:\s*/i, "")}
         </div>
-        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+        <div class="mt-0.5 flex items-center gap-1.5 text-sm text-fg-3">
           <span class="truncate">
             {m().project.split("/").pop()}
             {p.tab === "review" || assigned() ? ` · ${m().author}` : ""}
@@ -73,7 +73,7 @@ function IssueRow(p: { issue: Issue }) {
         <div class="line-clamp-2 break-words text-fg">
           <span class="text-fg-3">#{i().iid}</span> {i().title}
         </div>
-        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+        <div class="mt-0.5 flex items-center gap-1.5 text-sm text-fg-3">
           <span class="truncate">{i().labels.slice(0, 2).join(" · ") || i().project.split("/").pop()}</span>
           <span class="ml-auto shrink-0 tabular-nums">{age(i().updated, now())}</span>
         </div>
@@ -126,7 +126,7 @@ function TodoRow(p: { todo: Todo }) {
         <div class="line-clamp-2 break-words text-fg">
           <span class="text-fg-3">{todoRef(t())}</span> {t().title}
         </div>
-        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+        <div class="mt-0.5 flex items-center gap-1.5 text-sm text-fg-3">
           <span class="truncate">
             {todoWhat(t())} · {t().project.split("/").pop()}
           </span>
@@ -143,12 +143,12 @@ function TodoBanner(p: { todo: Todo; onDone: () => void }) {
   const comment = () => (t().body.trim() && t().body.trim() !== t().title.trim() ? t().body : "");
   return (
     <div class={cls("mb-5 rounded-xl border px-4 py-3", isMention(t()) ? "border-waiting/40 bg-waiting-soft" : "border-line bg-panel")}>
-      <div class="flex flex-wrap items-center gap-2 text-[13px]">
+      <div class="flex flex-wrap items-center gap-2 text-base">
         <TodoMark todo={t()} />
         <span class="font-medium text-fg">{todoWhat(t())}</span>
         <span class="tabular-nums text-fg-3">{age(t().created, now())}</span>
         <div class="ml-auto flex items-center gap-2">
-          <a href={t().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
+          <a href={t().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
             Open <External size={12} />
           </a>
           <Button size="sm" variant="primary" kbd="X" loading={isBusy(`todo:${t().id}`)} onClick={p.onDone} title="Mark the to-do done in GitLab">
@@ -157,7 +157,7 @@ function TodoBanner(p: { todo: Todo; onDone: () => void }) {
         </div>
       </div>
       <Show when={comment()}>
-        <Markdown text={comment()} class="mt-2 text-[13.5px]" />
+        <Markdown text={comment()} class="mt-2 text-base" />
       </Show>
     </div>
   );
@@ -167,8 +167,8 @@ function TodoDetail(p: { todo: Todo; onDone: () => void }) {
   const t = () => p.todo;
   return (
     <div class="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-8">
-      <div class="text-[12.5px] text-fg-3">{t().project}</div>
-      <h1 class="mb-4 mt-1 text-[20px] font-semibold leading-snug tracking-[-0.02em] text-fg">
+      <div class="text-sm text-fg-3">{t().project}</div>
+      <h1 class="mb-4 mt-1 text-xl font-semibold leading-snug tracking-[-0.02em] text-fg">
         <span class="text-fg-3">{todoRef(t())}</span> {t().title}
       </h1>
       <TodoBanner todo={t()} onDone={p.onDone} />
@@ -180,7 +180,7 @@ function Section(p: { title: string; children: any; actions?: any }) {
   return (
     <section class="mt-6">
       <div class="mb-2 flex items-center gap-2">
-        <h2 class="text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h2>
         <div class="ml-auto flex items-center gap-1">{p.actions}</div>
       </div>
       {p.children}
@@ -197,7 +197,7 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
   };
   return (
     <article class="overflow-hidden rounded-xl border border-line bg-panel">
-      <header class="flex items-center gap-2 border-b border-line bg-raised px-3 py-2 text-[12.5px]">
+      <header class="flex items-center gap-2 border-b border-line bg-raised px-3 py-2 text-sm">
         <Code size={13} class="text-fg-3" />
         <span class="truncate font-mono text-fg-2">{p.thread.place}</span>
       </header>
@@ -205,8 +205,8 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
         <For each={p.thread.notes}>
           {(n) => (
             <div class="px-3.5 py-2.5">
-              <div class="mb-1 text-[12px] font-medium text-fg-2">{n.author}</div>
-              <Markdown text={n.body} class="text-[13px]" />
+              <div class="mb-1 text-sm font-medium text-fg-2">{n.author}</div>
+              <Markdown text={n.body} class="text-base" />
             </div>
           )}
         </For>
@@ -228,7 +228,7 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
             } else if (e.key === "Escape") e.currentTarget.blur();
           }}
           placeholder="Reply on GitLab… (Ctrl+Enter sends)"
-          class="w-full resize-none rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-[13px] text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
+          class="w-full resize-none rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-base text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
         />
         <div class="mt-2 flex flex-wrap items-center gap-2">
           <Button size="sm" variant="primary" disabled={!text().trim()} loading={isBusy(key("reply"))} onClick={() => send(false)}>
@@ -281,17 +281,17 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
   return (
     <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", focus() ? "max-w-none" : "max-w-[110rem]")}>
       {p.top}
-      <div class="flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-3">
+      <div class="flex flex-wrap items-center gap-1.5 text-sm text-fg-3">
         <span>{m().project}</span>
         <span>·</span>
         <span class="inline-flex items-center gap-1">
           <Branch size={12} /> {m().branch}
         </span>
       </div>
-      <h1 class="mt-1 text-[20px] font-semibold leading-snug tracking-[-0.02em] text-fg">
+      <h1 class="mt-1 text-xl font-semibold leading-snug tracking-[-0.02em] text-fg">
         <span class="text-fg-3">!{m().iid}</span> {m().title}
       </h1>
-      <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[12.5px]">
+      <div class="mt-2 flex flex-wrap items-center gap-1.5 text-sm">
         <span class="text-fg-2">by {m().author}</span>
         <Show when={m().draft}>
           <Badge>Draft</Badge>
@@ -327,12 +327,12 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
             <Check size={13} /> {m().approved ? "Revoke approval" : "Approve"}
           </Button>
         </Show>
-        <a href={m().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
+        <a href={m().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
           Open in GitLab <External size={12} />
         </a>
       </div>
 
-      <div class="mt-5 flex gap-1 border-b border-line text-[13px]" role="tablist">
+      <div class="mt-5 flex gap-1 border-b border-line text-base" role="tablist">
         <For each={DETAIL_TABS}>
           {(t) => (
             <button
@@ -349,7 +349,7 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
               </Show>
               {t.label}
               <Show when={count(t.id) != null}>
-                <span class="rounded-full bg-hover px-1.5 text-[11px] tabular-nums text-fg-3">{count(t.id)}</span>
+                <span class="rounded-full bg-hover px-1.5 text-xs tabular-nums text-fg-3">{count(t.id)}</span>
               </Show>
             </button>
           )}
@@ -387,7 +387,7 @@ function Overview(p: { mr: Mr }) {
       <Show when={m().description.trim()}>
         <Section title="Description">
           <div class="rounded-xl border border-line bg-panel px-4 py-3">
-            <Markdown text={m().description} class="text-[13.5px]" />
+            <Markdown text={m().description} class="text-base" />
           </div>
         </Section>
       </Show>
@@ -408,11 +408,11 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
   return (
     <div class="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-8">
       {p.top}
-      <div class="text-[12.5px] text-fg-3">{i().project}</div>
-      <h1 class="mt-1 text-[20px] font-semibold leading-snug tracking-[-0.02em] text-fg">
+      <div class="text-sm text-fg-3">{i().project}</div>
+      <h1 class="mt-1 text-xl font-semibold leading-snug tracking-[-0.02em] text-fg">
         <span class="text-fg-3">#{i().iid}</span> {i().title}
       </h1>
-      <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[12.5px]">
+      <div class="mt-2 flex flex-wrap items-center gap-1.5 text-sm">
         <span class="text-fg-2">by {i().author}</span>
         <Show when={i().milestone}>
           <Badge tone="accent">{i().milestone}</Badge>
@@ -423,14 +423,14 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
         <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
           <Sparkles size={13} /> Work on it with Claude
         </Button>
-        <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
+        <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
           Open in GitLab <External size={12} />
         </a>
       </div>
       <Section title="Description">
         <div class="rounded-xl border border-line bg-panel px-4 py-3">
           <Show when={i().description.trim()} fallback={<span class="text-fg-3">No description.</span>}>
-            <Markdown text={i().description} class="text-[13.5px]" />
+            <Markdown text={i().description} class="text-base" />
           </Show>
         </div>
       </Section>
@@ -694,7 +694,7 @@ export function Gitlab() {
         />
         <header class="px-4 pb-2 pt-4 sm:px-5">
           <div class="flex items-center gap-2">
-            <h1 class="text-[20px] font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
+            <h1 class="text-xl font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
             <Button size="sm" variant="ghost" class="ml-auto" title="Fetch everything again (Shift+R)" loading={isBusy(JSON.stringify({ type: "gitlab_refresh" }))} onClick={() => act({ type: "gitlab_refresh" })}>
               <Refresh size={13} />
             </Button>
@@ -702,7 +702,7 @@ export function Gitlab() {
               <PanelLeft size={15} />
             </IconButton>
           </div>
-          <div class="mt-3 flex rounded-lg bg-hover p-0.5 text-[12.5px]" role="tablist">
+          <div class="mt-3 flex rounded-lg bg-hover p-0.5 text-sm" role="tablist">
             <For each={TABS}>
               {(t) => (
                 <button
@@ -725,18 +725,18 @@ export function Gitlab() {
               onInput={(e) => setQ(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Escape" && (setQ(""), e.currentTarget.blur())}
               placeholder="Filter by title, repo, branch or author"
-              class="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-fg-3"
+              class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-fg-3"
               data-filter
             />
           </label>
         </header>
         <div ref={listEl} class="min-h-0 flex-1 overflow-y-auto px-2 pb-8">
-          <For each={g().errors}>{([section, err]) => <div class="mx-2 mb-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-[12.5px] text-danger">{section}: {err}</div>}</For>
+          <For each={g().errors}>{([section, err]) => <div class="mx-2 mb-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{section}: {err}</div>}</For>
           <Show when={g().loading && !all().length}>
             <div class="flex flex-col gap-2 px-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-14" />)}</div>
           </Show>
           <Show when={!g().loading && !inTab().length}>
-            <div class="px-3 py-8 text-center text-[12.5px] text-fg-3">
+            <div class="px-3 py-8 text-center text-sm text-fg-3">
               {q().trim() ? "Nothing matches." : tab() === "todo" ? "Your To-Do list is empty." : tab() === "review" ? "No reviews wait for you." : tab() === "mine" ? "You have no open merge requests." : "No issues are assigned to you."}
             </div>
           </Show>
@@ -751,7 +751,7 @@ export function Gitlab() {
             {([title, items]) => (
               <section class="mt-2">
                 <button
-                  class="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3 hover:text-fg-2"
+                  class="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3 hover:text-fg-2"
                   onClick={() => toggleFold(`${tab()}:${title}`)}
                   aria-expanded={!isFolded(title)}
                 >
@@ -766,7 +766,7 @@ export function Gitlab() {
                           data-key={e.key}
                           title={(e.todo ?? e.mr ?? e.issue)!.title}
                           onClick={() => select(e.key)}
-                          class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
+                          class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-base transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
                         >
                           {e.todo ? <TodoRow todo={e.todo} /> : e.mr ? <MrRow mr={e.mr} tab={e.tab} group={e.group} /> : <IssueRow issue={e.issue!} />}
                         </button>
@@ -793,7 +793,7 @@ export function Gitlab() {
       </Show>
       <div class={cls("min-h-0 min-w-0 flex-1 overflow-y-auto", !selected() && "hidden lg:block")}>
         <Show when={selected()}>
-          <button class="mx-4 mt-3 inline-flex items-center gap-1 text-[12.5px] text-fg-2 hover:text-fg lg:hidden" onClick={() => go({ view: "gitlab", key: null })}>
+          <button class="mx-4 mt-3 inline-flex items-center gap-1 text-sm text-fg-2 hover:text-fg lg:hidden" onClick={() => go({ view: "gitlab", key: null })}>
             <Chevron size={13} class="rotate-180" /> All
           </button>
         </Show>

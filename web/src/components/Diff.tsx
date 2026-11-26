@@ -106,7 +106,7 @@ export function lineDiff(a: string, b: string, startLine = 1): DiffLine[] {
 
 export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: string }) {
   return (
-    <div class={cls("overflow-x-auto font-mono text-[12px] leading-[1.6]", p.class)}>
+    <div class={cls("overflow-x-auto font-mono text-sm leading-[1.6]", p.class)}>
       <table class="w-full border-collapse">
         <tbody>
           <For each={p.lines}>
@@ -115,7 +115,7 @@ export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: str
                 when={l.type !== "hunk"}
                 fallback={
                   <tr class="bg-working-soft/60 text-fg-3">
-                    <td colSpan={p.numbers === false ? 2 : 4} class="px-3 py-0.5 text-[11px]">
+                    <td colSpan={p.numbers === false ? 2 : 4} class="px-3 py-0.5 text-xs">
                       ⋯ {l.text}
                     </td>
                   </tr>

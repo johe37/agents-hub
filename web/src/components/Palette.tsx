@@ -268,7 +268,7 @@ export function Palette() {
               onInput={(e) => setQuery(e.currentTarget.value)}
               onKeyDown={onKey}
               placeholder={paletteMode() === "open" ? "Search repos and folders, or type a path…" : paletteMode() === "theme" ? "Pick a theme…" : "Search workspaces, agents and actions…"}
-              class="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-fg outline-none placeholder:text-fg-3"
+              class="h-12 min-w-0 flex-1 bg-transparent text-lg text-fg outline-none placeholder:text-fg-3"
               spellcheck={false}
               autocomplete="off"
             />
@@ -280,7 +280,7 @@ export function Palette() {
                 {(it, i) => (
                   <>
                     <Show when={i() === 0 || results()[i() - 1].group !== it.group}>
-                      <div class="px-3 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-3">{it.group}</div>
+                      <div class="px-3 pb-1 pt-2.5 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{it.group}</div>
                     </Show>
                     <button
                       data-index={i()}
@@ -289,9 +289,9 @@ export function Palette() {
                       onClick={(e) => it.run(e.ctrlKey || e.metaKey)}
                     >
                       <span class="grid w-4 shrink-0 place-items-center text-fg-3">{it.icon}</span>
-                      <span class="truncate text-[13.5px] text-fg">{it.title}</span>
+                      <span class="truncate text-base text-fg">{it.title}</span>
                       <Show when={it.hint}>
-                        <span class="ml-auto shrink-0 truncate pl-3 text-[12px] text-fg-3">{it.hint}</span>
+                        <span class="ml-auto shrink-0 truncate pl-3 text-sm text-fg-3">{it.hint}</span>
                       </Show>
                     </button>
                   </>
@@ -299,7 +299,7 @@ export function Palette() {
               </For>
             </Show>
           </div>
-          <div class="flex items-center gap-4 border-t border-line px-4 py-2 text-[11.5px] text-fg-3">
+          <div class="flex items-center gap-4 border-t border-line px-4 py-2 text-xs text-fg-3">
             <span><Kbd>↑</Kbd> <Kbd>↓</Kbd> move</span>
             <span><Kbd>↵</Kbd> open</span>
             <span><Kbd>Ctrl ↵</Kbd> agent in folder</span>

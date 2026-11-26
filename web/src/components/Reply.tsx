@@ -51,7 +51,7 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
         value={text()}
         disabled={!p.agent.reachable}
         placeholder={!p.agent.reachable ? "This agent cannot get input from here" : voice() ? (listening() ? heard() || "Listening…" : "Voice on: waiting for Claude…") : (p.placeholder ?? `Reply to ${p.agent.name}…`)}
-        class="max-h-40 min-h-[26px] flex-1 resize-none bg-transparent py-[3px] text-[13.5px] text-fg outline-none placeholder:text-fg-3"
+        class="max-h-40 min-h-[26px] flex-1 resize-none bg-transparent py-[3px] text-base text-fg outline-none placeholder:text-fg-3"
         onInput={(e) => {
           setText(e.currentTarget.value);
           fit();

@@ -196,7 +196,7 @@ export function Terminal(p: { window: string; focus?: boolean }) {
     <div class="relative h-full min-h-0 w-full overflow-hidden bg-[var(--term-bg)]">
       <div ref={host} class="xterm-host absolute inset-0" />
       <Show when={phase() === "connecting"}>
-        <div class="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-lg border border-line bg-panel/90 px-2.5 py-1.5 text-[12px] text-fg-2 backdrop-blur animate-fade-in">
+        <div class="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-lg border border-line bg-panel/90 px-2.5 py-1.5 text-sm text-fg-2 backdrop-blur animate-fade-in">
           <Spinner size={12} /> Attaching…
         </div>
       </Show>

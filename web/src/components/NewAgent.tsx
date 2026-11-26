@@ -105,15 +105,15 @@ export function NewAgent() {
             <div class="grid size-7 place-items-center rounded-lg bg-accent-soft text-accent">
               {chat() ? <Chat size={15} /> : <Sparkles size={15} />}
             </div>
-            <h2 class="text-[15px] font-semibold text-fg">{chat() ? "New chat" : "New agent"}</h2>
+            <h2 class="text-lg font-semibold text-fg">{chat() ? "New chat" : "New agent"}</h2>
             <Show when={chat()}>
-              <span class="ml-auto font-mono text-[11.5px] text-fg-3">{short(path())}</span>
+              <span class="ml-auto font-mono text-xs text-fg-3">{short(path())}</span>
             </Show>
           </div>
 
           <Show when={!chat()}>
             <div class="relative px-5 pt-4">
-              <label class="mb-1.5 block text-[12px] font-medium text-fg-2">Where</label>
+              <label class="mb-1.5 block text-sm font-medium text-fg-2">Where</label>
               <div class="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-bg px-3 focus-within:border-accent/60">
                 <Folder size={14} class="text-fg-3" />
                 <input
@@ -144,7 +144,7 @@ export function NewAgent() {
                     }
                   }}
                   placeholder="Search a repo, or type a path"
-                  class="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg-3"
+                  class="min-w-0 flex-1 bg-transparent font-mono text-sm text-fg outline-none placeholder:font-sans placeholder:text-fg-3"
                   spellcheck={false}
                   autocomplete="off"
                 />
@@ -162,8 +162,8 @@ export function NewAgent() {
                         }}
                       >
                         <span class="text-fg-3">{repo ? <Git size={14} /> : <Folder size={14} />}</span>
-                        <span class="text-[13px] font-medium text-fg">{basename(p)}</span>
-                        <span class="ml-auto truncate pl-3 font-mono text-[11.5px] text-fg-3">{short(p)}</span>
+                        <span class="text-base font-medium text-fg">{basename(p)}</span>
+                        <span class="ml-auto truncate pl-3 font-mono text-xs text-fg-3">{short(p)}</span>
                       </button>
                     )}
                   </For>
@@ -173,7 +173,7 @@ export function NewAgent() {
           </Show>
 
           <div class="px-5 pt-4">
-            <label class="mb-1.5 block text-[12px] font-medium text-fg-2">{chat() ? "Message" : "Task"}</label>
+            <label class="mb-1.5 block text-sm font-medium text-fg-2">{chat() ? "Message" : "Task"}</label>
             <textarea
               ref={promptEl}
               value={prompt()}
@@ -181,12 +181,12 @@ export function NewAgent() {
               onInput={(e) => setPrompt(e.currentTarget.value)}
               rows={6}
               placeholder={chat() ? "Ask Claude anything. Leave it empty to start Claude without a prompt." : "Describe what Claude should do. Leave it empty to start Claude without a prompt."}
-              class="w-full resize-y rounded-xl border border-line-strong bg-bg px-3.5 py-3 text-[14px] leading-relaxed text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
+              class="w-full resize-y rounded-xl border border-line-strong bg-bg px-3.5 py-3 text-base leading-relaxed text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
             />
           </div>
 
           <div class="flex items-center gap-3 px-5 pb-4 pt-3">
-            <span class="text-[12px] text-fg-3">
+            <span class="text-sm text-fg-3">
               {chat() ? "Outside any repo." : "The workspace opens if it is not open yet."} <Kbd>{"Ctrl ↵"}</Kbd> starts.
             </span>
             <div class="ml-auto flex gap-2">

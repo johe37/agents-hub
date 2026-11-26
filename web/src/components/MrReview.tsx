@@ -143,8 +143,8 @@ export function ReviewChat(p: { mr: Mr }) {
     <aside class="fixed inset-0 z-40 flex min-h-0 flex-col bg-panel lg:static lg:z-auto lg:w-[30rem] lg:shrink-0 lg:border-l lg:border-line xl:w-[34rem]">
       <header class="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <Sparkles size={14} class="text-accent" />
-        <span class="truncate text-[13px] font-medium text-fg">Claude on !{p.mr.iid}</span>
-        <Show when={agent()}>{(a) => <span class="truncate text-[12px] text-fg-3">{a().workspace}</span>}</Show>
+        <span class="truncate text-base font-medium text-fg">Claude on !{p.mr.iid}</span>
+        <Show when={agent()}>{(a) => <span class="truncate text-sm text-fg-3">{a().workspace}</span>}</Show>
         <IconButton label="Close" class="ml-auto" onClick={() => setChatMr(null)}>
           <X size={15} />
         </IconButton>
@@ -152,7 +152,7 @@ export function ReviewChat(p: { mr: Mr }) {
       <Show
         when={agent()}
         fallback={
-          <div class="grid flex-1 place-items-center px-6 text-center text-[13px] text-fg-3">
+          <div class="grid flex-1 place-items-center px-6 text-center text-base text-fg-3">
             <Show
               when={starting()}
               fallback={
@@ -176,7 +176,7 @@ export function ReviewChat(p: { mr: Mr }) {
             <Conversation
               agent={a()}
               action={(text) => (
-                <button class="mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-fg-3 hover:bg-hover hover:text-fg" onClick={() => commentFrom(p.mr, text)} title="Open a comment with this text on the lines you asked about">
+                <button class="mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm text-fg-3 hover:bg-hover hover:text-fg" onClick={() => commentFrom(p.mr, text)} title="Open a comment with this text on the lines you asked about">
                   <Chat size={12} /> Comment with this
                 </button>
               )}
@@ -287,7 +287,7 @@ async function position(v: NonNullable<MrChanges["version"]>, f: ParsedFile, a: 
 function Mark(p: { f: FileChange }) {
   const [letter, color, title] = p.f.new_file ? ["A", "text-add", "Added"] : p.f.deleted ? ["D", "text-del", "Deleted"] : p.f.renamed ? ["R", "text-accent", "Renamed"] : ["M", "text-waiting", "Changed"];
   return (
-    <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", color)} title={title}>
+    <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", color)} title={title}>
       {letter}
     </span>
   );
@@ -295,7 +295,7 @@ function Mark(p: { f: FileChange }) {
 
 function Counts(p: { added: number; removed: number }) {
   return (
-    <span class="shrink-0 font-mono text-[11.5px] tabular-nums">
+    <span class="shrink-0 font-mono text-xs tabular-nums">
       <span class="text-add">+{p.added}</span> <span class="text-del">−{p.removed}</span>
     </span>
   );
@@ -305,7 +305,7 @@ function Loading(p: { review: Review; children: JSX.Element }) {
   return (
     <Show
       when={!p.review.error()}
-      fallback={<div class="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-[13px] text-danger">Could not fetch the changes: {p.review.error()!.message}</div>}
+      fallback={<div class="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-base text-danger">Could not fetch the changes: {p.review.error()!.message}</div>}
     >
       {p.children}
     </Show>
@@ -330,7 +330,7 @@ function TextBox(p: { value: string; onInput: (v: string) => void; placeholder: 
         }
       }}
       placeholder={p.placeholder}
-      class="w-full resize-y rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 font-sans text-[13px] text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
+      class="w-full resize-y rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 font-sans text-base text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
     />
   );
 }
@@ -349,12 +349,12 @@ export function Commits(p: { review: Review }) {
               {(c) => (
                 <button class="flex w-full items-baseline gap-3 px-4 py-2.5 text-left hover:bg-hover/60" onClick={() => pick(c)} title={c.message.trim()}>
                   <span class="min-w-0 flex-1">
-                    <span class="block truncate text-[13.5px] text-fg">{c.title}</span>
-                    <span class="text-[12px] text-fg-3">
+                    <span class="block truncate text-base text-fg">{c.title}</span>
+                    <span class="text-sm text-fg-3">
                       {c.author} · {age(c.created, now())} ago
                     </span>
                   </span>
-                  <span class="shrink-0 font-mono text-[12px] text-fg-2">{c.short}</span>
+                  <span class="shrink-0 font-mono text-sm text-fg-2">{c.short}</span>
                 </button>
               )}
             </For>
@@ -379,7 +379,7 @@ interface Pending {
 function PendingBox(p: { note: Pending }) {
   return (
     <article class={cls("max-w-3xl overflow-hidden rounded-xl border bg-panel animate-pop-in", p.note.draft ? "border-waiting/40" : "border-line")}>
-      <header class={cls("flex items-center gap-2 border-b border-line px-3 py-1.5 text-[12px]", p.note.draft ? "bg-waiting-soft/40" : "bg-raised")}>
+      <header class={cls("flex items-center gap-2 border-b border-line px-3 py-1.5 text-sm", p.note.draft ? "bg-waiting-soft/40" : "bg-raised")}>
         <Badge tone={p.note.draft ? "waiting" : "neutral"}>{p.note.draft ? "Draft" : "Comment"}</Badge>
         <span class="flex items-center gap-1.5 text-fg-3">
           <Show when={!p.note.sent} fallback={<Check size={12} class="text-idle" />}>
@@ -388,7 +388,7 @@ function PendingBox(p: { note: Pending }) {
           {!p.note.sent ? "Sending…" : p.note.draft ? "Added to your review" : "Posted on GitLab"}
         </span>
       </header>
-      <Markdown text={p.note.body} class="px-3.5 py-2.5 text-[13px]" />
+      <Markdown text={p.note.body} class="px-3.5 py-2.5 text-base" />
     </article>
   );
 }
@@ -410,7 +410,7 @@ function DraftBox(p: { mr: Mr; draft: DraftNote; onChange: () => void }) {
   };
   return (
     <article class="max-w-3xl overflow-hidden rounded-xl border border-waiting/40 bg-panel">
-      <header class="flex items-center gap-2 border-b border-line bg-waiting-soft/40 px-3 py-1.5 text-[12px]">
+      <header class="flex items-center gap-2 border-b border-line bg-waiting-soft/40 px-3 py-1.5 text-sm">
         <Badge tone="waiting">Draft</Badge>
         <span class="text-fg-3">Only you see it until you finish the review</span>
         <span class="ml-auto flex gap-1">
@@ -422,7 +422,7 @@ function DraftBox(p: { mr: Mr; draft: DraftNote; onChange: () => void }) {
           </IconButton>
         </span>
       </header>
-      <Show when={editing()} fallback={<Markdown text={p.draft.body} class="px-3.5 py-2.5 text-[13px]" />}>
+      <Show when={editing()} fallback={<Markdown text={p.draft.body} class="px-3.5 py-2.5 text-base" />}>
         <div class="p-2.5">
           <TextBox value={text()} onInput={setText} placeholder="Comment" onSubmit={saveEdit} onCancel={() => setEditing(false)} autofocus />
           <div class="mt-2 flex gap-2">
@@ -442,7 +442,7 @@ function DraftBox(p: { mr: Mr; draft: DraftNote; onChange: () => void }) {
 function CommentForm(p: { label: string; text: string; onText: (t: string) => void; onSubmit: (draft: boolean) => void; onCancel: () => void }) {
   return (
     <div class="max-w-3xl rounded-xl border border-line-strong bg-panel p-2.5">
-      <div class="mb-1.5 text-[12px] text-fg-3">Comment on {p.label}</div>
+      <div class="mb-1.5 text-sm text-fg-3">Comment on {p.label}</div>
       <TextBox value={p.text} onInput={p.onText} placeholder="Write a comment… (Ctrl+Enter adds it to your review)" onSubmit={() => p.text.trim() && p.onSubmit(true)} onCancel={p.onCancel} autofocus />
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" disabled={!p.text.trim()} onClick={() => p.onSubmit(true)} title="Keep it as a draft until you finish the review">
@@ -563,7 +563,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
       <For each={groupsAt(i)}>{(g) => <Notes g={g} />}</For>
       <Show when={barAt(i)}>
         <div class="flex flex-wrap items-center gap-2 animate-pop-in">
-          <span class="text-[12px] text-fg-3">{mine() && label(mine()![0], mine()![1])}</span>
+          <span class="text-sm text-fg-3">{mine() && label(mine()![0], mine()![1])}</span>
           <Button size="sm" variant="primary" onClick={() => p.ctx.ask(p.f)} kbd="A" title="Put these lines in a prompt for Claude in the MR's checkout">
             <Sparkles size={13} /> Ask Claude
           </Button>
@@ -596,17 +596,17 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
           <ChevronDown size={13} class={cls("transition-transform", !p.open && "-rotate-90")} />
         </button>
         <Mark f={p.f} />
-        <span class="min-w-0 truncate font-mono text-[12px] text-fg" title={p.f.name}>
+        <span class="min-w-0 truncate font-mono text-sm text-fg" title={p.f.name}>
           <Show when={p.f.renamed && p.f.old_path !== p.f.new_path}>
             <span class="text-fg-3">{p.f.old_path} → </span>
           </Show>
           {p.f.name}
         </span>
         <Show when={p.threads.length}>
-          <span class="shrink-0 text-[11.5px] text-waiting">{p.threads.length} open</span>
+          <span class="shrink-0 text-xs text-waiting">{p.threads.length} open</span>
         </Show>
         <Show when={p.drafts.length}>
-          <span class="shrink-0 text-[11.5px] text-fg-3">{p.drafts.length} draft</span>
+          <span class="shrink-0 text-xs text-fg-3">{p.drafts.length} draft</span>
         </Show>
         <span class="ml-auto" />
         <button class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-accent" onClick={() => p.ctx.askFile(p.f)} title="Ask Claude about this file">
@@ -621,7 +621,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
           <Chat size={13} />
         </button>
         <Counts added={p.f.added} removed={p.f.removed} />
-        <label class="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-fg-2 hover:bg-hover">
+        <label class="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 py-0.5 text-sm text-fg-2 hover:bg-hover">
           <input type="checkbox" checked={p.viewed} onChange={() => p.onViewed()} class="accent-[var(--accent)]" />
           Viewed
         </label>
@@ -644,7 +644,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
         <Show
           when={!p.f.too_large && p.f.lines.length && (full() || p.f.lines.length <= BIG)}
           fallback={
-            <div class="px-4 py-4 text-[13px] text-fg-3">
+            <div class="px-4 py-4 text-base text-fg-3">
               {p.f.too_large ? (
                 "GitLab does not show this diff: it is too large."
               ) : p.f.lines.length ? (
@@ -685,7 +685,7 @@ function FinishPanel(p: { mr: Mr; review: Review; summary: string; onSummary: (t
   const n = () => p.review.drafts().length;
   return (
     <div class="mb-4 rounded-xl border border-line-strong bg-panel p-3 animate-pop-in">
-      <div class="mb-2 text-[13px] font-medium text-fg">Finish your review</div>
+      <div class="mb-2 text-base font-medium text-fg">Finish your review</div>
       <Show when={p.review.drafts().some((d) => !d.path)}>
         <div class="mb-2 flex flex-col gap-2">
           <For each={p.review.drafts().filter((d) => !d.path)}>{(d) => <DraftBox mr={p.mr} draft={d} onChange={p.review.reloadDrafts} />}</For>
@@ -693,11 +693,11 @@ function FinishPanel(p: { mr: Mr; review: Review; summary: string; onSummary: (t
       </Show>
       <TextBox value={p.summary} onInput={p.onSummary} placeholder="A summary for the author (optional)" onSubmit={submit} onCancel={p.onClose} rows={3} autofocus />
       <div class="mt-2 flex flex-wrap items-center gap-3">
-        <label class="flex cursor-pointer select-none items-center gap-1.5 text-[13px] text-fg-2">
+        <label class="flex cursor-pointer select-none items-center gap-1.5 text-base text-fg-2">
           <input type="checkbox" checked={approve()} disabled={p.mr.approved} onChange={(e) => setApprove(e.currentTarget.checked)} class="accent-[var(--accent)]" />
           {p.mr.approved ? "You approved it already" : "Approve the merge request"}
         </label>
-        <span class="text-[12px] text-fg-3">
+        <span class="text-sm text-fg-3">
           {n()} draft {n() === 1 ? "comment" : "comments"} will be published
         </span>
         <span class="ml-auto flex gap-2">
@@ -893,7 +893,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
   return (
     <Loading review={p.review}>
       <div class="mb-3 flex flex-wrap items-center gap-2">
-        <label class="flex h-8 min-w-0 max-w-full items-center rounded-lg border border-line-strong bg-raised pl-2.5 text-[12.5px] focus-within:border-accent/60">
+        <label class="flex h-8 min-w-0 max-w-full items-center rounded-lg border border-line-strong bg-raised pl-2.5 text-sm focus-within:border-accent/60">
           <select class="min-w-0 max-w-[28rem] truncate bg-transparent py-1 pr-2 text-fg outline-none" value={p.review.mode()} onChange={(e) => p.review.setMode(e.currentTarget.value)}>
             <option value="">All changes</option>
             <Show when={reviewed()}>{(r) => <option value={`s:${r()}`}>Since your last review ({r().slice(0, 8)})</option>}</Show>
@@ -908,7 +908,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
         </label>
         <Show when={files()}>
           {(l) => (
-            <span class="text-[12.5px] text-fg-3">
+            <span class="text-sm text-fg-3">
               {l().length} {l().length === 1 ? "file" : "files"} · <Counts {...total()} />
             </span>
           )}
@@ -924,7 +924,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
           </Button>
         </Show>
         <span class="ml-auto flex items-center gap-2">
-          <div class="flex rounded-lg bg-hover p-0.5 text-[12px]" role="group" title="Layout (S)">
+          <div class="flex rounded-lg bg-hover p-0.5 text-sm" role="group" title="Layout (S)">
             <button class={cls("rounded-md px-2 py-1", !split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => split() && toggleSplit()}>
               Unified
             </button>
@@ -935,7 +935,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
           <Button size="sm" variant={drafts().length ? "primary" : "secondary"} onClick={() => setFinishing(!finishing())} title="Publish your draft comments, with a summary, and approve">
             Finish review
             <Show when={drafts().length}>
-              <span class="rounded-full bg-black/15 px-1.5 text-[11px] tabular-nums">{drafts().length}</span>
+              <span class="rounded-full bg-black/15 px-1.5 text-xs tabular-nums">{drafts().length}</span>
             </Show>
           </Button>
         </span>
@@ -946,13 +946,13 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       <Show when={files()} fallback={<div class="flex items-center gap-2 py-10 text-fg-3"><Spinner size={14} /> Fetching the changes…</div>}>
         {(l) => (
           <Show when={l().length} fallback={<div class="rounded-xl border border-dashed border-line px-4 py-5 text-center text-fg-3">No changes.</div>}>
-            <div class="mb-2 text-[12px] text-fg-3">Press a line number and drag to select lines. Let go to ask Claude about them or comment.</div>
+            <div class="mb-2 text-sm text-fg-3">Press a line number and drag to select lines. Let go to ask Claude about them or comment.</div>
             <div class="grid items-start gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
               <nav class="sticky top-2 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-line bg-panel py-1 xl:block">
                 <For each={l()}>
                   {(f, i) => (
                     <button
-                      class={cls("flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[12px] hover:bg-hover/60", current() === i() && "bg-hover")}
+                      class={cls("flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm hover:bg-hover/60", current() === i() && "bg-hover")}
                       onClick={() => goTo(i())}
                       title={f.name}
                     >

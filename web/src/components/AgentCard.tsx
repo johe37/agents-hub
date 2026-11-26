@@ -28,16 +28,16 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
     >
       <header class="flex items-center gap-2 px-4 pt-3.5">
         <StatusPill status={a().status} />
-        <span class="truncate text-[12.5px] font-medium text-fg-2">{a().name}</span>
+        <span class="truncate text-sm font-medium text-fg-2">{a().name}</span>
         <Show when={a().branch}>
-          <span class="inline-flex min-w-0 items-center gap-1 text-[12px] text-fg-3">
+          <span class="inline-flex min-w-0 items-center gap-1 text-sm text-fg-3">
             <Branch size={12} />
             <span class="truncate">{a().branch}</span>
           </span>
         </Show>
-        <span class="ml-auto shrink-0 text-[12px] tabular-nums text-fg-3">{age(a().timestamp, now())} ago</span>
+        <span class="ml-auto shrink-0 text-sm tabular-nums text-fg-3">{age(a().timestamp, now())} ago</span>
         <button
-          class="-mr-1.5 inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[12px] text-fg-2 hover:bg-hover hover:text-fg"
+          class="-mr-1.5 inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-sm text-fg-2 hover:bg-hover hover:text-fg"
           onClick={(e) => {
             e.stopPropagation();
             go(agentRoute(a()));
@@ -47,7 +47,7 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
         </button>
       </header>
       <div class="px-4 pb-1 pt-1.5">
-        <h3 class="text-[15px] font-semibold leading-snug tracking-[-0.01em] text-fg">{a().title}</h3>
+        <h3 class="text-lg font-semibold leading-snug tracking-[-0.01em] text-fg">{a().title}</h3>
         <Show when={a().message}>
           <p class="mt-0.5 flex items-center gap-1.5 text-fg-2">
             <Hand size={14} class="shrink-0 text-waiting" />
@@ -60,7 +60,7 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
         when={a().needs_permission}
         fallback={
           <Show when={a().reply}>
-            <div class="mx-4 mt-2 max-h-56 overflow-y-auto rounded-xl border border-line bg-bg px-3.5 py-2.5 text-[13px] text-fg-2">
+            <div class="mx-4 mt-2 max-h-56 overflow-y-auto rounded-xl border border-line bg-bg px-3.5 py-2.5 text-base text-fg-2">
               <Markdown text={a().reply!} />
             </div>
           </Show>
@@ -68,7 +68,7 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
       >
         <div class="mx-4 mt-2 rounded-xl border border-line bg-raised p-3">
           <Show when={a().pending_tool} fallback={<div class="text-fg-3">{a().tool ?? "Claude asks to use a tool. Open the agent to see the dialog."}</div>}>
-            <div class="mb-2 flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-fg-3">{a().pending_tool!.name}</div>
+            <div class="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-fg-3">{a().pending_tool!.name}</div>
             <ToolDetail name={a().pending_tool!.name} input={a().pending_tool!.input} compact />
           </Show>
         </div>

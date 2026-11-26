@@ -44,7 +44,7 @@ import { Button, IconButton } from "./ui";
 function Section(p: { title: string; children: JSX.Element }) {
   return (
     <section class="border-t border-line py-4 first:border-t-0 first:pt-0">
-      <h3 class="mb-3 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h3>
+      <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h3>
       <div class="flex flex-col gap-3">{p.children}</div>
     </section>
   );
@@ -54,9 +54,9 @@ function Row(p: { label: string; hint?: JSX.Element; children: JSX.Element }) {
   return (
     <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
       <div class="min-w-0">
-        <div class="text-[13px] text-fg">{p.label}</div>
+        <div class="text-base text-fg">{p.label}</div>
         <Show when={p.hint}>
-          <div class="text-[12px] text-fg-3">{p.hint}</div>
+          <div class="text-sm text-fg-3">{p.hint}</div>
         </Show>
       </div>
       <div class="flex shrink-0 items-center gap-2">{p.children}</div>
@@ -66,7 +66,7 @@ function Row(p: { label: string; hint?: JSX.Element; children: JSX.Element }) {
 
 function Segmented<T extends string | number>(p: { value: T; options: [T, string][]; onChange: (v: T) => void; label: string }) {
   return (
-    <div class="flex rounded-lg bg-hover p-0.5 text-[12px]" role="radiogroup" aria-label={p.label}>
+    <div class="flex rounded-lg bg-hover p-0.5 text-sm" role="radiogroup" aria-label={p.label}>
       <For each={p.options}>
         {([v, label]) => (
           <button
@@ -117,13 +117,13 @@ export function Settings() {
           onKeyDown={(e) => e.key === "Escape" && close()}
         >
           <div class="flex items-center px-6 pb-3 pt-5">
-            <h2 class="text-[16px] font-semibold text-fg">Settings</h2>
+            <h2 class="text-lg font-semibold text-fg">Settings</h2>
             <IconButton label="Close (Esc)" class="ml-auto" onClick={close} ref={(el) => queueMicrotask(() => el.focus())}>
               <X size={16} />
             </IconButton>
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
-            <p class="mb-4 text-[12px] text-fg-3">These settings apply to this browser. Where config.toml has the same setting, this browser's choice wins.</p>
+            <p class="mb-4 text-sm text-fg-3">These settings apply to this browser. Where config.toml has the same setting, this browser's choice wins.</p>
 
             <Section title="Appearance">
               <Row
@@ -134,7 +134,7 @@ export function Settings() {
                   </Show>
                 }
               >
-                <span class="text-[12.5px] text-fg-2">{theme().label}</span>
+                <span class="text-sm text-fg-2">{theme().label}</span>
                 <Show when={themeChoice()}>
                   <Button size="sm" variant="ghost" onClick={() => pickTheme(null)}>
                     Use config
@@ -185,7 +185,7 @@ export function Settings() {
             <Section title="Terminal">
               <Row label="Font size">
                 <select
-                  class="rounded-md border border-line bg-bg px-2 py-1 text-[12.5px] text-fg"
+                  class="rounded-md border border-line bg-bg px-2 py-1 text-sm text-fg"
                   value={termFontSize()}
                   onChange={(e) => setTermFontSize(Number(e.currentTarget.value))}
                 >
@@ -217,7 +217,7 @@ export function Settings() {
             </Section>
 
             <Section title="About">
-              <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12.5px]">
+              <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
                 <dt class="text-fg-3">Version</dt>
                 <dd class="font-mono text-fg-2">{state.version || "…"}</dd>
                 <Show when={state.commit}>

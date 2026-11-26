@@ -87,7 +87,7 @@ export function Agents() {
     <div class="mx-auto w-full max-w-4xl px-4 pb-24 pt-6 sm:px-8">
       <header class="mb-6 flex flex-wrap items-end gap-3">
         <div>
-          <h1 class="text-[22px] font-semibold tracking-[-0.02em] text-fg">Agents</h1>
+          <h1 class="text-xl font-semibold tracking-[-0.02em] text-fg">Agents</h1>
           <p class="mt-0.5 text-fg-2">
             <Show when={loaded()} fallback="Let's get ready to jugglr…">
               {summary()}
@@ -102,7 +102,7 @@ export function Agents() {
               onInput={(e) => setQ(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Escape" && (setQ(""), e.currentTarget.blur())}
               placeholder="Filter by task, repo or branch"
-              class="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-fg-3"
+              class="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-fg-3"
               data-filter
             />
           </label>
@@ -132,7 +132,7 @@ export function Agents() {
                   {(a, i) => <AgentCard agent={a} focused={focus() === i()} onFocus={() => setFocus(i())} replyRef={(el) => replies.set(a.key, el)} />}
                 </For>
               </div>
-              <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-fg-3">
+              <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-sm text-fg-3">
                 <span><Kbd>j</Kbd> <Kbd>k</Kbd> move</span>
                 <span><Kbd>a</Kbd> approve</span>
                 <span><Kbd>d</Kbd> deny</span>
@@ -174,7 +174,7 @@ function GroupTitle(p: { title: string; count: number; open?: boolean; onToggle?
     </>
   );
   return (
-    <h2 class="mb-2 px-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-fg-3">
+    <h2 class="mb-2 px-1 text-sm font-semibold uppercase tracking-[0.06em] text-fg-3">
       <Show when={p.onToggle} fallback={label}>
         <button class="inline-flex items-center gap-1 uppercase hover:text-fg-2" onClick={() => p.onToggle?.()} aria-expanded={p.open}>
           <Chevron size={12} class={cls("transition-transform", p.open && "rotate-90")} />
@@ -205,7 +205,7 @@ function AgentLine(p: { agent: Agent }) {
             <Badge title="Changed files in its checkout">{a().dirty} changed</Badge>
           </Show>
         </div>
-        <div class="mt-0.5 flex min-w-0 items-center gap-2 text-[12.5px] text-fg-3">
+        <div class="mt-0.5 flex min-w-0 items-center gap-2 text-sm text-fg-3">
           <span class="shrink-0 text-fg-2">{a().name}</span>
           <Show when={a().branch}>
             <span class="inline-flex min-w-0 max-w-[40%] items-center gap-1">
@@ -218,7 +218,7 @@ function AgentLine(p: { agent: Agent }) {
           </Show>
         </div>
       </button>
-      <div class="hidden shrink-0 items-center gap-3 text-[12px] tabular-nums text-fg-3 md:flex">
+      <div class="hidden shrink-0 items-center gap-3 text-sm tabular-nums text-fg-3 md:flex">
         <Show when={modelName(a().model)}>
           <span>{modelName(a().model)}</span>
         </Show>
@@ -250,9 +250,9 @@ export function AgentPage(p: { agentKey: string }) {
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <StatusPill status={ag().status} />
-                  <h1 class="truncate text-[16px] font-semibold tracking-[-0.01em] text-fg">{ag().title}</h1>
+                  <h1 class="truncate text-lg font-semibold tracking-[-0.01em] text-fg">{ag().title}</h1>
                 </div>
-                <div class="mt-0.5 flex items-center gap-2 text-[12.5px] text-fg-3">
+                <div class="mt-0.5 flex items-center gap-2 text-sm text-fg-3">
                   <span>{ag().short_path}</span>
                   <Show when={ag().branch}>
                     <span class="inline-flex items-center gap-1">

@@ -166,7 +166,7 @@ export function ReviewDiff(p: ReviewDiffProps) {
       {(i) => (
         <Show when={p.has(i)}>
           <tr>
-            <td colSpan={4} class="border-y border-line bg-bg px-3 py-2 font-sans text-[13px] leading-normal">
+            <td colSpan={4} class="border-y border-line bg-bg px-3 py-2 font-sans text-base leading-normal">
               {p.after(i)}
             </td>
           </tr>
@@ -176,7 +176,7 @@ export function ReviewDiff(p: ReviewDiffProps) {
   );
   const Hunk = (q: { i: number }) => (
     <tr class="bg-working-soft/60 text-fg-3">
-      <td colSpan={4} class="px-3 py-0.5 text-[11px]">
+      <td colSpan={4} class="px-3 py-0.5 text-xs">
         ⋯ {p.lines[q.i].text}
       </td>
     </tr>
@@ -184,7 +184,7 @@ export function ReviewDiff(p: ReviewDiffProps) {
   const rows = createMemo(() => (p.split ? pairRows(p.lines) : []));
 
   return (
-    <div class="overflow-x-auto font-mono text-[12px] leading-[1.6]" onMouseLeave={() => setHover(undefined)}>
+    <div class="overflow-x-auto font-mono text-sm leading-[1.6]" onMouseLeave={() => setHover(undefined)}>
       <table class={cls("w-full border-collapse", p.split && "table-fixed")}>
         <Show
           when={p.split}

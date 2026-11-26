@@ -44,7 +44,7 @@ function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; 
       href={href(p.to)}
       onClick={() => p.onNavigate?.()}
       class={cls(
-        "flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors",
+        "flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-base font-medium transition-colors",
         p.active ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
       )}
     >
@@ -53,7 +53,7 @@ function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; 
       <Show when={p.count}>
         <span
           class={cls(
-            "ml-auto min-w-5 rounded-full px-1.5 text-center text-[11px] font-semibold tabular-nums leading-5",
+            "ml-auto min-w-5 rounded-full px-1.5 text-center text-xs font-semibold tabular-nums leading-5",
             p.tone === "waiting" ? "bg-waiting text-waiting-fg" : "bg-hover text-fg-2",
           )}
         >
@@ -68,7 +68,7 @@ function Meter(p: { label: string; w: UsageWindow }) {
   const tone = () => (p.w.used >= 90 ? "var(--danger)" : p.w.used >= 70 ? "var(--waiting)" : "var(--fg-3)");
   return (
     <div class="flex flex-col gap-1" title={`${p.label}: ${p.w.used.toFixed(0)}% used, resets in ${until(p.w.resets_at, now())}`}>
-      <div class="flex items-baseline justify-between text-[11px] text-fg-3">
+      <div class="flex items-baseline justify-between text-xs text-fg-3">
         <span>{p.label}</span>
         <span class="tabular-nums">
           {p.w.used.toFixed(0)}% · {until(p.w.resets_at, now())}
@@ -115,11 +115,11 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       <div class="flex items-center gap-2.5 px-4 pb-2 pt-4">
         <button type="button" onClick={startJuggle} class="flex items-center gap-2.5 rounded-lg" aria-label="Juggle">
           <img src={juggle() ? `/logo-juggling.webp?${juggle()}` : "/logo.png"} alt="" class="size-10" />
-          <span class="text-[16px] font-semibold tracking-[-0.01em] text-fg">jugglr</span>
+          <span class="text-lg font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         </button>
         <span
           class={cls(
-            "ml-auto flex h-5 items-center gap-1.5 rounded-full text-[11px] font-medium",
+            "ml-auto flex h-5 items-center gap-1.5 rounded-full text-xs font-medium",
             connection() === "live" ? "px-1" : "px-2",
             connection() === "connecting" && "bg-waiting-soft text-waiting",
             connection() === "offline" && "bg-danger-soft text-danger",
@@ -152,7 +152,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       <div class="px-3 pb-2">
         <button
           onClick={() => openPalette()}
-          class="flex h-8 w-full items-center gap-2 rounded-lg border border-line bg-raised px-2.5 text-[13px] text-fg-3 shadow-soft transition-colors hover:border-line-strong hover:text-fg-2"
+          class="flex h-8 w-full items-center gap-2 rounded-lg border border-line bg-raised px-2.5 text-base text-fg-3 shadow-soft transition-colors hover:border-line-strong hover:text-fg-2"
         >
           <Search size={14} />
           Search or run…
@@ -187,13 +187,13 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       </nav>
 
       <div class="mt-4 flex items-center px-5 pb-1">
-        <span class="text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3">Workspaces</span>
+        <span class="text-xs font-semibold uppercase tracking-[0.07em] text-fg-3">Workspaces</span>
         <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={() => openPalette("open")} title="Open a workspace (O)">
           <Plus size={14} />
         </button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        <For each={workspaces()} fallback={<div class="px-2.5 py-2 text-[12.5px] text-fg-3">No workspaces open. Press O to open one.</div>}>
+        <For each={workspaces()} fallback={<div class="px-2.5 py-2 text-sm text-fg-3">No workspaces open. Press O to open one.</div>}>
           {(w) => {
             const agents = () => store.byWorkspace().get(w.name) ?? [];
             const waiting = () => agents().filter((a) => a.status === "waiting").length;
@@ -230,9 +230,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                   >
                     <StatusDot status={worst(agents())} size={7} />
                     <div class="min-w-0 flex-1">
-                      <div class={cls("truncate text-[13px] font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
+                      <div class={cls("truncate text-base font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
                       <Show when={w.git?.branch}>
-                        <div class="truncate text-[11.5px] text-fg-3">
+                        <div class="truncate text-xs text-fg-3">
                           {w.git!.branch}
                           <Show when={w.git!.dirty}>
                             <span class="text-waiting"> · {w.git!.dirty}</span>
@@ -241,7 +241,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                       </Show>
                     </div>
                     <Show when={waiting()}>
-                      <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-waiting-fg group-hover:hidden group-focus-within:hidden">{waiting()}</span>
+                      <span class="rounded-full bg-waiting px-1.5 text-xs font-semibold leading-[18px] text-waiting-fg group-hover:hidden group-focus-within:hidden">{waiting()}</span>
                     </Show>
                   </a>
                   <button
@@ -265,7 +265,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                         return (
                           <div
                             class={cls(
-                              "group/win flex h-7 items-center rounded-md pr-1 text-[12.5px] transition-colors",
+                              "group/win flex h-7 items-center rounded-md pr-1 text-sm transition-colors",
                               on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
                             )}
                           >
@@ -314,7 +314,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
 
         <Show when={closed().length}>
           <button
-            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
+            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
             onClick={toggleClosed}
             aria-expanded={showClosed()}
           >
@@ -338,8 +338,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                       <Spinner size={13} />
                     </Show>
                     <div class="min-w-0 flex-1">
-                      <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{c.name}</div>
-                      <div class="truncate text-[11.5px] text-fg-3">
+                      <div class="truncate text-base text-fg-2 group-hover:text-fg">{c.name}</div>
+                      <div class="truncate text-xs text-fg-3">
                         {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · {age(c.closed_at, now())} ago
                       </div>
                     </div>
@@ -359,12 +359,12 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         </Show>
 
         <div class="mt-4 flex items-center px-2 pb-1">
-          <span class="text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3">Chats</span>
+          <span class="text-xs font-semibold uppercase tracking-[0.07em] text-fg-3">Chats</span>
           <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={newChat} title="New chat (⇧C)">
             <Plus size={14} />
           </button>
         </div>
-        <For each={chats()} fallback={<div class="px-2.5 py-1.5 text-[12.5px] text-fg-3">No chats. Press ⇧C to start one.</div>}>
+        <For each={chats()} fallback={<div class="px-2.5 py-1.5 text-sm text-fg-3">No chats. Press ⇧C to start one.</div>}>
           {({ ws, win }) => {
             const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
             const on = () => {
@@ -385,9 +385,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                 >
                   <Chat size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
                   <div class="min-w-0 flex-1">
-                    <div class={cls("truncate text-[13px]", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
+                    <div class={cls("truncate text-base", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
                     <Show when={a()}>
-                      <div class="truncate text-[11.5px] text-fg-3">{age(a()!.timestamp, now())} ago</div>
+                      <div class="truncate text-xs text-fg-3">{age(a()!.timestamp, now())} ago</div>
                     </Show>
                   </div>
                   <Show when={a()}>
@@ -412,7 +412,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
 
         <Show when={closedChats().length}>
           <button
-            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
+            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
             onClick={toggleClosedChats}
             aria-expanded={showClosedChats()}
           >
@@ -432,8 +432,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                     <Spinner size={13} />
                   </Show>
                   <div class="min-w-0 flex-1">
-                    <div class="truncate text-[13px] text-fg-2 group-hover:text-fg">{a.title}</div>
-                    <div class="truncate text-[11.5px] text-fg-3">{age(a.timestamp, now())} ago</div>
+                    <div class="truncate text-base text-fg-2 group-hover:text-fg">{a.title}</div>
+                    <div class="truncate text-xs text-fg-3">{age(a.timestamp, now())} ago</div>
                   </div>
                 </button>
               )}

@@ -66,9 +66,9 @@ function Thread(p: { notes: Note[]; form: Form | null; setText: (t: string) => v
     <div class="flex flex-col gap-2">
       <For each={p.notes}>
         {(n) => (
-          <div class="flex items-start gap-2 rounded-lg border border-line bg-panel px-3 py-2 font-sans text-[13px]">
+          <div class="flex items-start gap-2 rounded-lg border border-line bg-panel px-3 py-2 font-sans text-base">
             <div class="min-w-0 flex-1">
-              <div class="text-[11.5px] text-fg-3">{n.where}</div>
+              <div class="text-xs text-fg-3">{n.where}</div>
               <div class="whitespace-pre-wrap text-fg">{n.text}</div>
             </div>
             <IconButton label="Delete comment" onClick={() => p.onDelete(n.id)}>
@@ -80,7 +80,7 @@ function Thread(p: { notes: Note[]; form: Form | null; setText: (t: string) => v
       <Show when={p.form}>
         <div class="flex flex-col gap-2">
           <textarea
-            class="min-h-[4.5rem] w-full resize-y rounded-lg border border-line-strong bg-raised px-3 py-2 font-sans text-[13px] text-fg outline-none focus:border-accent/60"
+            class="min-h-[4.5rem] w-full resize-y rounded-lg border border-line-strong bg-raised px-3 py-2 font-sans text-base text-fg outline-none focus:border-accent/60"
             placeholder="Comment for Claude…  (Ctrl+Enter to add)"
             value={p.form?.text ?? ""}
             ref={(el) => queueMicrotask(() => el.focus())}
@@ -117,8 +117,8 @@ function FileSection(p: { f: DiffFile; notes: Note[]; form: Form | null; open: (
   return (
     <section class="overflow-hidden rounded-xl border border-line bg-panel">
       <header class="sticky top-0 z-[1] flex items-center gap-2 border-b border-line bg-raised/95 px-3 py-2 backdrop-blur">
-        <span class="truncate font-mono text-[12px] text-fg">{p.f.name}</span>
-        <span class="ml-auto font-mono text-[11.5px] tabular-nums">
+        <span class="truncate font-mono text-sm text-fg">{p.f.name}</span>
+        <span class="ml-auto font-mono text-xs tabular-nums">
           <span class="text-add">+{p.f.added}</span> <span class="text-del">−{p.f.removed}</span>
         </span>
         <button class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-accent" onClick={() => p.open(FILE, FILE)} title="Comment on this file" aria-label="Comment on this file">
@@ -211,8 +211,8 @@ export function ChangesReview() {
           <div class={cls("flex h-full w-full flex-col border-l border-line-strong bg-bg shadow-float animate-slide-up", split() ? "max-w-7xl" : "max-w-4xl")}>
             <header class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
               <FileDiff size={16} class="text-fg-3" />
-              <h2 class="min-w-0 flex-1 truncate font-mono text-[13px] text-fg">{title()}</h2>
-              <div class="flex rounded-lg bg-hover p-0.5 text-[12px]" role="group" title="Layout">
+              <h2 class="min-w-0 flex-1 truncate font-mono text-base text-fg">{title()}</h2>
+              <div class="flex rounded-lg bg-hover p-0.5 text-sm" role="group" title="Layout">
                 <button class={cls("rounded-md px-2 py-1", !split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => split() && toggleSplit()}>
                   Unified
                 </button>
@@ -233,7 +233,7 @@ export function ChangesReview() {
               <Show when={!diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
                 <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
                   <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
-                    <p class="mb-3 text-[12px] text-fg-3">Click or drag line numbers to comment. Comments collect until you send them as one review to {d().workspace}'s Claude.</p>
+                    <p class="mb-3 text-sm text-fg-3">Click or drag line numbers to comment. Comments collect until you send them as one review to {d().workspace}'s Claude.</p>
                     <div class="flex flex-col gap-4">
                       <For each={files()}>
                         {(f) => (

@@ -35,7 +35,7 @@ export function StatusDot(p: { status: Status | null; size?: number; class?: str
 export function StatusPill(p: { status: Status; class?: string }) {
   return (
     <span
-      class={cls("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-medium", p.class)}
+      class={cls("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", p.class)}
       style={{ background: STATUS[p.status].soft, color: STATUS[p.status].color }}
     >
       <StatusDot status={p.status} size={6} />
@@ -60,7 +60,7 @@ export function Button(props: BtnProps) {
       disabled={p.disabled || p.loading}
       class={cls(
         "relative inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium transition-[background,color,box-shadow,transform] duration-100 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50",
-        (p.size ?? "md") === "md" ? "h-8 px-3 text-[13px]" : "h-7 px-2.5 text-[12.5px]",
+        (p.size ?? "md") === "md" ? "h-8 px-3 text-base" : "h-7 px-2.5 text-sm",
         v() === "primary" && "bg-accent text-accent-fg shadow-soft hover:brightness-110",
         v() === "approve" && "bg-idle text-white shadow-soft hover:brightness-110 dark:text-[#06140c]",
         v() === "secondary" && "border border-line-strong bg-raised text-fg hover:bg-hover",
@@ -121,7 +121,7 @@ export function Badge(p: { children: JSX.Element; tone?: "neutral" | "accent" | 
     <span
       title={p.title}
       class={cls(
-        "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium tabular-nums",
+        "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-xs font-medium tabular-nums",
         tone() === "neutral" && "bg-hover text-fg-2",
         tone() === "accent" && "bg-accent-soft text-accent",
         tone() === "waiting" && "bg-waiting-soft text-waiting",
@@ -141,7 +141,7 @@ export function Empty(p: { icon: JSX.Element; image?: string; title: string; chi
       <Show when={p.image} fallback={<div class="mb-4 grid size-12 place-items-center rounded-2xl border border-line bg-panel text-fg-3 shadow-soft">{p.icon}</div>}>
         <img src={p.image} alt="" class="mb-3 size-24" />
       </Show>
-      <div class="text-[15px] font-semibold text-fg">{p.title}</div>
+      <div class="text-lg font-semibold text-fg">{p.title}</div>
       <div class="mt-1 max-w-sm text-fg-2">{p.children}</div>
     </div>
   );
@@ -240,7 +240,7 @@ export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuIte
                   <button
                     role="menuitem"
                     class={cls(
-                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-hover focus:bg-hover",
+                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-base outline-none hover:bg-hover focus:bg-hover",
                       it.danger ? "text-danger" : "text-fg",
                     )}
                     onClick={() => {

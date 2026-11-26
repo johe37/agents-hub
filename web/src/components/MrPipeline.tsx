@@ -28,7 +28,7 @@ export function JobMark(p: { status: string }) {
         <X size={13} stroke-width={2.5} class="text-danger" />
       </Match>
       <Match when={p.status === "warning"}>
-        <span class="text-[12px] font-bold leading-none text-waiting">!</span>
+        <span class="text-sm font-bold leading-none text-waiting">!</span>
       </Match>
       <Match when={p.status === "running" || p.status === "pending"}>
         <Spinner size={11} />
@@ -70,11 +70,11 @@ const retryJob = (mr: Mr, j: Job) => act({ type: "retry_job", mr: mr.key, job: j
 function JobPill(p: { mr: Mr; job: Job; selected: boolean; onPick: () => void }) {
   const j = () => p.job;
   const broke = () => j().status === "failed" || j().status === "warning";
-  const small = "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11.5px] font-medium hover:bg-hover disabled:opacity-50";
+  const small = "inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium hover:bg-hover disabled:opacity-50";
   return (
     <div
       class={cls(
-        "group rounded-lg border text-[12.5px] transition-colors",
+        "group rounded-lg border text-sm transition-colors",
         j().status === "failed" ? "border-danger/50 bg-danger-soft" : j().status === "warning" ? "border-waiting/40 bg-waiting-soft" : live(j().status) ? "border-working/40 bg-working-soft" : done(j().status) && j().status !== "canceled" ? "border-line bg-panel" : "border-dashed border-line",
         p.selected && "ring-2 ring-accent",
       )}
@@ -84,7 +84,7 @@ function JobPill(p: { mr: Mr; job: Job; selected: boolean; onPick: () => void })
           <JobMark status={j().status} />
         </span>
         <span class={cls("truncate", j().status === "failed" ? "font-medium text-danger" : done(j().status) && j().status !== "canceled" ? "text-fg" : "text-fg-3")}>{j().name}</span>
-        <span class="ml-auto shrink-0 tabular-nums text-[11.5px] text-fg-3">{duration(j().duration)}</span>
+        <span class="ml-auto shrink-0 tabular-nums text-xs text-fg-3">{duration(j().duration)}</span>
       </button>
       <Show when={broke()}>
         <div class="flex flex-wrap items-center gap-0.5 border-t border-current/10 px-1.5 py-1 text-fg-2">
@@ -118,7 +118,7 @@ function Stages(p: { mr: Mr; jobs: Job[]; selected: number | null; onPick: (j: J
                   <div class="mt-[15px] h-px w-5 shrink-0 bg-line-strong" />
                 </Show>
                 <div class="w-52 shrink-0">
-                  <div class="mb-1.5 flex items-center gap-1.5 px-1 text-[11.5px]">
+                  <div class="mb-1.5 flex items-center gap-1.5 px-1 text-xs">
                     <span class="grid w-3.5 place-items-center">
                       <JobMark status={stageStatus(jobs)} />
                     </span>
@@ -145,7 +145,7 @@ function Summary(p: { status: string | null; jobs: Job[]; duration: number | nul
   const running = () => byStage(p.jobs).find(([, js]) => js.some((j) => live(j.status)))?.[0];
   const finished = () => p.jobs.filter((j) => done(j.status)).length;
   return (
-    <div class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+    <div class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-base">
       <Switch fallback={<span class="text-fg-2">{p.status ?? "No status"}</span>}>
         <Match when={failed().length}>
           <span class="font-medium text-danger">
@@ -153,7 +153,7 @@ function Summary(p: { status: string | null; jobs: Job[]; duration: number | nul
           </span>
           <For each={failed()}>
             {(j) => (
-              <button class="rounded-md bg-danger-soft px-1.5 py-0.5 text-[12px] font-medium text-danger hover:underline" onClick={() => p.onPick(j)} title="Show the log">
+              <button class="rounded-md bg-danger-soft px-1.5 py-0.5 text-sm font-medium text-danger hover:underline" onClick={() => p.onPick(j)} title="Show the log">
                 {j.name}
               </button>
             )}
@@ -204,7 +204,7 @@ function Log(p: { mr: Mr; job: Job; onClose: () => void }) {
   createEffect(on(() => p.job.id, () => requestAnimationFrame(() => box?.scrollIntoView({ behavior: "smooth", block: "nearest" }))));
   return (
     <section ref={box} class="mt-3 scroll-mb-4 overflow-hidden rounded-xl border border-line bg-panel">
-      <header class="flex flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-2 text-[12.5px]">
+      <header class="flex flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-2 text-sm">
         <span class="grid w-3.5 place-items-center">
           <JobMark status={p.job.status} />
         </span>
@@ -237,7 +237,7 @@ function Log(p: { mr: Mr; job: Job; onClose: () => void }) {
       </header>
       <Switch>
         <Match when={log.error && !current()}>
-          <div class="px-4 py-3 text-[13px] text-danger">Could not fetch the log: {(log.error as Error).message}</div>
+          <div class="px-4 py-3 text-base text-danger">Could not fetch the log: {(log.error as Error).message}</div>
         </Match>
         <Match when={!current()}>
           <div class="flex items-center gap-2 px-4 py-6 text-fg-3">
@@ -246,12 +246,12 @@ function Log(p: { mr: Mr; job: Job; onClose: () => void }) {
         </Match>
         <Match when={current()}>
           <Show when={current()!.truncated}>
-            <div class="border-b border-line px-4 py-1.5 text-[12px] text-fg-3">Only the end of the log shows here. Open the job for all of it.</div>
+            <div class="border-b border-line px-4 py-1.5 text-sm text-fg-3">Only the end of the log shows here. Open the job for all of it.</div>
           </Show>
           <pre
             ref={pre}
             onScroll={(e) => (stuck = e.currentTarget.scrollHeight - e.currentTarget.scrollTop - e.currentTarget.clientHeight < 40)}
-            class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words bg-bg px-4 py-3 font-mono text-[12px] leading-[1.55] text-fg-2"
+            class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words bg-bg px-4 py-3 font-mono text-sm leading-[1.55] text-fg-2"
             innerHTML={html() || "The log is empty."}
           />
         </Match>
@@ -338,7 +338,7 @@ export function Pipeline(p: { mr: Mr }) {
           </div>
         }
       >
-        <div ref={top} class="mb-3 flex scroll-mt-4 flex-wrap items-center gap-2 text-[12.5px]">
+        <div ref={top} class="mb-3 flex scroll-mt-4 flex-wrap items-center gap-2 text-sm">
           <Show when={status()}>
             <Badge tone={status() === "success" ? "add" : status() === "failed" ? "danger" : "waiting"}>{status()!}</Badge>
           </Show>
@@ -370,7 +370,7 @@ export function Pipeline(p: { mr: Mr }) {
         </div>
         <Switch>
           <Match when={older() && oldJobs.error && !jobs()}>
-            <div class="px-1 py-3 text-[13px] text-danger">Could not fetch the jobs: {(oldJobs.error as Error).message}</div>
+            <div class="px-1 py-3 text-base text-danger">Could not fetch the jobs: {(oldJobs.error as Error).message}</div>
           </Match>
           <Match when={!jobs()}>
             <div class="flex items-center gap-2 px-1 py-4 text-fg-3">
@@ -390,7 +390,7 @@ export function Pipeline(p: { mr: Mr }) {
       </Show>
 
       <section class="mt-8">
-        <h3 class="mb-2 flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-fg-3">
+        <h3 class="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-fg-3">
           Earlier pipelines
           <Show when={list.loading}>
             <Spinner size={11} />
@@ -398,7 +398,7 @@ export function Pipeline(p: { mr: Mr }) {
         </h3>
         <Switch>
           <Match when={list.error && !list.latest}>
-            <div class="text-[13px] text-danger">Could not fetch the pipelines: {(list.error as Error).message}</div>
+            <div class="text-base text-danger">Could not fetch the pipelines: {(list.error as Error).message}</div>
           </Match>
           <Match when={list.latest && !earlier().length}>
             <div class="rounded-xl border border-dashed border-line px-4 py-4 text-center text-fg-3">No earlier pipelines.</div>
@@ -410,7 +410,7 @@ export function Pipeline(p: { mr: Mr }) {
                   <button
                     onClick={() => pick(x.id)}
                     class={cls(
-                      "flex w-full flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-left text-[12.5px] last:border-b-0 hover:bg-hover",
+                      "flex w-full flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-left text-sm last:border-b-0 hover:bg-hover",
                       x.id === pipeId() && "bg-hover",
                     )}
                     title="Show its jobs"
@@ -419,7 +419,7 @@ export function Pipeline(p: { mr: Mr }) {
                       <JobMark status={x.status} />
                     </span>
                     <span class="w-16 shrink-0 font-medium tabular-nums text-fg">#{x.id}</span>
-                    <span class="shrink-0 font-mono text-[11.5px] text-fg-3">{x.sha.slice(0, 8)}</span>
+                    <span class="shrink-0 font-mono text-xs text-fg-3">{x.sha.slice(0, 8)}</span>
                     <span class="min-w-0 flex-1 truncate text-fg-2">{x.title}</span>
                     <StageDots stages={x.stages} />
                     <span class="w-14 shrink-0 text-right tabular-nums text-fg-3">{duration(x.duration)}</span>

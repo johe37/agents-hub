@@ -11,7 +11,7 @@ export function Toasts() {
         {(t) => (
           <div
             class={cls(
-              "pointer-events-auto flex items-start gap-2.5 rounded-xl border bg-raised px-3.5 py-2.5 text-[13px] shadow-float animate-slide-up",
+              "pointer-events-auto flex items-start gap-2.5 rounded-xl border bg-raised px-3.5 py-2.5 text-base shadow-float animate-slide-up",
               t.error ? "border-danger/40" : "border-line-strong",
             )}
           >
@@ -45,7 +45,7 @@ export function Confirm() {
               if (e.key === "Escape") close();
             }}
           >
-            <h2 class="text-[15px] font-semibold text-fg">{c().title}</h2>
+            <h2 class="text-lg font-semibold text-fg">{c().title}</h2>
             <Show when={c().body}>
               <p class="mt-1.5 text-fg-2">{c().body}</p>
             </Show>
@@ -141,7 +141,7 @@ export function Help() {
       <div class="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4 backdrop-blur-[2px] animate-fade-in" onMouseDown={(e) => e.target === e.currentTarget && setHelpOpen(false)}>
         <div class="w-full max-w-2xl rounded-2xl border border-line-strong bg-raised p-6 shadow-float animate-pop-in" onKeyDown={(e) => e.key === "Escape" && setHelpOpen(false)}>
           <div class="mb-4 flex items-center">
-            <h2 class="text-[16px] font-semibold text-fg">Keyboard shortcuts</h2>
+            <h2 class="text-lg font-semibold text-fg">Keyboard shortcuts</h2>
             <IconButton label="Close" class="ml-auto" onClick={() => setHelpOpen(false)} ref={(el) => queueMicrotask(() => el.focus())}>
               <X size={16} />
             </IconButton>
@@ -150,11 +150,11 @@ export function Help() {
             <For each={KEYS}>
               {([group, keys]) => (
                 <section>
-                  <h3 class="mb-2 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-fg-3">{group}</h3>
+                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{group}</h3>
                   <div class="flex flex-col gap-2">
                     <For each={keys}>
                       {([k, label]) => (
-                        <div class="flex items-center justify-between gap-3 text-[12.5px]">
+                        <div class="flex items-center justify-between gap-3 text-sm">
                           <span class="text-fg-2">{label}</span>
                           <span class="flex shrink-0 gap-0.5">
                             <For each={k.split(" ")}>{(part) => (part === "/" ? <span class="px-0.5 text-fg-3">/</span> : <Kbd>{part}</Kbd>)}</For>

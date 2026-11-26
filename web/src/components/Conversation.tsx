@@ -17,7 +17,7 @@ function ToolRow(p: { item: Extract<ConversationItem, { kind: "tool" }> }) {
   return (
     <div class="group">
       <button
-        class="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px] transition-colors hover:bg-hover"
+        class="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-left text-sm transition-colors hover:bg-hover"
         onClick={() => setOpen((o) => !o)}
       >
         <span class={cls("grid size-5 shrink-0 place-items-center rounded-md", state() === "error" ? "bg-danger-soft text-danger" : "bg-hover text-fg-3")}>
@@ -31,14 +31,14 @@ function ToolRow(p: { item: Extract<ConversationItem, { kind: "tool" }> }) {
           </Switch>
         </span>
         <span class="shrink-0 font-medium text-fg-2">{p.item.name}</span>
-        <span class="min-w-0 truncate font-mono text-[11.5px] text-fg-3">{line().split("\n")[0]}</span>
+        <span class="min-w-0 truncate font-mono text-xs text-fg-3">{line().split("\n")[0]}</span>
         <ChevronDown size={13} class={cls("ml-auto shrink-0 text-fg-3 opacity-0 transition-[opacity,transform] group-hover:opacity-100", open() && "rotate-180 opacity-100")} />
       </button>
       <Show when={open()}>
         <div class="mb-2 ml-9 mt-1 flex flex-col gap-2 animate-fade-in">
           <ToolDetail name={p.item.name} input={p.item.input} compact />
           <Show when={p.item.result?.text}>
-            <pre class={cls("max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border px-3 py-2 font-mono text-[11.5px] leading-relaxed", p.item.result!.error ? "border-danger/30 bg-danger-soft text-danger" : "border-line bg-bg text-fg-2")}>
+            <pre class={cls("max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed", p.item.result!.error ? "border-danger/30 bg-danger-soft text-danger" : "border-line bg-bg text-fg-2")}>
               {p.item.result!.text}
             </pre>
           </Show>
@@ -62,7 +62,7 @@ function ToolGroup(p: { items: Extract<ConversationItem, { kind: "tool" }>[] }) 
   return (
     <div class="-my-1 flex flex-col">
       <Show when={hidden() > 0}>
-        <button class="flex items-center gap-2 rounded-lg px-2 py-1 text-left text-[12.5px] text-fg-3 hover:bg-hover hover:text-fg-2" onClick={() => setOpen(true)}>
+        <button class="flex items-center gap-2 rounded-lg px-2 py-1 text-left text-sm text-fg-3 hover:bg-hover hover:text-fg-2" onClick={() => setOpen(true)}>
           <span class="grid size-5 place-items-center rounded-md bg-hover">
             <Wrench size={11} />
           </span>
@@ -129,7 +129,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
         <div class="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-8">
           <Show when={conv.latest} fallback={<div class="flex flex-col gap-3">{[0, 1, 2].map(() => <div class="skeleton h-16" />)}</div>}>
             <Show when={conv.latest!.truncated}>
-              <div class="text-center text-[12px] text-fg-3">Earlier messages are in the full transcript</div>
+              <div class="text-center text-sm text-fg-3">Earlier messages are in the full transcript</div>
             </Show>
             <Show when={!conv.latest!.items.length}>
               <div class="py-16 text-center text-fg-3">No messages yet. Write the first prompt below.</div>
@@ -150,7 +150,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   <Match when={g.kind === "msg" && g.item.kind === "assistant" && g.item}>
                     {(m) => (
                       <div>
-                        <Markdown text={m().text} class="text-[14px] leading-relaxed text-fg animate-fade-in" />
+                        <Markdown text={m().text} class="text-base leading-relaxed text-fg animate-fade-in" />
                         {p.action?.(m().text)}
                       </div>
                     )}
@@ -159,7 +159,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
               )}
             </For>
             <Show when={a().status === "working"}>
-              <div class="flex items-center gap-2 text-[12.5px] text-working">
+              <div class="flex items-center gap-2 text-sm text-working">
                 <StatusDot status="working" size={7} />
                 <span class="truncate">{a().tool ?? "Thinking…"}</span>
               </div>
@@ -169,7 +169,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
       </div>
       <Show when={!stuck()}>
         <button
-          class="absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full border border-line-strong bg-raised px-3 py-1 text-[12px] text-fg-2 shadow-float hover:text-fg animate-pop-in"
+          class="absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full border border-line-strong bg-raised px-3 py-1 text-sm text-fg-2 shadow-float hover:text-fg animate-pop-in"
           onClick={() => toBottom(true)}
         >
           ↓ Latest
@@ -187,7 +187,7 @@ export function Composer(p: { agent: Agent }) {
       <div class="mx-auto w-full max-w-3xl px-4 pb-4 pt-3 sm:px-8">
         <Show when={a().needs_permission}>
           <div class="mb-3 rounded-xl border border-waiting/40 bg-waiting-soft/50 p-3 animate-pop-in">
-            <div class="mb-2 text-[12.5px] font-medium text-waiting">{a().message ?? "Claude asks for permission"}</div>
+            <div class="mb-2 text-sm font-medium text-waiting">{a().message ?? "Claude asks for permission"}</div>
             <Show when={a().pending_tool}>
               <div class="mb-3">
                 <ToolDetail name={a().pending_tool!.name} input={a().pending_tool!.input} compact />

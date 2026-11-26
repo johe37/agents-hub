@@ -181,13 +181,13 @@ export function App() {
             <Menu size={17} />
           </IconButton>
           <img src="/logo.png" alt="" class="size-5" />
-          <span class="text-[13px] font-semibold">jugglr</span>
+          <span class="text-base font-semibold">jugglr</span>
           <Show when={store.waiting().length}>
-            <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-[11px] font-semibold leading-5 text-waiting-fg">{store.waiting().length} waiting</span>
+            <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-xs font-semibold leading-5 text-waiting-fg">{store.waiting().length} waiting</span>
           </Show>
         </div>
         <Show when={connection() === "offline"}>
-          <div class="border-b border-danger/30 bg-danger-soft px-4 py-1.5 text-center text-[12.5px] text-danger animate-fade-in">
+          <div class="border-b border-danger/30 bg-danger-soft px-4 py-1.5 text-center text-sm text-danger animate-fade-in">
             Lost the connection to jugglr. Reconnecting… Is <code class="font-mono">jugglr web</code> still running?
           </div>
         </Show>
