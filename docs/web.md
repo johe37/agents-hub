@@ -51,10 +51,12 @@ Safari cut them to a rounded square.
   Claude finishes, the browser reads the answer aloud and listens again. While Claude asks for
   permission, say "yes" or "no". Click the microphone again to stop. Needs Chrome or Edge: it uses
   the browser's own speech recognition, which sends your voice to Google or Microsoft.
-- **GitLab** (`g l`). Three tabs: **To review** (new, in progress, approved), **My MRs** (needs
-  you, waiting, ready to merge, drafts) and **Issues**; `1`, `2` and `3` switch, `/` filters,
-  and a click on a group title folds it. The count in the menu is what needs you: new reviews,
-  and your MRs with a failed pipeline or open threads. Each item has a detail pane: the
+- **GitLab** (`g l`). Four tabs: **To-Do** (your GitLab To-Do list: mentions, reviews, failed,
+  assigned, other), **To review** (new, in progress, approved), **My MRs** (needs you, waiting,
+  ready to merge, drafts) and **Issues**; `1` to `4` switch, `/` filters, and a click on a group
+  title folds it. The count in the menu is the number of pending To-Dos. A To-Do shows who did
+  what above its MR or issue; `x` or **Done** marks it done in GitLab, and **Mark all done**
+  (click twice) empties the list. Each item has a detail pane: the
   description, the open review threads and the MR's pipelines. Reply in a thread or resolve
   it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
   to edit before you send it. `c` checks out a review and opens a new agent with the review

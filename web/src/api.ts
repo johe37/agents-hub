@@ -128,6 +128,23 @@ export interface Issue {
   prompt: string;
 }
 
+export interface Todo {
+  key: string;
+  id: number;
+  /** mentioned, directly_addressed, review_requested, assigned, build_failed, ... */
+  action: string;
+  target_type: string;
+  /** The key of the MR or issue it is about. */
+  target: string | null;
+  iid: number | null;
+  project: string;
+  title: string;
+  url: string;
+  author: string;
+  body: string;
+  created: number;
+}
+
 export type WindowKind = "agent" | "shell" | "editor" | "process";
 
 export interface Win {
@@ -215,6 +232,7 @@ export interface State {
     authored: Mr[];
     assigned: Mr[];
     issues: Issue[];
+    todos: Todo[];
   };
   closed: ClosedWorkspace[];
   chat_dir: string;
@@ -257,11 +275,12 @@ export type Action =
   | { type: "rename_workspace"; workspace: string; name: string }
   | { type: "rescan" }
   | { type: "checkout"; mr: string; kind?: "claude" | "shell" | "nvim" }
-  | { type: "find_clone"; project: string }
+  | { type: "issue_checkout"; issue: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
   | { type: "commit"; workspace: string; message: string }
   | { type: "gitlab_refresh" }
+  | { type: "todo_done"; id?: number }
   | { type: "mr_note"; mr: string; body: string; position?: Record<string, unknown>; draft: boolean }
   | { type: "draft_edit"; mr: string; id: number; body: string }
   | { type: "draft_delete"; mr: string; id: number }

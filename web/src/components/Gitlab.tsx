@@ -1,9 +1,10 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
-import type { Issue, Mr, Thread } from "../api";
-import { allMrs, entries, goWorkspace, isReview, openMr, pipelineTone, startIssue, type Entry, type Kind, type Tab } from "../gitlab";
+import type { JSX } from "solid-js";
+import type { Issue, Mr, Thread, Todo } from "../api";
+import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Kind, type Tab } from "../gitlab";
 import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
-import { Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
+import { Bell, Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
@@ -77,6 +78,100 @@ function IssueRow(p: { issue: Issue }) {
           <span class="ml-auto shrink-0 tabular-nums">{age(i().updated, now())}</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+const TODO_ACTIONS: Record<string, string> = {
+  mentioned: "mentioned you",
+  directly_addressed: "wrote to you",
+  review_requested: "asked for your review",
+  approval_required: "asked for your approval",
+  assigned: "assigned you",
+  marked: "added a to-do",
+  build_failed: "· pipeline failed",
+  unmergeable: "· can't be merged",
+  merge_train_removed: "· removed from the merge train",
+  member_access_requested: "asked for access",
+};
+
+const todoWhat = (t: Todo) => `${t.author} ${TODO_ACTIONS[t.action] ?? t.action.replace(/_/g, " ")}`;
+const todoRef = (t: Todo) => (t.iid == null ? "" : t.target_type === "MergeRequest" ? `!${t.iid}` : `#${t.iid}`);
+
+function TodoMark(p: { todo: Todo }) {
+  const tone = () => (isMention(p.todo) ? "text-waiting" : p.todo.action === "build_failed" || p.todo.action === "unmergeable" ? "text-danger" : "text-fg-3");
+  return (
+    <span class={cls("mt-[3px] grid size-4 shrink-0 place-items-center", tone())}>
+      <Switch fallback={<Bell size={13} />}>
+        <Match when={isMention(p.todo)}>
+          <Chat size={13} />
+        </Match>
+        <Match when={p.todo.target_type === "MergeRequest" && p.todo.action !== "build_failed"}>
+          <Git size={13} />
+        </Match>
+        <Match when={p.todo.action === "build_failed"}>
+          <Pipeline size={13} />
+        </Match>
+      </Switch>
+    </span>
+  );
+}
+
+function TodoRow(p: { todo: Todo }) {
+  const t = () => p.todo;
+  return (
+    <div class="flex gap-2.5">
+      <TodoMark todo={t()} />
+      <div class="min-w-0 flex-1">
+        <div class="line-clamp-2 break-words text-fg">
+          <span class="text-fg-3">{todoRef(t())}</span> {t().title}
+        </div>
+        <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
+          <span class="truncate">
+            {todoWhat(t())} · {t().project.split("/").pop()}
+          </span>
+          <span class="ml-auto shrink-0 tabular-nums">{age(t().created, now())}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TodoBanner(p: { todo: Todo; onDone: () => void }) {
+  const t = () => p.todo;
+  // GitLab repeats the title as the body for actions without a comment.
+  const comment = () => (t().body.trim() && t().body.trim() !== t().title.trim() ? t().body : "");
+  return (
+    <div class={cls("mb-5 rounded-xl border px-4 py-3", isMention(t()) ? "border-waiting/40 bg-waiting-soft" : "border-line bg-panel")}>
+      <div class="flex flex-wrap items-center gap-2 text-[13px]">
+        <TodoMark todo={t()} />
+        <span class="font-medium text-fg">{todoWhat(t())}</span>
+        <span class="tabular-nums text-fg-3">{age(t().created, now())}</span>
+        <div class="ml-auto flex items-center gap-2">
+          <a href={t().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
+            Open <External size={12} />
+          </a>
+          <Button size="sm" variant="primary" kbd="X" loading={isBusy(`todo:${t().id}`)} onClick={p.onDone} title="Mark the to-do done in GitLab">
+            <Check size={13} /> Done
+          </Button>
+        </div>
+      </div>
+      <Show when={comment()}>
+        <Markdown text={comment()} class="mt-2 text-[13.5px]" />
+      </Show>
+    </div>
+  );
+}
+
+function TodoDetail(p: { todo: Todo; onDone: () => void }) {
+  const t = () => p.todo;
+  return (
+    <div class="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-8">
+      <div class="text-[12.5px] text-fg-3">{t().project}</div>
+      <h1 class="mb-4 mt-1 text-[20px] font-semibold leading-snug tracking-[-0.02em] text-fg">
+        <span class="text-fg-3">{todoRef(t())}</span> {t().title}
+      </h1>
+      <TodoBanner todo={t()} onDone={p.onDone} />
     </div>
   );
 }
@@ -179,12 +274,13 @@ const DETAIL_TABS: { id: DetailTab; label: string; key: string }[] = [
   { id: "pipeline", label: "Pipelines", key: "P" },
 ];
 
-function MrDetail(p: { mr: Mr }) {
+function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
   const m = () => p.mr;
   const review = createReview(m);
   const count = (t: DetailTab) => (t === "commits" ? review.data()?.commits?.length : t === "changes" ? review.data()?.files.length : undefined);
   return (
     <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", focus() ? "max-w-none" : "max-w-[110rem]")}>
+      {p.top}
       <div class="flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-3">
         <span>{m().project}</span>
         <span>·</span>
@@ -307,10 +403,11 @@ function Overview(p: { mr: Mr }) {
   );
 }
 
-function IssueDetail(p: { issue: Issue }) {
+function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
   const i = () => p.issue;
   return (
     <div class="mx-auto w-full max-w-3xl px-4 pb-24 pt-5 sm:px-8">
+      {p.top}
       <div class="text-[12.5px] text-fg-3">{i().project}</div>
       <h1 class="mt-1 text-[20px] font-semibold leading-snug tracking-[-0.02em] text-fg">
         <span class="text-fg-3">#{i().iid}</span> {i().title}
@@ -323,7 +420,7 @@ function IssueDetail(p: { issue: Issue }) {
         <For each={i().labels}>{(l) => <Badge>{l}</Badge>}</For>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude in your clone with a prompt about the issue, to edit first">
+        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
           <Sparkles size={13} /> Work on it with Claude
         </Button>
         <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">
@@ -342,9 +439,10 @@ function IssueDetail(p: { issue: Issue }) {
 }
 
 const TABS: { id: Tab; label: string; key: string }[] = [
-  { id: "review", label: "To review", key: "1" },
-  { id: "mine", label: "My MRs", key: "2" },
-  { id: "issues", label: "Issues", key: "3" },
+  { id: "todo", label: "To-Do", key: "1" },
+  { id: "review", label: "To review", key: "2" },
+  { id: "mine", label: "My MRs", key: "3" },
+  { id: "issues", label: "Issues", key: "4" },
 ];
 
 function load<T>(key: string, fallback: T): T {
@@ -364,7 +462,7 @@ function save(key: string, v: unknown) {
   }
 }
 
-const [tab, setTabRaw] = createSignal<Tab>(load("gitlab-tab", "review"));
+const [tab, setTabRaw] = createSignal<Tab>(load("gitlab-tab", "todo"));
 const LIST_WIDTH = 384;
 const clampWidth = (w: number) => Math.round(Math.min(640, Math.max(288, w)));
 const [listWidth, setListWidth] = createSignal(clampWidth(load("gitlab-list-width", LIST_WIDTH)));
@@ -431,7 +529,9 @@ export function Gitlab() {
     return all().filter((e) => {
       if (e.tab !== tab()) return false;
       if (!query) return true;
-      const text = e.mr ? `${e.mr.title} ${e.mr.project} ${e.mr.branch} ${e.mr.author} !${e.mr.iid}` : `${e.issue!.title} ${e.issue!.project} ${e.issue!.labels.join(" ")} #${e.issue!.iid}`;
+      const text = e.todo
+        ? `${e.todo.title} ${e.todo.project} ${e.todo.author} ${e.todo.action} ${todoRef(e.todo)}`
+        : e.mr ? `${e.mr.title} ${e.mr.project} ${e.mr.branch} ${e.mr.author} !${e.mr.iid}` : `${e.issue!.title} ${e.issue!.project} ${e.issue!.labels.join(" ")} #${e.issue!.iid}`;
       return fuzzyWords(query, text) !== null;
     });
   });
@@ -447,6 +547,20 @@ export function Gitlab() {
   const isFolded = (group: string) => !q().trim() && folded().includes(`${tab()}:${group}`);
   const visible = createMemo(() => groups().flatMap(([group, items]) => (isFolded(group) ? [] : items)));
   const count = (t: Tab) => all().filter((e) => e.tab === t).length;
+  // Two clicks, so one slip does not empty the list.
+  const [armed, setArmed] = createSignal(false);
+  let disarm: number | undefined;
+  const markAll = () => {
+    if (!armed()) {
+      setArmed(true);
+      clearTimeout(disarm);
+      disarm = window.setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setArmed(false);
+    void markDone();
+  };
+  onCleanup(() => clearTimeout(disarm));
 
   const select = (key: string, replace = false) => go({ view: "gitlab", key }, replace);
 
@@ -474,6 +588,18 @@ export function Gitlab() {
     const k = selected();
     listEl?.querySelector<HTMLElement>(`[data-key="${CSS.escape(k ?? "")}"]`)?.scrollIntoView({ block: "nearest" });
   });
+
+  // The next item takes the place of a to-do you mark done.
+  const done = (t: Todo) => {
+    const l = visible();
+    const i = l.findIndex((x) => x.key === t.key);
+    const next = l[i + 1] ?? l[i - 1];
+    void markDone(t);
+    if (selected() === t.key) {
+      if (next) select(next.key, true);
+      else go({ view: "gitlab", key: null }, true);
+    }
+  };
 
   const chat = createMemo(() => {
     const m = current()?.mr;
@@ -504,7 +630,11 @@ export function Gitlab() {
       case "o":
       case "Enter":
         if (!cur) return;
-        window.open((cur.mr ?? cur.issue)!.url, "_blank", "noopener");
+        window.open((cur.todo ?? cur.mr ?? cur.issue)!.url, "_blank", "noopener");
+        break;
+      case "x":
+        if (!cur?.todo) return;
+        done(cur.todo);
         break;
       case "c":
         if (cur?.mr) void openMr(cur.mr, "claude");
@@ -607,7 +737,14 @@ export function Gitlab() {
           </Show>
           <Show when={!g().loading && !inTab().length}>
             <div class="px-3 py-8 text-center text-[12.5px] text-fg-3">
-              {q().trim() ? "Nothing matches." : tab() === "review" ? "No reviews wait for you." : tab() === "mine" ? "You have no open merge requests." : "No issues are assigned to you."}
+              {q().trim() ? "Nothing matches." : tab() === "todo" ? "Your To-Do list is empty." : tab() === "review" ? "No reviews wait for you." : tab() === "mine" ? "You have no open merge requests." : "No issues are assigned to you."}
+            </div>
+          </Show>
+          <Show when={tab() === "todo" && todos().length > 1 && !q().trim()}>
+            <div class="flex justify-end px-1 pt-1">
+              <Button size="sm" variant={armed() ? "danger" : "ghost"} loading={isBusy("todo:all")} onClick={markAll} title="Mark every to-do done in GitLab">
+                <Check size={13} /> {armed() ? `Mark all ${todos().length} done?` : "Mark all done"}
+              </Button>
             </div>
           </Show>
           <For each={groups()}>
@@ -624,14 +761,23 @@ export function Gitlab() {
                 <Show when={!isFolded(title)}>
                   <For each={items}>
                     {(e) => (
-                      <button
-                        data-key={e.key}
-                        title={(e.mr ?? e.issue)!.title}
-                        onClick={() => select(e.key)}
-                        class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
-                      >
-                        {e.mr ? <MrRow mr={e.mr} tab={e.tab} group={e.group} /> : <IssueRow issue={e.issue!} />}
-                      </button>
+                      <div class="group relative">
+                        <button
+                          data-key={e.key}
+                          title={(e.todo ?? e.mr ?? e.issue)!.title}
+                          onClick={() => select(e.key)}
+                          class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
+                        >
+                          {e.todo ? <TodoRow todo={e.todo} /> : e.mr ? <MrRow mr={e.mr} tab={e.tab} group={e.group} /> : <IssueRow issue={e.issue!} />}
+                        </button>
+                        <Show when={e.todo}>
+                          {(t) => (
+                            <IconButton label="Done (X)" onClick={() => done(t())} class="absolute right-1.5 top-1.5 size-6 bg-raised opacity-0 shadow-soft group-hover:opacity-100 focus-visible:opacity-100">
+                              <Check size={13} />
+                            </IconButton>
+                          )}
+                        </Show>
+                      </div>
                     )}
                   </For>
                 </Show>
@@ -654,6 +800,9 @@ export function Gitlab() {
         <Show when={current()} fallback={<Empty icon={<Git size={22} />} title={selected() ? "It is gone" : "Pick one"} class="h-full">{selected() ? "It was merged, closed or left your lists." : "Select a merge request or issue."}</Empty>}>
           {(c) => (
             <Switch>
+              <Match when={c().todo && c().mr}>{(m) => <MrDetail mr={m()} top={<TodoBanner todo={c().todo!} onDone={() => done(c().todo!)} />} />}</Match>
+              <Match when={c().todo && c().issue}>{(i) => <IssueDetail issue={i()} top={<TodoBanner todo={c().todo!} onDone={() => done(c().todo!)} />} />}</Match>
+              <Match when={c().todo}>{(t) => <TodoDetail todo={t()} onDone={() => done(t())} />}</Match>
               <Match when={c().mr}>{(m) => <MrDetail mr={m()} />}</Match>
               <Match when={c().issue}>{(i) => <IssueDetail issue={i()} />}</Match>
             </Switch>

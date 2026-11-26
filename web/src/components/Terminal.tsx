@@ -97,6 +97,37 @@ export function Terminal(p: { window: string; focus?: boolean }) {
       }
       return true;
     });
+    // tmux scrolls on its side, one round trip per wheel report. Turn the wheel's pixel
+    // deltas into whole lines and send them once per frame, so a trackpad does not flood
+    // tmux and a notch scrolls as far as it would in a page.
+    let wheelLines = 0;
+    let wheelAt = { col: 1, row: 1 };
+    let wheelFrame = 0;
+    const flushWheel = () => {
+      wheelFrame = 0;
+      const n = Math.trunc(wheelLines);
+      if (!n || socket?.readyState !== WebSocket.OPEN) return;
+      wheelLines -= n;
+      const report = `\x1b[<${n < 0 ? 64 : 65};${wheelAt.col};${wheelAt.row}M`;
+      socket.send(new TextEncoder().encode(report.repeat(Math.min(Math.abs(n), term!.rows))));
+    };
+    term.attachCustomWheelEventHandler((e) => {
+      if (!term || e.ctrlKey || term.modes.mouseTrackingMode === "none" || !e.deltaY) return true;
+      const screen = host.querySelector(".xterm-screen")?.getBoundingClientRect();
+      if (!screen?.height) return true;
+      const cellW = screen.width / term.cols;
+      const cellH = screen.height / term.rows;
+      const lines = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? e.deltaY / cellH : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY : e.deltaY * term.rows;
+      if (Math.sign(lines) !== Math.sign(wheelLines)) wheelLines = 0;
+      wheelLines += lines;
+      wheelAt = {
+        col: Math.min(term.cols, Math.max(1, Math.floor((e.clientX - screen.left) / cellW) + 1)),
+        row: Math.min(term.rows, Math.max(1, Math.floor((e.clientY - screen.top) / cellH) + 1)),
+      };
+      wheelFrame ||= requestAnimationFrame(flushWheel);
+      e.preventDefault();
+      return false;
+    });
     term.onData((d) => socket?.readyState === WebSocket.OPEN && socket.send(new TextEncoder().encode(d)));
     term.onBinary((d) => {
       if (socket?.readyState !== WebSocket.OPEN) return;

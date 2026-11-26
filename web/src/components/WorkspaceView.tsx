@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { getJSON, type Agent, type Commit, type Win, type Workspace } from "../api";
-import { act, actHiding, ask, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, now, setDiffView, state, stops, store } from "../store";
+import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, now, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
@@ -371,27 +371,9 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       }
     });
 
-  const closeWindow = (w: Win) => {
-    const a = agentOf(w);
-    const run = () => {
-      const rest = ws()?.windows.filter((x) => x.id !== w.id) ?? [];
-      // tmux closes the session with its last window.
-      const what = rest.length ? { window: w.id } : { window: w.id, workspace: p.name };
-      const before = () => {
-        if (!rest.length) go({ view: "agents" });
-        else if (p.window === w.id) go({ view: "workspace", name: p.name, window: rest[0].id }, true);
-      };
-      actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
-    };
-    const stopped = stops(w);
-    if (!stopped) return run();
-    ask({
-      title: a ? `Close agent “${a.title}”?` : `Close ${w.name}?`,
-      body: a ? "It stops in the middle of its turn. You can resume the session later from the agent list." : `${stopped}. It stops.`,
-      confirm: "Close",
-      danger: true,
-      run,
-    });
+  const closeWindow = (win: Win) => {
+    const w = ws();
+    if (w) closeWin(w, win);
   };
 
   // With the tree only, the sidebar lists the windows. Without the sidebar (hidden, or a phone) the tabs come back.

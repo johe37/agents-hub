@@ -50,6 +50,8 @@ pub enum Section {
     GitlabMergeRequests,
     GitlabAssignedMergeRequests,
     GitlabIssues,
+    /// Not a section of the hub's list: the web app's To-Do tab, fetched whenever any GitLab section is on.
+    GitlabTodos,
     OtherSessions,
     ClosedSessions,
 }
@@ -63,13 +65,14 @@ impl Section {
             Section::GitlabMergeRequests => "MERGE REQUESTS",
             Section::GitlabAssignedMergeRequests => "ASSIGNED MERGE REQUESTS",
             Section::GitlabIssues => "ISSUES",
+            Section::GitlabTodos => "TO-DO",
             Section::OtherSessions => "OTHER SESSIONS",
             Section::ClosedSessions => "CLOSED SESSIONS",
         }
     }
 
     pub fn gitlab(self) -> bool {
-        matches!(self, Section::GitlabReviews | Section::GitlabMergeRequests | Section::GitlabAssignedMergeRequests | Section::GitlabIssues)
+        matches!(self, Section::GitlabReviews | Section::GitlabMergeRequests | Section::GitlabAssignedMergeRequests | Section::GitlabIssues | Section::GitlabTodos)
     }
 }
 

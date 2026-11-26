@@ -70,10 +70,58 @@ impl Issue {
 
     pub fn prompt(&self) -> String {
         format!(
-            "Work on issue #{} in {}: \"{}\". Read it with `glab issue view {} -R {} --comments`. Create a branch for it first, then plan the change before you edit any code.",
-            self.iid, self.project, self.title, self.iid, self.project
+            "Work on issue #{} in {}: \"{}\". Read it with `glab issue view {} -R {} --comments`. Work on the branch {} (create it if it is not checked out), and plan the change before you edit any code.",
+            self.iid,
+            self.project,
+            self.title,
+            self.iid,
+            self.project,
+            self.branch()
         )
     }
+
+    /// `142-fix-the-parser`: the issue's number and a short slug of its title.
+    pub fn branch(&self) -> String {
+        let mut slug = String::new();
+        for c in self.title.to_lowercase().chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c);
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+            if slug.len() >= 40 {
+                break;
+            }
+        }
+        let slug = slug.trim_end_matches('-');
+        if slug.is_empty() { self.iid.to_string() } else { format!("{}-{slug}", self.iid) }
+    }
+
+    /// Where the hub checks out the issue's branch.
+    pub fn dir(&self) -> PathBuf {
+        issues_dir().join(format!("{}-{}", self.repo(), self.iid))
+    }
+}
+
+/// A pending item of your GitLab To-Do list.
+#[derive(Clone, Debug, Default)]
+pub struct Todo {
+    pub id: u64,
+    /// mentioned, directly_addressed, review_requested, assigned, build_failed, ...
+    pub action: String,
+    /// MergeRequest, Issue, Commit, ...
+    pub target_type: String,
+    pub iid: Option<u64>,
+    pub project_id: Option<u64>,
+    /// Full project path, `acme/tools/acme-cli`.
+    pub project: String,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    /// The comment that made it, or GitLab's text for the action.
+    pub body: String,
+    /// Seconds since the epoch.
+    pub created: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -232,6 +280,29 @@ fn parse_issue(v: &Value) -> Option<Issue> {
         author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
         updated: v["updated_at"].as_str().and_then(epoch).unwrap_or(0),
         description: v["description"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+fn parse_todo(v: &Value) -> Option<Todo> {
+    let t = &v["target"];
+    Some(Todo {
+        id: v["id"].as_u64()?,
+        action: v["action_name"].as_str().unwrap_or_default().to_string(),
+        target_type: v["target_type"].as_str().unwrap_or_default().to_string(),
+        iid: t["iid"].as_u64(),
+        project_id: v["project"]["id"].as_u64().or_else(|| t["project_id"].as_u64()),
+        // A group's work item has a group instead of a project.
+        project: v["project"]["path_with_namespace"]
+            .as_str()
+            .or_else(|| t["references"]["full"].as_str().and_then(|r| r.split(['#', '!', '&']).next()))
+            .or_else(|| v["group"]["full_path"].as_str())
+            .unwrap_or_default()
+            .to_string(),
+        title: t["title"].as_str().or_else(|| t["name"].as_str()).unwrap_or_default().to_string(),
+        url: v["target_url"].as_str().unwrap_or_default().to_string(),
+        author: v["author"]["username"].as_str().unwrap_or_default().to_string(),
+        body: v["body"].as_str().unwrap_or_default().to_string(),
+        created: v["created_at"].as_str().and_then(epoch).unwrap_or(0),
     })
 }
 
@@ -430,6 +501,19 @@ fn lower(v: &Value) -> Option<String> {
 fn fetch_issues() -> Result<Vec<Issue>, String> {
     let home = crate::config::home().display().to_string();
     Ok(api_list(&home, "issues?scope=assigned_to_me&state=opened&order_by=updated_at&per_page=50")?.iter().filter_map(parse_issue).collect())
+}
+
+/// Your pending To-Dos, newest first.
+fn fetch_todos() -> Result<Vec<Todo>, String> {
+    let home = crate::config::home().display().to_string();
+    Ok(api_list(&home, "todos?state=pending&per_page=100")?.iter().filter_map(parse_todo).collect())
+}
+
+/// Mark one To-Do done, or all of them without an id.
+pub fn todo_done(id: Option<u64>) -> Result<(), String> {
+    let home = crate::config::home().display().to_string();
+    let path = id.map_or("todos/mark_as_done".to_string(), |id| format!("todos/{id}/mark_as_done"));
+    glab(&home, &["api", "-X", "POST", &path]).map(|_| ())
 }
 
 fn api_list(cwd: &str, path: &str) -> Result<Vec<Value>, String> {
@@ -775,12 +859,110 @@ pub fn branches_dir() -> PathBuf {
     crate::config::cache_dir().join("mrs")
 }
 
-/// The local clone of project among the scanned dirs: one whose remote is the project, else one with its name.
+/// The local clone of project among the scanned dirs: one with a remote that points at the project.
+/// A repo with only the same name is not enough: two projects can share a name.
 pub fn find_clone(dirs: &[(String, bool)], project: &str) -> Option<String> {
     let name = project.rsplit('/').next()?;
-    let clones: Vec<&String> = dirs.iter().filter(|(p, repo)| *repo && Path::new(p).file_name().is_some_and(|n| n == name)).map(|(p, _)| p).collect();
-    let is_project = |p: &&&String| run(p, 5, "git", &["remote", "-v"]).is_ok_and(|r| r.contains(&format!("{project}.git")) || r.contains(&format!("{project} ")));
-    clones.iter().find(is_project).or(clones.first()).map(|p| p.to_string())
+    dirs.iter()
+        .filter(|(p, repo)| *repo && Path::new(p).file_name().is_some_and(|n| n == name))
+        .map(|(p, _)| p)
+        .find(|p| project_remote(p, project).is_some())
+        .cloned()
+}
+
+/// The remote of the clone at repo that points at project. The URLs as configured: `git remote -v` shows them after any insteadOf rewrite.
+fn project_remote(repo: &str, project: &str) -> Option<String> {
+    remote_for(&run(repo, 5, "git", &["config", "--get-regexp", r"^remote\..*\.url$"]).ok()?, project)
+}
+
+pub fn clones_dir() -> PathBuf {
+    crate::config::cache_dir().join("clones")
+}
+
+pub fn issues_dir() -> PathBuf {
+    crate::config::cache_dir().join("issues")
+}
+
+/// Clones and worktrees of the same repo must not run at once: git locks would make one of them fail.
+static CLONING: Mutex<()> = Mutex::new(());
+
+/// A clone of project: one under the repo roots, else the hub's own in the cache, cloned with glab when missing.
+/// url is a web URL in the project, such as an issue's: glab clones from its host.
+pub fn ensure_clone(dirs: &[(String, bool)], project: &str, url: &str) -> Result<String, String> {
+    if let Some(repo) = find_clone(dirs, project) {
+        return Ok(repo);
+    }
+    let _lock = CLONING.lock().unwrap_or_else(|e| e.into_inner());
+    clone_into(&clones_dir().join(project), project, url)
+}
+
+fn clone_into(dir: &Path, project: &str, url: &str) -> Result<String, String> {
+    let d = dir.display().to_string();
+    if dir.join(".git").exists() {
+        return Ok(d);
+    }
+    let parent = dir.parent().ok_or("No place for the clone")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    // Clone next to it, then move it in place: a clone that stops half-way is never taken for a whole one.
+    let partial = dir.with_extension("partial");
+    let _ = std::fs::remove_dir_all(&partial);
+    let host = url.split_once("://").and_then(|(_, rest)| rest.split('/').next()).filter(|h| !h.is_empty());
+    let mut cmd = Command::new("timeout");
+    cmd.args(["600", "glab", "repo", "clone", project]).arg(&partial).current_dir(parent).env("GIT_TERMINAL_PROMPT", "0").stdin(std::process::Stdio::null());
+    if let Some(h) = host {
+        cmd.env("GITLAB_HOST", h);
+    }
+    let out = cmd.output().map_err(|e| format!("glab: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(match out.status.code() {
+            Some(124) => "The clone timed out".to_string(),
+            Some(127) => "glab is not installed".to_string(),
+            _ => format!("Could not clone {project}: {}", failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or("glab failed".into())),
+        });
+    }
+    std::fs::rename(&partial, dir).map_err(|e| e.to_string())?;
+    Ok(d)
+}
+
+/// A worktree in dir, such as `Issue::dir`, for the issue on its own branch, made from the default branch
+/// of the project's remote in the clone at repo. The clone itself is never switched.
+pub fn issue_worktree(repo: &str, issue: &Issue, dir: &Path) -> Result<String, String> {
+    let _lock = CLONING.lock().unwrap_or_else(|e| e.into_inner());
+    let branch = issue.branch();
+    if let Some(dir) = worktree_with(&run(repo, 5, "git", &["worktree", "list", "--porcelain"])?, &branch) {
+        return Ok(dir);
+    }
+    if dir.exists() {
+        return Err(format!("{} is in the way", crate::config::shorten(&dir.display().to_string())));
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let d = dir.display().to_string();
+    if run(repo, 5, "git", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
+        run(repo, 60, "git", &["worktree", "add", &d, &branch])?;
+        return Ok(d);
+    }
+    let remote = project_remote(repo, &issue.project).unwrap_or_else(|| "origin".into());
+    run(repo, 180, "git", &["fetch", &remote])?;
+    let base = default_branch(repo, &remote)?;
+    // No tracking: the first push sets a same-named upstream, not the default branch.
+    run(repo, 60, "git", &["worktree", "add", "--no-track", "-b", &branch, &d, &base])?;
+    Ok(d)
+}
+
+/// `origin/main` or the like: the remote's HEAD, asked from the remote when the clone does not know it yet.
+fn default_branch(repo: &str, remote: &str) -> Result<String, String> {
+    let head = format!("refs/remotes/{remote}/HEAD");
+    let read = || run(repo, 5, "git", &["symbolic-ref", "--short", &head]).ok().map(|s| s.trim().to_string());
+    if let Some(b) = read() {
+        return Ok(b);
+    }
+    let _ = run(repo, 60, "git", &["remote", "set-head", remote, "--auto"]);
+    read()
+        .or_else(|| ["main", "master"].iter().map(|b| format!("{remote}/{b}")).find(|b| run(repo, 5, "git", &["rev-parse", "--verify", "--quiet", b]).is_ok()))
+        .ok_or_else(|| format!("Can't find the default branch of {remote}"))
 }
 
 /// The clone URL of project on the same host and protocol as remote, `git@host:a/b.git` or `https://host/a/b.git`.
@@ -877,6 +1059,7 @@ pub struct Inbox {
     /// Open MRs assigned to you.
     pub assigned: Vec<Mr>,
     pub issues: Vec<Issue>,
+    pub todos: Vec<Todo>,
     /// The first fetch has finished, whether it worked or not.
     pub loaded: bool,
     /// Why the last fetch of a section failed.
@@ -916,12 +1099,13 @@ impl InboxCache {
     fn fetch(&self, wanted: &[Section], all: bool) {
         let on = |s| wanted.contains(&s);
         let mrs = |section, list| on(section).then(|| fetch_mrs(list));
-        let (reviews, authored, assigned, issues) = std::thread::scope(|s| {
+        let (reviews, authored, assigned, issues, todos) = std::thread::scope(|s| {
             let reviews = s.spawn(|| mrs(Section::GitlabReviews, "reviewRequestedMergeRequests"));
             let authored = s.spawn(|| mrs(Section::GitlabMergeRequests, "authoredMergeRequests"));
             let assigned = s.spawn(|| mrs(Section::GitlabAssignedMergeRequests, "assignedMergeRequests"));
+            let todos = s.spawn(|| on(Section::GitlabTodos).then(fetch_todos));
             let issues = on(Section::GitlabIssues).then(fetch_issues);
-            (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues)
+            (reviews.join().unwrap(), authored.join().unwrap(), assigned.join().unwrap(), issues, todos.join().unwrap())
         });
         let mut state = self.state.lock().unwrap();
         let inbox = &mut state.1;
@@ -930,6 +1114,7 @@ impl InboxCache {
         put(&mut inbox.authored, &mut inbox.errors, Section::GitlabMergeRequests, authored);
         put(&mut inbox.assigned, &mut inbox.errors, Section::GitlabAssignedMergeRequests, assigned);
         put(&mut inbox.issues, &mut inbox.errors, Section::GitlabIssues, issues);
+        put(&mut inbox.todos, &mut inbox.errors, Section::GitlabTodos, todos);
         inbox.loaded = true;
         // Try again after the TTL, whether it worked or not.
         if all {
@@ -1222,6 +1407,46 @@ mod tests {
     }
 
     #[test]
+    fn names_the_issue_branch_from_its_title() {
+        let is = |title: &str| Issue { iid: 42, title: title.into(), ..Default::default() }.branch();
+        assert_eq!(is("Fix the parser: crash on `{}`!"), "42-fix-the-parser-crash-on");
+        assert_eq!(is("Åäö"), "42");
+        assert!(is(&"long ".repeat(30)).len() <= 44);
+    }
+
+    #[test]
+    fn makes_an_issue_worktree_from_the_default_branch() {
+        let dir = std::env::temp_dir().join(format!("jugglr-issue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sh = |cwd: &Path, args: &[&str]| {
+            let out = Command::new("git").current_dir(cwd).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let up = dir.join("up");
+        std::fs::create_dir_all(&up).unwrap();
+        sh(&up, &["init", "-q", "-b", "trunk"]);
+        sh(&up, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        sh(&dir, &["clone", "-q", up.to_str().unwrap(), "app"]);
+        let app = dir.join("app");
+        sh(&app, &["remote", "rename", "origin", "upstream"]);
+        sh(&app, &["remote", "set-url", "upstream", "git@git.x:acme/app.git"]);
+        sh(&app, &["config", &format!("url.{}.insteadOf", up.display()), "git@git.x:acme/app.git"]);
+        sh(&app, &["checkout", "-q", "-b", "mine"]);
+        let repo = app.to_str().unwrap();
+        let dirs = vec![(repo.to_string(), true), (dir.join("other/app").display().to_string(), true)];
+        assert_eq!(find_clone(&dirs, "acme/app").as_deref(), Some(repo));
+        assert_eq!(find_clone(&dirs, "else/app"), None, "the same name is not enough");
+        let issue = Issue { iid: 7, title: "Fix it".into(), project: "acme/app".into(), ..Default::default() };
+        let at = dir.join("cache/app-7");
+        let wt = issue_worktree(repo, &issue, &at).unwrap();
+        assert_eq!(run(&wt, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "7-fix-it");
+        assert!(run(&wt, 5, "git", &["rev-parse", "--abbrev-ref", "@{u}"]).is_err(), "no upstream until the first push");
+        assert_eq!(run(repo, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "mine", "the clone is not switched");
+        assert_eq!(issue_worktree(repo, &issue, &at).unwrap(), wt, "a second time finds the worktree");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn checks_out_the_branch_next_to_the_clone() {
         let dir = std::env::temp_dir().join(format!("jugglr-mine-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1264,6 +1489,16 @@ mod tests {
         let issue = parse_issue(&serde_json::json!({"iid": 12, "title": "T", "labels": ["bug", "backend"],
             "milestone": {"title": "v2"}, "references": {"full": "acme/tools/acme-cli#12"}})).unwrap();
         assert_eq!((issue.project.as_str(), issue.repo(), issue.labels.len(), issue.milestone.as_deref()), ("acme/tools/acme-cli", "acme-cli", 2, Some("v2")));
+    }
+
+    #[test]
+    fn reads_todo_fields() {
+        let t = parse_todo(&serde_json::json!({"id": 5, "action_name": "mentioned", "target_type": "MergeRequest",
+            "target": {"iid": 140, "title": "Fix parser"}, "project": {"id": 7, "path_with_namespace": "acme/api"},
+            "author": {"username": "anna"}, "body": "@me look", "target_url": "https://g/acme/api/-/merge_requests/140#note_1",
+            "created_at": "2026-11-18T13:42:24Z"})).unwrap();
+        assert_eq!((t.id, t.iid, t.project_id, t.title.as_str(), t.author.as_str()), (5, Some(140), Some(7), "Fix parser", "anna"));
+        assert!(t.created > 0);
     }
 
     #[test]

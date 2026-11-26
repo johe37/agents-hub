@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::config::{Config, shorten};
 use crate::git::GitStatus;
-use crate::gitlab::{Issue, Job, Mr};
+use crate::gitlab::{Issue, Job, Mr, Todo};
 use crate::snapshot::{Agent, Snapshot, Workspace};
 use crate::state::Status;
 
@@ -125,6 +125,29 @@ fn issue(i: &Issue) -> Value {
     })
 }
 
+fn todo(t: &Todo) -> Value {
+    // The key of the MR or issue it is about, as the page knows them.
+    let target = match (t.target_type.as_str(), t.project_id, t.iid) {
+        ("MergeRequest", Some(p), Some(iid)) => Some(format!("{p}!{iid}")),
+        ("Issue", _, Some(iid)) => Some(format!("{}#{iid}", t.project)),
+        _ => None,
+    };
+    json!({
+        "key": format!("todo:{}", t.id),
+        "id": t.id,
+        "action": t.action,
+        "target_type": t.target_type,
+        "target": target,
+        "iid": t.iid,
+        "project": t.project,
+        "title": t.title,
+        "url": t.url,
+        "author": t.author,
+        "body": t.body,
+        "created": t.created,
+    })
+}
+
 /// The command line of what runs in the foreground of a shell's terminal, when it is not the shell itself.
 fn running(pid: u32) -> Option<String> {
     if pid == 0 {
@@ -232,6 +255,7 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
             "authored": snap.authored.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
             "assigned": snap.assigned.iter().map(|m| listed_mr(m, snap)).collect::<Vec<_>>(),
             "issues": snap.issues.iter().map(issue).collect::<Vec<_>>(),
+            "todos": snap.todos.iter().map(todo).collect::<Vec<_>>(),
         },
         "closed": crate::closed::list().iter().map(|c| json!({
             "key": c.id,

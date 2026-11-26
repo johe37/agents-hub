@@ -600,6 +600,7 @@ impl App {
                 Section::GitlabIssues => &mut issue_rows,
                 Section::OtherSessions => &mut other_rows,
                 Section::ClosedSessions => &mut closed_rows,
+                Section::GitlabTodos => continue,
             });
             if !block.is_empty() && !rows.is_empty() {
                 rows.push((String::new(), Row::Gap));
@@ -644,23 +645,15 @@ impl App {
     /// Check out the selected MR in its own worktree and open it with a window of kind; Claude gets the review prompt.
     fn start_review(&mut self, kind: &'static str) {
         let Some(mr) = self.current_review().cloned() else { return };
-        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
-            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
-            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
-        };
-        self.notify(format!("Checking out !{} from {}…", mr.iid, shorten(&repo)), false);
-        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), repo, kind });
+        self.notify(format!("Checking out !{}…", mr.iid), false);
+        let _ = self.cmd.send(Cmd::StartReview { mr: Box::new(mr), kind });
     }
 
     /// Check out the selected MR's branch next to its clone and open it with a window of kind.
     fn start_mine(&mut self, kind: &'static str) {
         let Some(mr) = self.current_mr().cloned() else { return };
-        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &mr.project) else {
-            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
-            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", mr.project), true);
-        };
-        self.notify(format!("Checking out {} from {}…", mr.branch, shorten(&repo)), false);
-        let _ = self.cmd.send(Cmd::StartMine { mr: Box::new(mr), repo, kind });
+        self.notify(format!("Checking out {}…", mr.branch), false);
+        let _ = self.cmd.send(Cmd::StartMine { mr: Box::new(mr), kind });
     }
 
     pub fn mine(&self, list: Mine) -> &[crate::gitlab::Mr] {
@@ -702,15 +695,11 @@ impl App {
         self.snap.issues.get(i)
     }
 
-    /// Open Claude in the workspace of the issue's local clone, with the issue typed into its prompt.
+    /// Open Claude in a worktree for the issue, with the issue typed into its prompt. The clone is made in the cache when missing.
     fn start_issue(&mut self) {
         let Some(issue) = self.current_issue().cloned() else { return };
-        let Some(repo) = crate::gitlab::find_clone(&self.snap.dirs, &issue.project) else {
-            let roots = self.cfg.roots.iter().map(|r| shorten(r)).collect::<Vec<_>>().join(", ");
-            return self.notify(format!("No clone of {} under {roots}. Clone it there, then Ctrl+R in the n picker.", issue.project), true);
-        };
-        self.notify(format!("Opening #{} in {}…", issue.iid, shorten(&repo)), false);
-        let _ = self.cmd.send(Cmd::StartIssue { issue: Box::new(issue), repo });
+        self.notify(format!("Opening #{} in {}…", issue.iid, shorten(&issue.dir().display().to_string())), false);
+        let _ = self.cmd.send(Cmd::StartIssue { issue: Box::new(issue) });
     }
 
     pub fn current_terminal(&self) -> Option<(&Workspace, &crate::snapshot::Window)> {

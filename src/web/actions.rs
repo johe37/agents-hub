@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 use super::Hub;
-use super::model::{mr_key, mr_workspace};
+use super::model::{issue_key, mr_key, mr_workspace};
 use crate::config::{Section, shorten};
 use crate::gitlab::Mr;
 use crate::snapshot::Cmd;
@@ -36,13 +36,16 @@ pub enum Action {
     /// With kind, the workspace opens (if it is not open) with a window of that kind; without, only the code is checked out.
     Checkout { mr: String, kind: Option<String> },
     /// The local clone of a GitLab project.
-    FindClone { project: String },
+    /// Check out a worktree for the issue with this key, cloning the project into the cache when missing.
+    IssueCheckout { issue: String },
     ThreadReply { mr: String, thread: String, text: String, resolve: bool },
     /// Push the workspace's branch, opening a draft merge request when it has none.
     Publish { workspace: String },
     /// Commit the staged changes, or all of them when nothing is staged.
     Commit { workspace: String, message: String },
     GitlabRefresh,
+    /// Mark one To-Do done, or all of them without an id.
+    TodoDone { id: Option<u64> },
     /// A comment on an MR, on a diff line with a GitLab position. A draft waits for FinishReview.
     MrNote { mr: String, body: String, position: Option<serde_json::Value>, draft: bool },
     DraftEdit { mr: String, id: u64, body: String },
@@ -142,9 +145,9 @@ pub(super) fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
         .ok_or_else(|| "This merge request is gone".to_string())
 }
 
-fn clone_of(hub: &Hub, project: &str) -> Result<String, String> {
+fn clone_of(hub: &Hub, project: &str, url: &str) -> Result<String, String> {
     let dirs = hub.snapshot().dirs.clone();
-    crate::gitlab::find_clone(&dirs, project).ok_or_else(|| format!("No clone of {project} in your repo roots. Clone it there, then rescan."))
+    crate::gitlab::ensure_clone(&dirs, project, url)
 }
 
 /// Fetch the MR again soon, also in the workspace that has it.
@@ -155,7 +158,7 @@ fn forget_mr(hub: &Hub, key: &str) {
 
 fn forget_gitlab(hub: &Hub, path: Option<&str>) {
     let cmd = hub.cmd.lock().unwrap();
-    for s in [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues] {
+    for s in [Section::GitlabReviews, Section::GitlabMergeRequests, Section::GitlabAssignedMergeRequests, Section::GitlabIssues, Section::GitlabTodos] {
         let _ = cmd.send(Cmd::ForgetInbox(s));
     }
     if let Some(p) = path {
@@ -373,7 +376,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 };
                 return Ok(Done { workspace: Some(name), window: w, path: Some(path), ..Done::default() });
             }
-            let repo = clone_of(hub, &m.project)?;
+            let repo = clone_of(hub, &m.project, &m.url)?;
             let dir = if review { crate::gitlab::checkout(&repo, &m)? } else { crate::gitlab::checkout_branch(&repo, &m, &m.branch_dir())? };
             let Some(k) = kind else {
                 return Ok(Done { message: Some(format!("Checked out !{}", m.iid)), path: Some(dir), ..Done::default() });
@@ -381,7 +384,12 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let (session, w) = new_workspace(&dir, &k, crate::app::window_command(&k))?;
             Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), window: w, path: Some(dir) })
         }
-        Action::FindClone { project } => Ok(Done { path: Some(clone_of(hub, &project)?), ..Done::default() }),
+        Action::IssueCheckout { issue: key } => {
+            let issue = hub.snapshot().issues.iter().find(|i| issue_key(i) == key).cloned().ok_or("This issue is gone")?;
+            let repo = clone_of(hub, &issue.project, &issue.url)?;
+            let dir = crate::gitlab::issue_worktree(&repo, &issue, &issue.dir())?;
+            Ok(Done { path: Some(dir), ..Done::default() })
+        }
         Action::ThreadReply { mr: key, thread, text, resolve } => {
             let m = find_mr(hub, &key)?;
             let th = m.threads.iter().find(|t| t.id == thread).ok_or("This thread is resolved or gone")?;
@@ -522,6 +530,11 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetMr(p));
             }
             Ok(said("Refreshing GitLab"))
+        }
+        Action::TodoDone { id } => {
+            crate::gitlab::todo_done(id)?;
+            let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetInbox(Section::GitlabTodos));
+            Ok(said(if id.is_some() { "Marked done" } else { "Marked all done" }))
         }
     }
 }
