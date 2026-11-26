@@ -142,6 +142,12 @@ set -as terminal-features ",*:hyperlinks"
 set -g escape-time 10
 set -g mouse on
 set -g history-limit 50000
+# The web terminal sends one wheel report per line, so it scrolls one line per report.
+# Other clients keep tmux's five lines per notch.
+bind -T copy-mode WheelUpPane select-pane \; if -F "#{{m:_web*,#{{client_session}}}}" "send -X scroll-up" "send -X -N 5 scroll-up"
+bind -T copy-mode WheelDownPane select-pane \; if -F "#{{m:_web*,#{{client_session}}}}" "send -X scroll-down" "send -X -N 5 scroll-down"
+bind -T copy-mode-vi WheelUpPane select-pane \; if -F "#{{m:_web*,#{{client_session}}}}" "send -X scroll-up" "send -X -N 5 scroll-up"
+bind -T copy-mode-vi WheelDownPane select-pane \; if -F "#{{m:_web*,#{{client_session}}}}" "send -X scroll-down" "send -X -N 5 scroll-down"
 set -g base-index 1
 set -g renumber-windows on
 set -g focus-events on
