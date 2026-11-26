@@ -263,7 +263,7 @@ fn toplevel(path: &str) -> Option<String> {
     git_out(path, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-/// The commits on the checked-out branch that the default branch lacks, newest first; on the default branch itself, its recent history.
+/// The commits on the checked-out branch that the default branch lacks, newest first, at most 10; on the default branch itself, its recent history.
 pub fn commits(path: &str) -> Value {
     let Some(root) = toplevel(path) else { return json!([]) };
     let base = ["origin/HEAD", "origin/main", "origin/master", "main", "master"]
@@ -284,8 +284,8 @@ pub fn commits(path: &str) -> Value {
             })
             .collect::<Vec<_>>()
     };
-    let own = base.map(|b| log(&["-n", "100", &format!("{b}..HEAD")])).unwrap_or_default();
-    Value::from(if own.is_empty() { log(&["-n", "30", "HEAD"]) } else { own })
+    let own = base.map(|b| log(&["-n", "10", &format!("{b}..HEAD")])).unwrap_or_default();
+    Value::from(if own.is_empty() { log(&["-n", "10", "HEAD"]) } else { own })
 }
 
 /// The change of one file against HEAD, or of the whole checkout, or what one commit changed. New files show in full.
