@@ -186,7 +186,7 @@ function MrDetail(p: { mr: Mr }) {
   const review = createReview(m);
   const count = (t: DetailTab) => (t === "commits" ? review.data()?.commits?.length : t === "changes" ? review.data()?.files.length : undefined);
   return (
-    <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", detailTab() === "overview" ? "max-w-3xl" : focus() ? "max-w-none" : "max-w-[110rem]")}>
+    <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", focus() ? "max-w-none" : "max-w-[110rem]")}>
       <div class="flex flex-wrap items-center gap-1.5 text-[12.5px] text-fg-3">
         <span>{m().project}</span>
         <span>·</span>
