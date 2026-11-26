@@ -5,7 +5,7 @@ import { pipelineTone } from "../gitlab";
 import { age, cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Check, Chevron, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle } from "./ui";
 import { focus, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
@@ -41,7 +41,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
     <aside class="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
       <Show when={p.agents.length}>
         <section class="border-b border-line p-3">
-          <h3 class="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Agents</h3>
+          <SectionTitle class="mb-2 px-1">Agents</SectionTitle>
           <For each={p.agents}>
             {(a) => (
               <button
@@ -63,7 +63,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
         {(mr) => (
           <section class="border-b border-line p-3">
             <div class="mb-2 flex items-center px-1">
-              <h3 class="text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Merge request</h3>
+              <SectionTitle>Merge request</SectionTitle>
               <a href={mr().url} target="_blank" rel="noopener" class="ml-auto text-fg-3 hover:text-fg" title="Open in GitLab">
                 <External size={12} />
               </a>
@@ -93,7 +93,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
 
       <section class="flex min-h-0 flex-1 flex-col p-3">
         <div class="mb-2 flex items-center gap-2 px-1">
-          <h3 class="text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Changes</h3>
+          <SectionTitle>Changes</SectionTitle>
           <Show when={g()}>
             <span class="font-mono text-xs tabular-nums">
               <span class="text-add">+{g()!.added}</span> <span class="text-del">−{g()!.removed}</span>
@@ -177,7 +177,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
 
       <Show when={commits()?.length}>
         <section class="border-t border-line p-3">
-          <h3 class="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">Commits</h3>
+          <SectionTitle class="mb-2 px-1">Commits</SectionTitle>
           <div class="flex flex-col">
             <For each={commits()}>
               {(c) => {

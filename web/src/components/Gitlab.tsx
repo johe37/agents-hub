@@ -4,11 +4,11 @@ import type { Issue, Mr, Thread, Todo } from "../api";
 import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Kind, type Tab } from "../gitlab";
 import { act, go, isBusy, now, route, state } from "../store";
 import { age, cls, fuzzyWords } from "../util";
-import { Bell, Branch, Chat, Check, Chevron, ChevronDown, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
+import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Edge, Empty, IconButton } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton, SectionTitle } from "./ui";
 import { focus, showList, toggleList } from "../layout";
 
 function Lead(p: { mr: Mr }) {
@@ -180,7 +180,7 @@ function Section(p: { title: string; children: any; actions?: any }) {
   return (
     <section class="mt-6">
       <div class="mb-2 flex items-center gap-2">
-        <h2 class="text-sm font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h2>
+        <SectionTitle as="h2">{p.title}</SectionTitle>
         <div class="ml-auto flex items-center gap-1">{p.actions}</div>
       </div>
       {p.children}
@@ -750,14 +750,9 @@ export function Gitlab() {
           <For each={groups()}>
             {([title, items]) => (
               <section class="mt-2">
-                <button
-                  class="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3 hover:text-fg-2"
-                  onClick={() => toggleFold(`${tab()}:${title}`)}
-                  aria-expanded={!isFolded(title)}
-                >
-                  <ChevronDown size={12} class={cls("transition-transform", isFolded(title) && "-rotate-90")} />
-                  {title} <span class="ml-1 tabular-nums">{items.length}</span>
-                </button>
+                <SectionTitle as="div" class="px-2 py-1.5" count={items.length} open={!isFolded(title)} onToggle={() => toggleFold(`${tab()}:${title}`)}>
+                  {title}
+                </SectionTitle>
                 <Show when={!isFolded(title)}>
                   <For each={items}>
                     {(e) => (

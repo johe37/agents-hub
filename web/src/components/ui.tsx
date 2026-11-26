@@ -1,8 +1,8 @@
 import { For, Show, createSignal, onCleanup, splitProps, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
+import { Dynamic, Portal } from "solid-js/web";
 import type { Status, Win } from "../api";
 import { STATUS, cls } from "../util";
-import { Bot, Chevron, Code, Terminal } from "./icons";
+import { Bot, Chevron, ChevronDown, Code, Terminal } from "./icons";
 
 export function kindIcon(w: Win, size = 14) {
   switch (w.kind) {
@@ -108,6 +108,35 @@ export function Spinner(p: { size?: number }) {
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity="0.2" stroke-width="3" />
       <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
     </svg>
+  );
+}
+
+/** The small uppercase title above a group of items. With onToggle, a click folds the group. */
+export function SectionTitle(p: {
+  children: JSX.Element;
+  count?: number;
+  open?: boolean;
+  onToggle?: () => void;
+  as?: "h2" | "h3" | "div" | "span";
+  class?: string;
+}) {
+  const content = () => (
+    <>
+      {p.children}
+      <Show when={p.count != null}>
+        <span class="ml-1 tabular-nums">{p.count}</span>
+      </Show>
+    </>
+  );
+  return (
+    <Dynamic component={p.as ?? "h3"} class={cls("text-xs font-semibold uppercase tracking-[0.06em] text-fg-3", p.class)}>
+      <Show when={p.onToggle} fallback={content()}>
+        <button class="flex w-full items-center gap-1 uppercase hover:text-fg-2" onClick={() => p.onToggle?.()} aria-expanded={!!p.open}>
+          <ChevronDown size={12} class={cls("transition-transform", !p.open && "-rotate-90")} />
+          {content()}
+        </button>
+      </Show>
+    </Dynamic>
   );
 }
 

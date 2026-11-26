@@ -5,7 +5,7 @@ import { act, isBusy, now } from "../store";
 import { age, cls } from "../util";
 import { Check, External, Play, Refresh, Sparkles, Stop, X } from "./icons";
 import { askClaude } from "./MrReview";
-import { Badge, Button, IconButton, Spinner } from "./ui";
+import { Badge, Button, IconButton, Spinner, SectionTitle } from "./ui";
 
 /** The job whose log the Pipelines tab shows. */
 export const [pipeJob, setPipeJob] = createSignal<number | null>(null);
@@ -390,12 +390,12 @@ export function Pipeline(p: { mr: Mr }) {
       </Show>
 
       <section class="mt-8">
-        <h3 class="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-fg-3">
+        <SectionTitle class="mb-2 flex items-center gap-2">
           Earlier pipelines
           <Show when={list.loading}>
             <Spinner size={11} />
           </Show>
-        </h3>
+        </SectionTitle>
         <Switch>
           <Match when={list.error && !list.latest}>
             <div class="text-base text-danger">Could not fetch the pipelines: {(list.error as Error).message}</div>

@@ -39,12 +39,12 @@ import {
 import { choiceLabel } from "../themes";
 import { cls } from "../util";
 import { X } from "./icons";
-import { Button, IconButton } from "./ui";
+import { Button, IconButton, SectionTitle } from "./ui";
 
 function Section(p: { title: string; children: JSX.Element }) {
   return (
     <section class="border-t border-line py-4 first:border-t-0 first:pt-0">
-      <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{p.title}</h3>
+      <SectionTitle class="mb-3">{p.title}</SectionTitle>
       <div class="flex flex-col gap-3">{p.children}</div>
     </section>
   );

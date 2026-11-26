@@ -2,7 +2,7 @@ import { For, Show, createEffect, on } from "solid-js";
 import { confirmBox, dismiss, helpOpen, setConfirmBox, setHelpOpen, toasts } from "../store";
 import { MOD, cls } from "../util";
 import { Check, X } from "./icons";
-import { Button, IconButton, Kbd } from "./ui";
+import { Button, IconButton, Kbd, SectionTitle } from "./ui";
 
 export function Toasts() {
   return (
@@ -150,7 +150,7 @@ export function Help() {
             <For each={KEYS}>
               {([group, keys]) => (
                 <section>
-                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{group}</h3>
+                  <SectionTitle class="mb-2">{group}</SectionTitle>
                   <div class="flex flex-col gap-2">
                     <For each={keys}>
                       {([k, label]) => (

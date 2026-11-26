@@ -6,7 +6,7 @@ import { MOD, age, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
-import { IconButton, Spinner, StatusDot, kindIcon } from "./ui";
+import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle } from "./ui";
 
 const [showClosed, setShowClosed] = stored("show-closed", false);
 const [showClosedChats, setShowClosedChats] = stored("show-closed-chats", false);
@@ -187,7 +187,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
       </nav>
 
       <div class="mt-4 flex items-center px-5 pb-1">
-        <span class="text-xs font-semibold uppercase tracking-[0.07em] text-fg-3">Workspaces</span>
+        <SectionTitle as="span">Workspaces</SectionTitle>
         <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={() => openPalette("open")} title="Open a workspace (O)">
           <Plus size={14} />
         </button>
@@ -313,14 +313,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         </For>
 
         <Show when={closed().length}>
-          <button
-            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
-            onClick={toggleClosed}
-            aria-expanded={showClosed()}
-          >
-            <ChevronDown size={12} class={cls("transition-transform", !showClosed() && "-rotate-90")} />
-            Recently closed <span class="ml-1 tabular-nums">{closed().length}</span>
-          </button>
+          <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closed().length} open={showClosed()} onToggle={toggleClosed}>
+            Recently closed
+          </SectionTitle>
           <Show when={showClosed()}>
             <For each={closed()}>
               {(c) => (
@@ -359,7 +354,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         </Show>
 
         <div class="mt-4 flex items-center px-2 pb-1">
-          <span class="text-xs font-semibold uppercase tracking-[0.07em] text-fg-3">Chats</span>
+          <SectionTitle as="span">Chats</SectionTitle>
           <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={newChat} title="New chat (⇧C)">
             <Plus size={14} />
           </button>
@@ -411,14 +406,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
 
 
         <Show when={closedChats().length}>
-          <button
-            class="mt-3 flex w-full items-center gap-1 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.07em] text-fg-3 hover:text-fg-2"
-            onClick={toggleClosedChats}
-            aria-expanded={showClosedChats()}
-          >
-            <ChevronDown size={12} class={cls("transition-transform", !showClosedChats() && "-rotate-90")} />
-            Recently closed <span class="ml-1 tabular-nums">{closedChats().length}</span>
-          </button>
+          <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closedChats().length} open={showClosedChats()} onToggle={toggleClosedChats}>
+            Recently closed
+          </SectionTitle>
           <Show when={showClosedChats()}>
             <For each={closedChats()}>
               {(a) => (

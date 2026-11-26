@@ -4,8 +4,8 @@ import { act, agentRoute, ask, go, isBusy, loaded, newChat, now, setComposer, st
 import { STATUS, age, alive, cls, fuzzyWords, modelName, money } from "../util";
 import { AgentCard } from "./AgentCard";
 import { Conversation } from "./Conversation";
-import { Bot, Branch, Chat, Check, Chevron, Done, Play, Search, Sparkles, Trash } from "./icons";
-import { Badge, Button, Empty, Kbd, StatusDot, StatusPill } from "./ui";
+import { Bot, Branch, Chat, Check, Done, Play, Search, Sparkles, Trash } from "./icons";
+import { Badge, Button, Empty, Kbd, StatusDot, StatusPill, SectionTitle } from "./ui";
 
 const GROUPS: { title: string; test: (a: Agent) => boolean; collapsed?: boolean }[] = [
   { title: "Working", test: (a) => a.status === "working" || a.status === "polling" },
@@ -168,20 +168,10 @@ export function Agents() {
 }
 
 function GroupTitle(p: { title: string; count: number; open?: boolean; onToggle?: () => void }) {
-  const label = (
-    <>
-      {p.title} <span class="ml-1 tabular-nums">{p.count}</span>
-    </>
-  );
   return (
-    <h2 class="mb-2 px-1 text-sm font-semibold uppercase tracking-[0.06em] text-fg-3">
-      <Show when={p.onToggle} fallback={label}>
-        <button class="inline-flex items-center gap-1 uppercase hover:text-fg-2" onClick={() => p.onToggle?.()} aria-expanded={p.open}>
-          <Chevron size={12} class={cls("transition-transform", p.open && "rotate-90")} />
-          {label}
-        </button>
-      </Show>
-    </h2>
+    <SectionTitle as="h2" class="mb-2 px-1" count={p.count} open={p.open} onToggle={p.onToggle}>
+      {p.title}
+    </SectionTitle>
   );
 }
 

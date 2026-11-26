@@ -26,7 +26,7 @@ import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
 import { Bell, Bot, Cog, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
-import { Kbd, StatusDot } from "./ui";
+import { Kbd, StatusDot, SectionTitle } from "./ui";
 import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
 interface Item {
@@ -280,7 +280,7 @@ export function Palette() {
                 {(it, i) => (
                   <>
                     <Show when={i() === 0 || results()[i() - 1].group !== it.group}>
-                      <div class="px-3 pb-1 pt-2.5 text-xs font-semibold uppercase tracking-[0.06em] text-fg-3">{it.group}</div>
+                      <SectionTitle as="div" class="px-3 pb-1 pt-2.5">{it.group}</SectionTitle>
                     </Show>
                     <button
                       data-index={i()}
