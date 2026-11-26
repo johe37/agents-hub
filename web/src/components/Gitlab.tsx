@@ -30,10 +30,8 @@ function MrRow(p: { mr: Mr; tab: Tab; group: string }) {
     <div class="flex gap-2.5">
       <Lead mr={m()} />
       <div class="min-w-0 flex-1">
-        <div class="flex items-baseline gap-1.5">
-          <span class="truncate text-fg">
-            <span class="text-fg-3">!{m().iid}</span> {m().title.replace(/^Draft:\s*/i, "")}
-          </span>
+        <div class="line-clamp-2 break-words text-fg">
+          <span class="text-fg-3">!{m().iid}</span> {m().title.replace(/^Draft:\s*/i, "")}
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
           <span class="truncate">
@@ -71,7 +69,7 @@ function IssueRow(p: { issue: Issue }) {
         <span class="size-2 rounded-full border-[1.5px] border-idle" />
       </span>
       <div class="min-w-0 flex-1">
-        <div class="truncate text-fg">
+        <div class="line-clamp-2 break-words text-fg">
           <span class="text-fg-3">#{i().iid}</span> {i().title}
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 text-[12px] text-fg-3">
@@ -367,6 +365,36 @@ function save(key: string, v: unknown) {
 }
 
 const [tab, setTabRaw] = createSignal<Tab>(load("gitlab-tab", "review"));
+const LIST_WIDTH = 384;
+const clampWidth = (w: number) => Math.round(Math.min(640, Math.max(288, w)));
+const [listWidth, setListWidth] = createSignal(clampWidth(load("gitlab-list-width", LIST_WIDTH)));
+const [resizing, setResizing] = createSignal(false);
+
+function startResize(e: PointerEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const x0 = e.clientX;
+  const w0 = listWidth();
+  const move = (ev: PointerEvent) => setListWidth(clampWidth(w0 + ev.clientX - x0));
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    setResizing(false);
+    save("gitlab-list-width", listWidth());
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+  setResizing(true);
+}
+
+function resetWidth() {
+  setListWidth(LIST_WIDTH);
+  save("gitlab-list-width", LIST_WIDTH);
+}
 const setTab = (t: Tab) => (setTabRaw(t), save("gitlab-tab", t));
 // Approved reviews are done: folded until you open them.
 const [folded, setFoldedRaw] = createSignal<string[]>(load("gitlab-folded", ["review:Approved"]));
@@ -519,12 +547,21 @@ export function Gitlab() {
   return (
     <div class="flex h-full min-h-0">
       <div
+        style={{ "--list-w": `${listWidth()}px` }}
         class={cls(
-          "min-h-0 w-full flex-col border-line lg:w-[24rem] lg:shrink-0 lg:border-r",
+          "relative min-h-0 w-full flex-col border-line lg:w-[var(--list-w)] lg:shrink-0 lg:border-r",
           selected() ? "hidden" : "flex",
           !showList() ? "lg:hidden" : chat() ? "lg:hidden 2xl:flex" : "lg:flex",
         )}
       >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={startResize}
+          onDblClick={resetWidth}
+          class={cls("absolute inset-y-0 -right-[3px] z-10 hidden w-[5px] cursor-col-resize transition-colors hover:bg-accent/40 lg:block", resizing() && "bg-accent/40")}
+        />
         <header class="px-4 pb-2 pt-4 sm:px-5">
           <div class="flex items-center gap-2">
             <h1 class="text-[20px] font-semibold tracking-[-0.02em] text-fg">GitLab</h1>
@@ -589,6 +626,7 @@ export function Gitlab() {
                     {(e) => (
                       <button
                         data-key={e.key}
+                        title={(e.mr ?? e.issue)!.title}
                         onClick={() => select(e.key)}
                         class={cls("block w-full rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors", selected() === e.key ? "bg-hover ring-1 ring-inset ring-line-strong" : "hover:bg-hover/60")}
                       >
