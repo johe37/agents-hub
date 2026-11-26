@@ -10,7 +10,7 @@ import { Confirm, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
-import { Edge, IconButton } from "./components/ui";
+import { Edge, IconButton, Resizer } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
 import {
   agentRoute,
@@ -32,7 +32,7 @@ import {
   store,
   theme,
 } from "./store";
-import { focus, showNav, toggleFocus, toggleNav } from "./layout";
+import { focus, navWidth, showNav, toggleFocus, toggleNav } from "./layout";
 import { cls } from "./util";
 
 const logo = new Image();
@@ -164,8 +164,9 @@ export function App() {
           </div>
         }
       >
-        <aside class="hidden w-[248px] shrink-0 border-r border-line bg-panel md:block">
+        <aside class="relative hidden shrink-0 border-r border-line bg-panel md:block" style={{ width: `${navWidth.width()}px` }}>
           <Sidebar />
+          <Resizer size={navWidth} side="right" label="Sidebar width" />
         </aside>
       </Show>
       <Show when={drawer()}>

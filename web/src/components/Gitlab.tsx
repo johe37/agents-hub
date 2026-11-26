@@ -8,8 +8,8 @@ import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, 
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Edge, Empty, IconButton, SectionTitle, Ago } from "./ui";
-import { focus, showList, toggleList } from "../layout";
+import { Badge, Button, Edge, Empty, IconButton, SectionTitle, Ago, Resizer } from "./ui";
+import { focus, resizable, showList, toggleList } from "../layout";
 
 function Lead(p: { mr: Mr }) {
   const m = () => p.mr;
@@ -463,36 +463,7 @@ function save(key: string, v: unknown) {
 }
 
 const [tab, setTabRaw] = createSignal<Tab>(load("gitlab-tab", "todo"));
-const LIST_WIDTH = 384;
-const clampWidth = (w: number) => Math.round(Math.min(640, Math.max(288, w)));
-const [listWidth, setListWidth] = createSignal(clampWidth(load("gitlab-list-width", LIST_WIDTH)));
-const [resizing, setResizing] = createSignal(false);
-
-function startResize(e: PointerEvent) {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  const x0 = e.clientX;
-  const w0 = listWidth();
-  const move = (ev: PointerEvent) => setListWidth(clampWidth(w0 + ev.clientX - x0));
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    setResizing(false);
-    save("gitlab-list-width", listWidth());
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-  setResizing(true);
-}
-
-function resetWidth() {
-  setListWidth(LIST_WIDTH);
-  save("gitlab-list-width", LIST_WIDTH);
-}
+const listWidth = resizable("gitlab-list-width", 384, 288, 640);
 const setTab = (t: Tab) => (setTabRaw(t), save("gitlab-tab", t));
 // Approved reviews are done: folded until you open them.
 const [folded, setFoldedRaw] = createSignal<string[]>(load("gitlab-folded", ["review:Approved"]));
@@ -677,21 +648,14 @@ export function Gitlab() {
   return (
     <div class="flex h-full min-h-0">
       <div
-        style={{ "--list-w": `${listWidth()}px` }}
+        style={{ "--list-w": `${listWidth.width()}px` }}
         class={cls(
           "relative min-h-0 w-full flex-col border-line lg:w-[var(--list-w)] lg:shrink-0 lg:border-r",
           selected() ? "hidden" : "flex",
           !showList() ? "lg:hidden" : chat() ? "lg:hidden 2xl:flex" : "lg:flex",
         )}
       >
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          title="Drag to resize. Double-click to reset."
-          onPointerDown={startResize}
-          onDblClick={resetWidth}
-          class={cls("absolute inset-y-0 -right-[3px] z-10 hidden w-[5px] cursor-col-resize transition-colors hover:bg-accent/40 lg:block", resizing() && "bg-accent/40")}
-        />
+        <Resizer size={listWidth} side="right" label="List width" class="hidden lg:block" />
         <header class="px-4 pb-2 pt-4 sm:px-5">
           <div class="flex items-center gap-2">
             <h1 class="text-xl font-semibold tracking-[-0.02em] text-fg">GitLab</h1>

@@ -3,6 +3,7 @@ import { Dynamic, Portal } from "solid-js/web";
 import type { Status, Win } from "../api";
 import { STATUS, age, cls } from "../util";
 import { now } from "../store";
+import type { Resizable } from "../layout";
 import { Bot, Chevron, ChevronDown, Code, Terminal } from "./icons";
 
 export function kindIcon(w: Win, size = 14) {
@@ -304,6 +305,38 @@ export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuIte
         )}
       </Show>
     </>
+  );
+}
+
+/**
+ * A drag handle on the edge of a column. side is the edge it sits on.
+ * The parent must be positioned. Arrow keys resize too; a double-click resets.
+ */
+export function Resizer(p: { size: Resizable; side: "left" | "right"; label: string; class?: string }) {
+  const dir = () => (p.side === "right" ? 1 : -1);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={p.label}
+      aria-valuenow={p.size.width()}
+      tabIndex={0}
+      title="Drag to resize. Double-click to reset."
+      onPointerDown={(e) => p.size.start(e, dir())}
+      onDblClick={() => p.size.reset()}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        e.stopPropagation();
+        p.size.set(p.size.width() + (e.key === "ArrowRight" ? 16 : -16) * dir());
+      }}
+      class={cls(
+        "absolute inset-y-0 z-10 w-[5px] cursor-col-resize transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none",
+        p.side === "right" ? "-right-[3px]" : "-left-[3px]",
+        p.size.resizing() && "bg-accent/40",
+        p.class,
+      )}
+    />
   );
 }
 

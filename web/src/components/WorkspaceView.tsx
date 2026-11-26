@@ -5,8 +5,8 @@ import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Check, Chevron, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Ago } from "./ui";
-import { focus, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
+import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Ago, Resizer } from "./ui";
+import { focus, panelWidth, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
@@ -38,193 +38,196 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
     ([path]) => getJSON<Commit[]>(`/api/diff?path=${encodeURIComponent(path)}&commits=1`),
   );
   return (
-    <aside class="flex h-full w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
-      <Show when={p.agents.length}>
-        <section class="border-b border-line p-3">
-          <SectionTitle class="mb-2 px-1">Agents</SectionTitle>
-          <For each={p.agents}>
-            {(a) => (
-              <button
-                class="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
-                onClick={() => a.window && go({ view: "workspace", name: p.ws.name, window: a.window })}
-              >
-                <StatusDot status={a.status} class="mt-[6px]" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-base font-medium text-fg">{a.title}</div>
-                  <div class="truncate text-sm text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : <Ago ts={a.timestamp} suffix />}</div>
+    <aside class="relative flex h-full shrink-0 flex-col border-l border-line bg-panel" style={{ width: `${panelWidth.width()}px` }}>
+      <Resizer size={panelWidth} side="left" label="Side panel width" />
+      <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <Show when={p.agents.length}>
+          <section class="border-b border-line p-3">
+            <SectionTitle class="mb-2 px-1">Agents</SectionTitle>
+            <For each={p.agents}>
+              {(a) => (
+                <button
+                  class="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-hover"
+                  onClick={() => a.window && go({ view: "workspace", name: p.ws.name, window: a.window })}
+                >
+                  <StatusDot status={a.status} class="mt-[6px]" />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-base font-medium text-fg">{a.title}</div>
+                    <div class="truncate text-sm text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : <Ago ts={a.timestamp} suffix />}</div>
+                  </div>
+                </button>
+              )}
+            </For>
+          </section>
+        </Show>
+
+        <Show when={p.ws.mr}>
+          {(mr) => (
+            <section class="border-b border-line p-3">
+              <div class="mb-2 flex items-center px-1">
+                <SectionTitle>Merge request</SectionTitle>
+                <a href={mr().url} target="_blank" rel="noopener" class="ml-auto text-fg-3 hover:text-fg" title="Open in GitLab">
+                  <External size={12} />
+                </a>
+              </div>
+              <button class="block w-full rounded-lg px-2 py-1.5 text-left hover:bg-hover" onClick={() => go({ view: "gitlab", key: mr().key })} title="Threads, pipeline and description">
+                <div class="flex items-center gap-1.5 text-base font-medium text-fg">
+                  <span class="text-fg-3">!{mr().iid}</span>
+                  <span class="truncate">{mr().title}</span>
+                </div>
+                <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                  <Show when={mr().draft}>
+                    <Badge>Draft</Badge>
+                  </Show>
+                  <Show when={mr().pipeline}>
+                    <Badge tone={pipelineTone(mr().pipeline)}>
+                      <Pipeline size={11} /> {mr().pipeline}
+                    </Badge>
+                  </Show>
+                  <Show when={mr().threads.length}>
+                    <Badge tone="waiting">{mr().threads.length} open threads</Badge>
+                  </Show>
                 </div>
               </button>
-            )}
-          </For>
-        </section>
-      </Show>
+            </section>
+          )}
+        </Show>
 
-      <Show when={p.ws.mr}>
-        {(mr) => (
-          <section class="border-b border-line p-3">
-            <div class="mb-2 flex items-center px-1">
-              <SectionTitle>Merge request</SectionTitle>
-              <a href={mr().url} target="_blank" rel="noopener" class="ml-auto text-fg-3 hover:text-fg" title="Open in GitLab">
-                <External size={12} />
-              </a>
-            </div>
-            <button class="block w-full rounded-lg px-2 py-1.5 text-left hover:bg-hover" onClick={() => go({ view: "gitlab", key: mr().key })} title="Threads, pipeline and description">
-              <div class="flex items-center gap-1.5 text-base font-medium text-fg">
-                <span class="text-fg-3">!{mr().iid}</span>
-                <span class="truncate">{mr().title}</span>
-              </div>
-              <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                <Show when={mr().draft}>
-                  <Badge>Draft</Badge>
-                </Show>
-                <Show when={mr().pipeline}>
-                  <Badge tone={pipelineTone(mr().pipeline)}>
-                    <Pipeline size={11} /> {mr().pipeline}
-                  </Badge>
-                </Show>
-                <Show when={mr().threads.length}>
-                  <Badge tone="waiting">{mr().threads.length} open threads</Badge>
-                </Show>
-              </div>
-            </button>
-          </section>
-        )}
-      </Show>
-
-      <section class="flex min-h-0 flex-1 flex-col p-3">
-        <div class="mb-2 flex items-center gap-2 px-1">
-          <SectionTitle>Changes</SectionTitle>
-          <Show when={g()}>
-            <span class="font-mono text-xs tabular-nums">
-              <span class="text-add">+{g()!.added}</span> <span class="text-del">−{g()!.removed}</span>
-            </span>
+        <section class="flex min-h-0 flex-1 flex-col p-3">
+          <div class="mb-2 flex items-center gap-2 px-1">
+            <SectionTitle>Changes</SectionTitle>
+            <Show when={g()}>
+              <span class="font-mono text-xs tabular-nums">
+                <span class="text-add">+{g()!.added}</span> <span class="text-del">−{g()!.removed}</span>
+              </span>
+            </Show>
+            <Show when={g()?.files.length}>
+              <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
+                Review all
+              </button>
+            </Show>
+          </div>
+          <Show when={canPush()}>
+            <Button
+              size="sm"
+              class="mb-2 w-full"
+              loading={isBusy(`publish:${p.ws.name}`)}
+              onClick={() =>
+                ask({
+                  title: `Push ${g()!.branch}?`,
+                  body: p.ws.mr ? `It updates !${p.ws.mr.iid}.` : "It also opens a draft merge request.",
+                  confirm: "Push",
+                  run: () => act({ type: "publish", workspace: p.ws.name }, { key: `publish:${p.ws.name}` }),
+                })
+              }
+            >
+              <ArrowUp size={13} /> {p.ws.mr ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push and open draft MR"}
+            </Button>
           </Show>
           <Show when={g()?.files.length}>
-            <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
-              Review all
-            </button>
+            <form
+              class="mb-2 flex gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!message().trim()) return;
+                void act({ type: "commit", workspace: p.ws.name, message: message() }, { key: `commit:${p.ws.name}` }).then((r) => r.ok && setMessage(""));
+              }}
+            >
+              <input
+                value={message()}
+                onInput={(e) => setMessage(e.currentTarget.value)}
+                placeholder="Commit message"
+                aria-label="Commit message"
+                class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-raised px-2 text-sm outline-none placeholder:text-fg-3 focus:border-accent/60"
+              />
+              <Button size="sm" type="submit" disabled={!message().trim()} loading={isBusy(`commit:${p.ws.name}`)} title={staged() ? "Commit the staged changes" : "Commit all changes"}>
+                <Check size={13} /> {staged() ? "Commit staged" : "Commit all"}
+              </Button>
+            </form>
           </Show>
-        </div>
-        <Show when={canPush()}>
-          <Button
-            size="sm"
-            class="mb-2 w-full"
-            loading={isBusy(`publish:${p.ws.name}`)}
-            onClick={() =>
-              ask({
-                title: `Push ${g()!.branch}?`,
-                body: p.ws.mr ? `It updates !${p.ws.mr.iid}.` : "It also opens a draft merge request.",
-                confirm: "Push",
-                run: () => act({ type: "publish", workspace: p.ws.name }, { key: `publish:${p.ws.name}` }),
-              })
-            }
-          >
-            <ArrowUp size={13} /> {p.ws.mr ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push and open draft MR"}
-          </Button>
-        </Show>
-        <Show when={g()?.files.length}>
-          <form
-            class="mb-2 flex gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!message().trim()) return;
-              void act({ type: "commit", workspace: p.ws.name, message: message() }, { key: `commit:${p.ws.name}` }).then((r) => r.ok && setMessage(""));
-            }}
-          >
-            <input
-              value={message()}
-              onInput={(e) => setMessage(e.currentTarget.value)}
-              placeholder="Commit message"
-              aria-label="Commit message"
-              class="h-7 min-w-0 flex-1 rounded-md border border-line-strong bg-raised px-2 text-sm outline-none placeholder:text-fg-3 focus:border-accent/60"
-            />
-            <Button size="sm" type="submit" disabled={!message().trim()} loading={isBusy(`commit:${p.ws.name}`)} title={staged() ? "Commit the staged changes" : "Commit all changes"}>
-              <Check size={13} /> {staged() ? "Commit staged" : "Commit all"}
-            </Button>
-          </form>
-        </Show>
-        <Show when={g()} fallback={<div class="px-1 text-sm text-fg-3">Not a git repository</div>}>
-          <Show when={g()!.files.length} fallback={<div class="px-1 text-sm text-fg-3">Working tree clean</div>}>
+          <Show when={g()} fallback={<div class="px-1 text-sm text-fg-3">Not a git repository</div>}>
+            <Show when={g()!.files.length} fallback={<div class="px-1 text-sm text-fg-3">Working tree clean</div>}>
+              <div class="flex flex-col">
+                <For each={g()!.files}>
+                  {([code, file]) => {
+                    const c = fileCode(code);
+                    // Git lists an untracked directory once, with a trailing slash.
+                    const dir = file.endsWith("/");
+                    const i = dir ? -1 : file.lastIndexOf("/");
+                    return (
+                      <button
+                        class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
+                        title={`${c.title}: ${file}`}
+                        onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
+                      >
+                        <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
+                        <span class="min-w-0 truncate font-mono text-sm">
+                          <span class="text-fg">{file.slice(i + 1)}</span>
+                          <Show when={i > 0}>
+                            <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
+                          </Show>
+                        </span>
+                        <FileDiff size={13} class="ml-auto shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </Show>
+        </section>
+
+        <Show when={commits()?.length}>
+          <section class="border-t border-line p-3">
+            <SectionTitle class="mb-2 px-1">Commits</SectionTitle>
             <div class="flex flex-col">
-              <For each={g()!.files}>
-                {([code, file]) => {
-                  const c = fileCode(code);
-                  // Git lists an untracked directory once, with a trailing slash.
-                  const dir = file.endsWith("/");
-                  const i = dir ? -1 : file.lastIndexOf("/");
+              <For each={commits()}>
+                {(c) => {
+                  const [open, setOpen] = createSignal(false);
+                  const show = (file: string | null) => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
                   return (
-                    <button
-                      class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
-                      title={`${c.title}: ${file}`}
-                      onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
-                    >
-                      <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
-                      <span class="min-w-0 truncate font-mono text-sm">
-                        <span class="text-fg">{file.slice(i + 1)}</span>
-                        <Show when={i > 0}>
-                          <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
-                        </Show>
-                      </span>
-                      <FileDiff size={13} class="ml-auto shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
-                    </button>
+                    <div>
+                      <div class="group flex min-w-0 items-start gap-1 rounded-md px-1 py-1 hover:bg-hover">
+                        <button class="mt-0.5 grid size-4 shrink-0 place-items-center text-fg-3 hover:text-fg" aria-label={open() ? "Hide files" : "Show files"} aria-expanded={open()} onClick={() => setOpen(!open())}>
+                          <Chevron size={12} class={cls("transition-transform", open() && "rotate-90")} />
+                        </button>
+                        <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
+                          <div class="truncate text-sm text-fg">{c.title}</div>
+                          <div class="truncate text-xs text-fg-3">
+                            <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
+                          </div>
+                        </button>
+                        <FileDiff size={13} class="mt-1 shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
+                      </div>
+                      <Show when={open()}>
+                        <div class="mb-1 ml-5 flex flex-col">
+                          <For each={c.files ?? []}>
+                            {([code, file]) => {
+                              const f = fileCode(code);
+                              const i = file.lastIndexOf("/");
+                              return (
+                                <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(file)}>
+                                  <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", f.tone)}>{f.letter}</span>
+                                  <span class="min-w-0 truncate font-mono text-sm">
+                                    <span class="text-fg">{file.slice(i + 1)}</span>
+                                    <Show when={i > 0}>
+                                      <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
+                                    </Show>
+                                  </span>
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
                   );
                 }}
               </For>
             </div>
-          </Show>
+          </section>
         </Show>
-      </section>
-
-      <Show when={commits()?.length}>
-        <section class="border-t border-line p-3">
-          <SectionTitle class="mb-2 px-1">Commits</SectionTitle>
-          <div class="flex flex-col">
-            <For each={commits()}>
-              {(c) => {
-                const [open, setOpen] = createSignal(false);
-                const show = (file: string | null) => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
-                return (
-                  <div>
-                    <div class="group flex min-w-0 items-start gap-1 rounded-md px-1 py-1 hover:bg-hover">
-                      <button class="mt-0.5 grid size-4 shrink-0 place-items-center text-fg-3 hover:text-fg" aria-label={open() ? "Hide files" : "Show files"} aria-expanded={open()} onClick={() => setOpen(!open())}>
-                        <Chevron size={12} class={cls("transition-transform", open() && "rotate-90")} />
-                      </button>
-                      <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
-                        <div class="truncate text-sm text-fg">{c.title}</div>
-                        <div class="truncate text-xs text-fg-3">
-                          <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
-                        </div>
-                      </button>
-                      <FileDiff size={13} class="mt-1 shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
-                    </div>
-                    <Show when={open()}>
-                      <div class="mb-1 ml-5 flex flex-col">
-                        <For each={c.files ?? []}>
-                          {([code, file]) => {
-                            const f = fileCode(code);
-                            const i = file.lastIndexOf("/");
-                            return (
-                              <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(file)}>
-                                <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", f.tone)}>{f.letter}</span>
-                                <span class="min-w-0 truncate font-mono text-sm">
-                                  <span class="text-fg">{file.slice(i + 1)}</span>
-                                  <Show when={i > 0}>
-                                    <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
-                                  </Show>
-                                </span>
-                              </button>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
-        </section>
-      </Show>
+      </div>
     </aside>
   );
 }
