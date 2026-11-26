@@ -190,7 +190,7 @@ function AgentLine(p: { agent: Agent }) {
   const detail = () =>
     a().status === "working" ? a().tool : a().status === "waiting" ? a().message : (a().reply?.split("\n").find((l) => l.trim()) ?? a().prompt);
   return (
-    <div class="group flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-hover/60">
+    <div data-juggle class="group flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-hover/60">
       <StatusDot status={a().status} />
       <button class="min-w-0 flex-1 text-left" onClick={() => go(agentRoute(a()))}>
         <div class="flex items-baseline gap-2">

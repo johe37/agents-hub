@@ -227,6 +227,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             return (
               <div>
                 <a
+                  data-juggle
                   href={href({ view: "workspace", name: w.name, window: null })}
                   onClick={(e) => {
                     e.preventDefault();

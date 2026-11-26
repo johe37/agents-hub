@@ -56,9 +56,9 @@ function rain() {
   requestAnimationFrame(frame);
 }
 
-/** The agent cards on screen hop one after another, like balls tossed in turn. */
+/** Agents and workspaces on screen hop one after another, like balls tossed in turn. */
 function hop() {
-  document.querySelectorAll<HTMLElement>("[data-agent-card]").forEach((el, i) =>
+  document.querySelectorAll<HTMLElement>("[data-juggle]").forEach((el, i) =>
     el.animate(
       [{ transform: "translateY(0)" }, { transform: "translateY(-18px) rotate(-1deg)", offset: 0.4 }, { transform: "translateY(0)" }],
       { duration: 520, delay: i * 90, easing: "cubic-bezier(.3,.7,.4,1)" },
