@@ -974,13 +974,15 @@ pub fn head(cwd: &str) -> Option<String> {
 /// Push the checked-out branch, setting its upstream on the first push, then open a draft MR when asked.
 pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
     let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
-    if run(cwd, 5, "git", &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
-        run(cwd, 120, "git", &["push"])?;
-    } else {
-        let remotes = run(cwd, 5, "git", &["remote"])?;
-        let remote = remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string();
-        run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
-    }
+    // Always push to a same-named branch: an upstream like origin/master (branch made from it) makes a plain push fail.
+    let remote = match run(cwd, 5, "git", &["config", &format!("branch.{branch}.remote")]) {
+        Ok(r) if !r.trim().is_empty() && r.trim() != "." => r.trim().to_string(),
+        _ => {
+            let remotes = run(cwd, 5, "git", &["remote"])?;
+            remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string()
+        }
+    };
+    run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
     if !open_mr {
         return Ok(format!("Pushed {branch}"));
     }
