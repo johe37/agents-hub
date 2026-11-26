@@ -18,6 +18,9 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
  */
 function macKey(e: KeyboardEvent): string | undefined {
   const only = (m: "alt" | "meta") => (m === "alt" ? e.altKey && !e.metaKey : e.metaKey && !e.altKey) && !e.ctrlKey && !e.shiftKey;
+  // Option stays Meta on letters, but layouts such as Swedish type @ $ | [ ] { } \ with
+  // Option on the other keys, and Meta would swallow them.
+  if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.length === 1 && !/^Key|^Space$/.test(e.code)) return e.key;
   if (only("alt")) return { ArrowLeft: "\x1bb", ArrowRight: "\x1bf" }[e.key];
   if (only("meta")) return { ArrowLeft: "\x01", ArrowRight: "\x05", Backspace: "\x15" }[e.key];
   return undefined;
