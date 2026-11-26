@@ -266,7 +266,8 @@ fn toplevel(path: &str) -> Option<String> {
 /// The commits on the checked-out branch that the default branch lacks, newest first, at most 10; on the default branch itself, its recent history.
 pub fn commits(path: &str) -> Value {
     let Some(root) = toplevel(path) else { return json!([]) };
-    let base = ["origin/HEAD", "origin/main", "origin/master", "main", "master"]
+    // upstream first: in a fork, that is the repo the branch is meant for.
+    let base = ["upstream/HEAD", "upstream/main", "upstream/master", "origin/HEAD", "origin/main", "origin/master", "main", "master"]
         .into_iter()
         .find(|b| git_out(&root, &["rev-parse", "--verify", "--quiet", b]).is_some_and(|s| !s.trim().is_empty()));
     let log = |range: &[&str]| {
@@ -351,6 +352,8 @@ mod tests {
         assert_eq!((list[0]["title"].as_str(), list[0]["message"].as_str()), (Some("add a"), Some("why")));
         assert_eq!(list[0]["files"], json!([["A", "a.txt"]]));
         let d = diff(p, None, list[0]["sha"].as_str());
+        sh(&["update-ref", "refs/remotes/upstream/master", "HEAD"]);
+        assert_eq!(commits(p).as_array().unwrap().len(), 2, "upstream/master wins over main: nothing on top, so history");
         assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
         std::fs::remove_dir_all(dir).unwrap();
     }
