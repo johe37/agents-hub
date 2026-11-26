@@ -23,6 +23,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-waiting: var(--waiting);
   --color-waiting-soft: var(--waiting-soft);
+  --color-waiting-fg: var(--waiting-fg);
   --color-working: var(--working);
   --color-working-soft: var(--working-soft);
   --color-idle: var(--idle);

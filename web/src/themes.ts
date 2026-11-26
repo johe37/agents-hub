@@ -59,6 +59,8 @@ function mix(a: string, b: string, t: number): string {
 function build(id: string, s: Spec): Theme {
   const vars: Record<string, string> = { ...s.ui };
   for (const k of SOFT) vars[`${k}-soft`] = s.soft?.[k] ?? mix(s.ui[k], s.ui.bg, s.mode === "dark" ? 0.16 : 0.12);
+  // Text on a solid waiting background: a near-black shade of the same hue.
+  vars["waiting-fg"] = mix(s.ui.waiting, "#000000", 0.12);
   HL.forEach((k, i) => (vars[`hl-${k}`] = s.hl[i]));
   [vars.shadow, vars["shadow-lg"]] = SHADOW[s.mode];
   const a = s.ansi;

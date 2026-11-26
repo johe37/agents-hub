@@ -79,7 +79,7 @@ function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; 
         <span
           class={cls(
             "ml-auto min-w-5 rounded-full px-1.5 text-center text-[11px] font-semibold tabular-nums leading-5",
-            p.tone === "waiting" ? "bg-waiting text-[#1d1405]" : "bg-hover text-fg-2",
+            p.tone === "waiting" ? "bg-waiting text-waiting-fg" : "bg-hover text-fg-2",
           )}
         >
           {p.count}
@@ -266,7 +266,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                     </Show>
                   </div>
                   <Show when={waiting()}>
-                    <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-[#1d1405] group-hover:hidden">{waiting()}</span>
+                    <span class="rounded-full bg-waiting px-1.5 text-[10.5px] font-semibold leading-[18px] text-waiting-fg group-hover:hidden">{waiting()}</span>
                   </Show>
                   <button
                     class="-mr-1 hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid"

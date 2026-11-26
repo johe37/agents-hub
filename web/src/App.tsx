@@ -183,7 +183,7 @@ export function App() {
           <img src="/logo.png" alt="" class="size-5" />
           <span class="text-[13px] font-semibold">jugglr</span>
           <Show when={store.waiting().length}>
-            <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-[11px] font-semibold leading-5 text-[#1d1405]">{store.waiting().length} waiting</span>
+            <span class="ml-auto mr-2 rounded-full bg-waiting px-2 text-[11px] font-semibold leading-5 text-waiting-fg">{store.waiting().length} waiting</span>
           </Show>
         </div>
         <Show when={connection() === "offline"}>
