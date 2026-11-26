@@ -420,7 +420,7 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
         <For each={i().labels}>{(l) => <Badge>{l}</Badge>}</For>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude in your clone with a prompt about the issue, to edit first">
+        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
           <Sparkles size={13} /> Work on it with Claude
         </Button>
         <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-fg-2 hover:bg-hover hover:text-fg">

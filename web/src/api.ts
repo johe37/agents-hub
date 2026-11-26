@@ -275,7 +275,7 @@ export type Action =
   | { type: "rename_workspace"; workspace: string; name: string }
   | { type: "rescan" }
   | { type: "checkout"; mr: string; kind?: "claude" | "shell" | "nvim" }
-  | { type: "find_clone"; project: string }
+  | { type: "issue_checkout"; issue: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
   | { type: "commit"; workspace: string; message: string }

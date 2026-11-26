@@ -189,13 +189,12 @@ pub enum Cmd {
     ThreadNote { path: String, mr: Box<crate::gitlab::Mr>, thread: String, text: String, resolve: bool, done: String },
     /// Fetch the MRs to review and the assigned issues again.
     ForgetInbox(crate::config::Section),
-    /// Check out an MR from the clone at repo and open it for a review with Claude.
-    /// Check out the MR and open it in a workspace with a window of this kind: claude, shell or nvim.
-    StartReview { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
-    /// Check out the branch of your MR next to the clone at repo, and open it with a window of this kind.
-    StartMine { mr: Box<crate::gitlab::Mr>, repo: String, kind: &'static str },
-    /// Open Claude in the workspace of the clone at repo, with the issue in its prompt.
-    StartIssue { issue: Box<crate::gitlab::Issue>, repo: String },
+    /// Check out the MR from its clone, cloned first when missing, and open it in a workspace with a window of this kind: claude, shell or nvim.
+    StartReview { mr: Box<crate::gitlab::Mr>, kind: &'static str },
+    /// Check out the branch of your MR next to its clone, and open it with a window of this kind.
+    StartMine { mr: Box<crate::gitlab::Mr>, kind: &'static str },
+    /// Open Claude in a worktree for the issue, with the issue in its prompt.
+    StartIssue { issue: Box<crate::gitlab::Issue> },
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -329,25 +328,29 @@ impl Collector {
                     self.inbox.forget(section);
                     last = Instant::now() - interval;
                 }
-                Ok(Cmd::StartReview { mr, repo, kind }) => {
-                    let notices = Arc::clone(&self.notices);
+                Ok(Cmd::StartReview { mr, kind }) => {
+                    let (notices, dirs) = (Arc::clone(&self.notices), Arc::clone(&self.dirs));
                     std::thread::spawn(move || {
                         let name = format!("review-{}-{}", mr.repo(), mr.iid);
-                        let r = crate::gitlab::checkout(&repo, &mr).and_then(|dir| tmux::open_checkout(&dir, &name, kind, crate::app::window_command(kind), Some(&mr.review_prompt())));
+                        let r = crate::gitlab::ensure_clone(&dirs, &mr.project, &mr.url)
+                            .and_then(|repo| crate::gitlab::checkout(&repo, &mr)).and_then(|dir| tmux::open_checkout(&dir, &name, kind, crate::app::window_command(kind), Some(&mr.review_prompt())));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }
-                Ok(Cmd::StartMine { mr, repo, kind }) => {
-                    let notices = Arc::clone(&self.notices);
+                Ok(Cmd::StartMine { mr, kind }) => {
+                    let (notices, dirs) = (Arc::clone(&self.notices), Arc::clone(&self.dirs));
                     std::thread::spawn(move || {
-                        let r = crate::gitlab::checkout_branch(&repo, &mr, &mr.branch_dir()).and_then(|dir| tmux::open_checkout(&dir, &basename(&dir), kind, crate::app::window_command(kind), None));
+                        let r = crate::gitlab::ensure_clone(&dirs, &mr.project, &mr.url)
+                            .and_then(|repo| crate::gitlab::checkout_branch(&repo, &mr, &mr.branch_dir())).and_then(|dir| tmux::open_checkout(&dir, &basename(&dir), kind, crate::app::window_command(kind), None));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not check out !{}: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }
-                Ok(Cmd::StartIssue { issue, repo }) => {
-                    let notices = Arc::clone(&self.notices);
+                Ok(Cmd::StartIssue { issue }) => {
+                    let (notices, dirs) = (Arc::clone(&self.notices), Arc::clone(&self.dirs));
                     std::thread::spawn(move || {
-                        let r = tmux::open_issue(&repo, &issue.prompt());
+                        let r = crate::gitlab::ensure_clone(&dirs, &issue.project, &issue.url)
+                            .and_then(|repo| crate::gitlab::issue_worktree(&repo, &issue, &issue.dir()))
+                            .and_then(|dir| tmux::open_issue(&dir, &issue.prompt()));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not open #{}: {e}", issue.iid), true), |m| (m, false)));
                     });
                 }

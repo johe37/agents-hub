@@ -70,9 +70,36 @@ impl Issue {
 
     pub fn prompt(&self) -> String {
         format!(
-            "Work on issue #{} in {}: \"{}\". Read it with `glab issue view {} -R {} --comments`. Create a branch for it first, then plan the change before you edit any code.",
-            self.iid, self.project, self.title, self.iid, self.project
+            "Work on issue #{} in {}: \"{}\". Read it with `glab issue view {} -R {} --comments`. Work on the branch {} (create it if it is not checked out), and plan the change before you edit any code.",
+            self.iid,
+            self.project,
+            self.title,
+            self.iid,
+            self.project,
+            self.branch()
         )
+    }
+
+    /// `142-fix-the-parser`: the issue's number and a short slug of its title.
+    pub fn branch(&self) -> String {
+        let mut slug = String::new();
+        for c in self.title.to_lowercase().chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c);
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+            if slug.len() >= 40 {
+                break;
+            }
+        }
+        let slug = slug.trim_end_matches('-');
+        if slug.is_empty() { self.iid.to_string() } else { format!("{}-{slug}", self.iid) }
+    }
+
+    /// Where the hub checks out the issue's branch.
+    pub fn dir(&self) -> PathBuf {
+        issues_dir().join(format!("{}-{}", self.repo(), self.iid))
     }
 }
 
@@ -832,12 +859,110 @@ pub fn branches_dir() -> PathBuf {
     crate::config::cache_dir().join("mrs")
 }
 
-/// The local clone of project among the scanned dirs: one whose remote is the project, else one with its name.
+/// The local clone of project among the scanned dirs: one with a remote that points at the project.
+/// A repo with only the same name is not enough: two projects can share a name.
 pub fn find_clone(dirs: &[(String, bool)], project: &str) -> Option<String> {
     let name = project.rsplit('/').next()?;
-    let clones: Vec<&String> = dirs.iter().filter(|(p, repo)| *repo && Path::new(p).file_name().is_some_and(|n| n == name)).map(|(p, _)| p).collect();
-    let is_project = |p: &&&String| run(p, 5, "git", &["remote", "-v"]).is_ok_and(|r| r.contains(&format!("{project}.git")) || r.contains(&format!("{project} ")));
-    clones.iter().find(is_project).or(clones.first()).map(|p| p.to_string())
+    dirs.iter()
+        .filter(|(p, repo)| *repo && Path::new(p).file_name().is_some_and(|n| n == name))
+        .map(|(p, _)| p)
+        .find(|p| project_remote(p, project).is_some())
+        .cloned()
+}
+
+/// The remote of the clone at repo that points at project. The URLs as configured: `git remote -v` shows them after any insteadOf rewrite.
+fn project_remote(repo: &str, project: &str) -> Option<String> {
+    remote_for(&run(repo, 5, "git", &["config", "--get-regexp", r"^remote\..*\.url$"]).ok()?, project)
+}
+
+pub fn clones_dir() -> PathBuf {
+    crate::config::cache_dir().join("clones")
+}
+
+pub fn issues_dir() -> PathBuf {
+    crate::config::cache_dir().join("issues")
+}
+
+/// Clones and worktrees of the same repo must not run at once: git locks would make one of them fail.
+static CLONING: Mutex<()> = Mutex::new(());
+
+/// A clone of project: one under the repo roots, else the hub's own in the cache, cloned with glab when missing.
+/// url is a web URL in the project, such as an issue's: glab clones from its host.
+pub fn ensure_clone(dirs: &[(String, bool)], project: &str, url: &str) -> Result<String, String> {
+    if let Some(repo) = find_clone(dirs, project) {
+        return Ok(repo);
+    }
+    let _lock = CLONING.lock().unwrap_or_else(|e| e.into_inner());
+    clone_into(&clones_dir().join(project), project, url)
+}
+
+fn clone_into(dir: &Path, project: &str, url: &str) -> Result<String, String> {
+    let d = dir.display().to_string();
+    if dir.join(".git").exists() {
+        return Ok(d);
+    }
+    let parent = dir.parent().ok_or("No place for the clone")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    // Clone next to it, then move it in place: a clone that stops half-way is never taken for a whole one.
+    let partial = dir.with_extension("partial");
+    let _ = std::fs::remove_dir_all(&partial);
+    let host = url.split_once("://").and_then(|(_, rest)| rest.split('/').next()).filter(|h| !h.is_empty());
+    let mut cmd = Command::new("timeout");
+    cmd.args(["600", "glab", "repo", "clone", project]).arg(&partial).current_dir(parent).env("GIT_TERMINAL_PROMPT", "0").stdin(std::process::Stdio::null());
+    if let Some(h) = host {
+        cmd.env("GITLAB_HOST", h);
+    }
+    let out = cmd.output().map_err(|e| format!("glab: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(match out.status.code() {
+            Some(124) => "The clone timed out".to_string(),
+            Some(127) => "glab is not installed".to_string(),
+            _ => format!("Could not clone {project}: {}", failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or("glab failed".into())),
+        });
+    }
+    std::fs::rename(&partial, dir).map_err(|e| e.to_string())?;
+    Ok(d)
+}
+
+/// A worktree in dir, such as `Issue::dir`, for the issue on its own branch, made from the default branch
+/// of the project's remote in the clone at repo. The clone itself is never switched.
+pub fn issue_worktree(repo: &str, issue: &Issue, dir: &Path) -> Result<String, String> {
+    let _lock = CLONING.lock().unwrap_or_else(|e| e.into_inner());
+    let branch = issue.branch();
+    if let Some(dir) = worktree_with(&run(repo, 5, "git", &["worktree", "list", "--porcelain"])?, &branch) {
+        return Ok(dir);
+    }
+    if dir.exists() {
+        return Err(format!("{} is in the way", crate::config::shorten(&dir.display().to_string())));
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let d = dir.display().to_string();
+    if run(repo, 5, "git", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
+        run(repo, 60, "git", &["worktree", "add", &d, &branch])?;
+        return Ok(d);
+    }
+    let remote = project_remote(repo, &issue.project).unwrap_or_else(|| "origin".into());
+    run(repo, 180, "git", &["fetch", &remote])?;
+    let base = default_branch(repo, &remote)?;
+    // No tracking: the first push sets a same-named upstream, not the default branch.
+    run(repo, 60, "git", &["worktree", "add", "--no-track", "-b", &branch, &d, &base])?;
+    Ok(d)
+}
+
+/// `origin/main` or the like: the remote's HEAD, asked from the remote when the clone does not know it yet.
+fn default_branch(repo: &str, remote: &str) -> Result<String, String> {
+    let head = format!("refs/remotes/{remote}/HEAD");
+    let read = || run(repo, 5, "git", &["symbolic-ref", "--short", &head]).ok().map(|s| s.trim().to_string());
+    if let Some(b) = read() {
+        return Ok(b);
+    }
+    let _ = run(repo, 60, "git", &["remote", "set-head", remote, "--auto"]);
+    read()
+        .or_else(|| ["main", "master"].iter().map(|b| format!("{remote}/{b}")).find(|b| run(repo, 5, "git", &["rev-parse", "--verify", "--quiet", b]).is_ok()))
+        .ok_or_else(|| format!("Can't find the default branch of {remote}"))
 }
 
 /// The clone URL of project on the same host and protocol as remote, `git@host:a/b.git` or `https://host/a/b.git`.
@@ -1279,6 +1404,46 @@ mod tests {
         assert_eq!(remote_for(remotes, "anna/app"), None);
         assert_eq!(remote_for(remotes, "app"), None);
         assert_eq!(remote_for("remote.up.url ssh://git@git.x:22/other/acme/app.git\n", "acme/app"), None);
+    }
+
+    #[test]
+    fn names_the_issue_branch_from_its_title() {
+        let is = |title: &str| Issue { iid: 42, title: title.into(), ..Default::default() }.branch();
+        assert_eq!(is("Fix the parser: crash on `{}`!"), "42-fix-the-parser-crash-on");
+        assert_eq!(is("Åäö"), "42");
+        assert!(is(&"long ".repeat(30)).len() <= 44);
+    }
+
+    #[test]
+    fn makes_an_issue_worktree_from_the_default_branch() {
+        let dir = std::env::temp_dir().join(format!("jugglr-issue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sh = |cwd: &Path, args: &[&str]| {
+            let out = Command::new("git").current_dir(cwd).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let up = dir.join("up");
+        std::fs::create_dir_all(&up).unwrap();
+        sh(&up, &["init", "-q", "-b", "trunk"]);
+        sh(&up, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        sh(&dir, &["clone", "-q", up.to_str().unwrap(), "app"]);
+        let app = dir.join("app");
+        sh(&app, &["remote", "rename", "origin", "upstream"]);
+        sh(&app, &["remote", "set-url", "upstream", "git@git.x:acme/app.git"]);
+        sh(&app, &["config", &format!("url.{}.insteadOf", up.display()), "git@git.x:acme/app.git"]);
+        sh(&app, &["checkout", "-q", "-b", "mine"]);
+        let repo = app.to_str().unwrap();
+        let dirs = vec![(repo.to_string(), true), (dir.join("other/app").display().to_string(), true)];
+        assert_eq!(find_clone(&dirs, "acme/app").as_deref(), Some(repo));
+        assert_eq!(find_clone(&dirs, "else/app"), None, "the same name is not enough");
+        let issue = Issue { iid: 7, title: "Fix it".into(), project: "acme/app".into(), ..Default::default() };
+        let at = dir.join("cache/app-7");
+        let wt = issue_worktree(repo, &issue, &at).unwrap();
+        assert_eq!(run(&wt, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "7-fix-it");
+        assert!(run(&wt, 5, "git", &["rev-parse", "--abbrev-ref", "@{u}"]).is_err(), "no upstream until the first push");
+        assert_eq!(run(repo, 5, "git", &["branch", "--show-current"]).unwrap().trim(), "mine", "the clone is not switched");
+        assert_eq!(issue_worktree(repo, &issue, &at).unwrap(), wt, "a second time finds the worktree");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

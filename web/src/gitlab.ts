@@ -41,8 +41,9 @@ export async function openMr(m: Mr, kind: Kind, prompt?: string) {
   if (r.workspace) go({ view: "workspace", name: r.workspace, window: r.window ?? null });
 }
 
+/** Check out a worktree for the issue, cloning the project into the cache when missing; Where in the composer can still change it. */
 export async function startIssue(i: Issue) {
-  const r = await act({ type: "find_clone", project: i.project }, { key: `issue:${i.key}`, quiet: true });
+  const r = await act({ type: "issue_checkout", issue: i.key }, { key: `issue:${i.key}`, quiet: true });
   if (r.ok && r.path) setComposer({ path: r.path, prompt: i.prompt });
 }
 
