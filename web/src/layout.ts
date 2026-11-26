@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { readStored, writeStored } from "./store";
 
-function stored(key: string, fallback: boolean) {
+export function stored(key: string, fallback: boolean) {
   const v = readStored(key);
   const [get, set] = createSignal(v === null ? fallback : v === "1");
   const put = (value: boolean) => {

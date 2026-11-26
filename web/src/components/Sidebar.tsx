@@ -1,58 +1,33 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
-import { act, chatWorkspace, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { act, chatWorkspace, readStored, writeStored, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, age, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
-import { toggleNav } from "../layout";
+import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon } from "./ui";
 
-function stored(key: string, fallback: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : v === "1";
-  } catch {
-    return fallback;
-  }
-}
-
-function storedFlag(key: string) {
-  const [get, set] = createSignal(stored(key, false));
-  const toggle = () => {
-    set(!get());
-    try {
-      localStorage.setItem(key, get() ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  };
-  return [get, toggle] as const;
-}
-
-const [showClosed, toggleClosed] = storedFlag("show-closed");
-const [showClosedChats, toggleClosedChats] = storedFlag("show-closed-chats");
-
-function storedList(key: string): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(key) ?? "[]");
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
+const [showClosed, setShowClosed] = stored("show-closed", false);
+const [showClosedChats, setShowClosedChats] = stored("show-closed-chats", false);
+const toggleClosed = () => setShowClosed(!showClosed());
+const toggleClosedChats = () => setShowClosedChats(!showClosedChats());
 
 function storedSet(key: string) {
-  const [get, set] = createSignal(new Set(storedList(key)));
+  const list = (() => {
+    try {
+      const v = JSON.parse(readStored(key) ?? "[]");
+      return Array.isArray(v) ? (v as string[]) : [];
+    } catch {
+      return [];
+    }
+  })();
+  const [get, set] = createSignal(new Set(list));
   const toggle = (name: string) => {
     const next = new Set(get());
     if (!next.delete(name)) next.add(name);
     set(next);
-    try {
-      localStorage.setItem(key, JSON.stringify([...next]));
-    } catch {
-      /* ignore */
-    }
+    writeStored(key, JSON.stringify([...next]));
   };
   return [get, toggle] as const;
 }
