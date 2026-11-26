@@ -1,14 +1,14 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { getJSON, type Agent, type Commit, type DraftNote, type FileChange, type Mr, type MrChanges, type Thread } from "../api";
 import { highlightLines, language } from "../highlight";
-import { act, isBusy, now, setDraft, state } from "../store";
-import { age, alive, cls } from "../util";
+import { act, isBusy, setDraft, state } from "../store";
+import { alive, cls } from "../util";
 import { Conversation } from "./Conversation";
 import { parseHunks, type DiffLine } from "./Diff";
 import { Chat, Check, ChevronDown, Rename, Sparkles, Trash, X } from "./icons";
 import { Markdown } from "./Markdown";
 import { ReviewDiff } from "./ReviewDiff";
-import { Badge, Button, IconButton, Spinner } from "./ui";
+import { Badge, Button, IconButton, Spinner, Ago } from "./ui";
 
 export type DetailTab = "overview" | "commits" | "changes" | "pipeline";
 
@@ -351,7 +351,7 @@ export function Commits(p: { review: Review }) {
                   <span class="min-w-0 flex-1">
                     <span class="block truncate text-base text-fg">{c.title}</span>
                     <span class="text-sm text-fg-3">
-                      {c.author} · {age(c.created, now())} ago
+                      {c.author} · <Ago ts={c.created} suffix />
                     </span>
                   </span>
                   <span class="shrink-0 font-mono text-sm text-fg-2">{c.short}</span>

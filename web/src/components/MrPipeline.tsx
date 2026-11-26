@@ -1,11 +1,11 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { getJSON, type Job, type Mr, type PipelineRun } from "../api";
 import { ansiToHtml } from "../ansi";
-import { act, isBusy, now } from "../store";
-import { age, cls } from "../util";
+import { act, isBusy } from "../store";
+import { cls } from "../util";
 import { Check, External, Play, Refresh, Sparkles, Stop, X } from "./icons";
 import { askClaude } from "./MrReview";
-import { Badge, Button, IconButton, Spinner, SectionTitle } from "./ui";
+import { Badge, Button, IconButton, Spinner, SectionTitle, Ago } from "./ui";
 
 /** The job whose log the Pipelines tab shows. */
 export const [pipeJob, setPipeJob] = createSignal<number | null>(null);
@@ -424,7 +424,7 @@ export function Pipeline(p: { mr: Mr }) {
                     <StageDots stages={x.stages} />
                     <span class="w-14 shrink-0 text-right tabular-nums text-fg-3">{duration(x.duration)}</span>
                     <span class="w-28 shrink-0 truncate text-right text-fg-3" title={new Date(x.created * 1000).toLocaleString()}>
-                      {age(x.created, now())} ago{x.user ? ` · ${x.user}` : ""}
+                      <Ago ts={x.created} suffix />{x.user ? ` · ${x.user}` : ""}
                     </span>
                   </button>
                 )}

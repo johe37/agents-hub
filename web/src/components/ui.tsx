@@ -1,7 +1,8 @@
 import { For, Show, createSignal, onCleanup, splitProps, type JSX } from "solid-js";
 import { Dynamic, Portal } from "solid-js/web";
 import type { Status, Win } from "../api";
-import { STATUS, cls } from "../util";
+import { STATUS, age, cls } from "../util";
+import { now } from "../store";
 import { Bot, Chevron, ChevronDown, Code, Terminal } from "./icons";
 
 export function kindIcon(w: Win, size = 14) {
@@ -137,6 +138,17 @@ export function SectionTitle(p: {
         </button>
       </Show>
     </Dynamic>
+  );
+}
+
+/** Time since ts (Unix seconds), with the exact time as a tooltip. */
+export function Ago(p: { ts: number; suffix?: boolean; class?: string }) {
+  const date = () => new Date(p.ts * 1000);
+  return (
+    <time datetime={date().toISOString()} title={date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} class={p.class}>
+      {age(p.ts, now())}
+      {p.suffix ? " ago" : ""}
+    </time>
   );
 }
 

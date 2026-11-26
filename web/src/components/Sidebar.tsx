@@ -2,11 +2,11 @@ import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
 import { act, chatWorkspace, readStored, writeStored, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
-import { MOD, age, alive, cls, until, worst } from "../util";
+import { MOD, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
-import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle } from "./ui";
+import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle, Ago } from "./ui";
 
 const [showClosed, setShowClosed] = stored("show-closed", false);
 const [showClosedChats, setShowClosedChats] = stored("show-closed-chats", false);
@@ -335,7 +335,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                     <div class="min-w-0 flex-1">
                       <div class="truncate text-base text-fg-2 group-hover:text-fg">{c.name}</div>
                       <div class="truncate text-xs text-fg-3">
-                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · {age(c.closed_at, now())} ago
+                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · <Ago ts={c.closed_at} suffix />
                       </div>
                     </div>
                   </button>
@@ -382,7 +382,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                   <div class="min-w-0 flex-1">
                     <div class={cls("truncate text-base", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
                     <Show when={a()}>
-                      <div class="truncate text-xs text-fg-3">{age(a()!.timestamp, now())} ago</div>
+                      <div class="truncate text-xs text-fg-3"><Ago ts={a()!.timestamp} suffix /></div>
                     </Show>
                   </div>
                   <Show when={a()}>
@@ -423,7 +423,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                   </Show>
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-base text-fg-2 group-hover:text-fg">{a.title}</div>
-                    <div class="truncate text-xs text-fg-3">{age(a.timestamp, now())} ago</div>
+                    <div class="truncate text-xs text-fg-3"><Ago ts={a.timestamp} suffix /></div>
                   </div>
                 </button>
               )}

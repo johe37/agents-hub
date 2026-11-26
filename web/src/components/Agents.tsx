@@ -1,11 +1,11 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "../api";
-import { act, agentRoute, ask, go, isBusy, loaded, newChat, now, setComposer, state, store } from "../store";
-import { STATUS, age, alive, cls, fuzzyWords, modelName, money } from "../util";
+import { act, agentRoute, ask, go, isBusy, loaded, newChat, setComposer, state, store } from "../store";
+import { STATUS, alive, cls, fuzzyWords, modelName, money } from "../util";
 import { AgentCard } from "./AgentCard";
 import { Conversation } from "./Conversation";
 import { Bot, Branch, Chat, Check, Done, Play, Search, Sparkles, Trash } from "./icons";
-import { Badge, Button, Empty, Kbd, StatusDot, StatusPill, SectionTitle } from "./ui";
+import { Badge, Button, Empty, Kbd, StatusDot, StatusPill, SectionTitle, Ago } from "./ui";
 
 const GROUPS: { title: string; test: (a: Agent) => boolean; collapsed?: boolean }[] = [
   { title: "Working", test: (a) => a.status === "working" || a.status === "polling" },
@@ -215,7 +215,7 @@ function AgentLine(p: { agent: Agent }) {
         <Show when={money(a().cost)}>
           <span>{money(a().cost)}</span>
         </Show>
-        <span class="w-8 text-right">{age(a().timestamp, now())}</span>
+        <Ago ts={a().timestamp} class="w-8 text-right" />
       </div>
       <Show when={!alive(a().status) && a().id}>
         <Button size="sm" variant="ghost" loading={isBusy(`resume:${a().key}`)} onClick={() => act({ type: "resume", agent: a().key }, { key: `resume:${a().key}` }).then((r) => r.ok && r.workspace && r.window && go({ view: "workspace", name: r.workspace, window: r.window }))}>

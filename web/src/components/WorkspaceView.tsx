@@ -1,11 +1,11 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { getJSON, type Agent, type Commit, type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, now, setDiffView, state, store } from "../store";
+import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
-import { age, cls, worst } from "../util";
+import { cls, worst } from "../util";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Check, Chevron, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Ago } from "./ui";
 import { focus, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
@@ -51,7 +51,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                 <StatusDot status={a.status} class="mt-[6px]" />
                 <div class="min-w-0 flex-1">
                   <div class="truncate text-base font-medium text-fg">{a.title}</div>
-                  <div class="truncate text-sm text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : `${age(a.timestamp, now())} ago`}</div>
+                  <div class="truncate text-sm text-fg-3">{a.status === "working" ? (a.tool ?? "Thinking…") : a.status === "waiting" ? (a.message ?? "Waiting for you") : <Ago ts={a.timestamp} suffix />}</div>
                 </div>
               </button>
             )}
@@ -192,7 +192,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                       <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
                         <div class="truncate text-sm text-fg">{c.title}</div>
                         <div class="truncate text-xs text-fg-3">
-                          <span class="font-mono">{c.short}</span> · {c.author} · {age(c.created, now())} ago
+                          <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
                         </div>
                       </button>
                       <FileDiff size={13} class="mt-1 shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />

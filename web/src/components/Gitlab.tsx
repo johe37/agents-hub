@@ -2,13 +2,13 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, o
 import type { JSX } from "solid-js";
 import type { Issue, Mr, Thread, Todo } from "../api";
 import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Kind, type Tab } from "../gitlab";
-import { act, go, isBusy, now, route, state } from "../store";
-import { age, cls, fuzzyWords } from "../util";
+import { act, go, isBusy, route, state } from "../store";
+import { cls, fuzzyWords } from "../util";
 import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
 import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Edge, Empty, IconButton, SectionTitle } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton, SectionTitle, Ago } from "./ui";
 import { focus, showList, toggleList } from "../layout";
 
 function Lead(p: { mr: Mr }) {
@@ -55,7 +55,7 @@ function MrRow(p: { mr: Mr; tab: Tab; group: string }) {
               <Layers size={11} />
             </span>
           </Show>
-          <span class="ml-auto shrink-0 tabular-nums">{age(m().updated, now())}</span>
+          <Ago ts={m().updated} class="ml-auto shrink-0 tabular-nums" />
         </div>
       </div>
     </div>
@@ -75,7 +75,7 @@ function IssueRow(p: { issue: Issue }) {
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 text-sm text-fg-3">
           <span class="truncate">{i().labels.slice(0, 2).join(" · ") || i().project.split("/").pop()}</span>
-          <span class="ml-auto shrink-0 tabular-nums">{age(i().updated, now())}</span>
+          <Ago ts={i().updated} class="ml-auto shrink-0 tabular-nums" />
         </div>
       </div>
     </div>
@@ -130,7 +130,7 @@ function TodoRow(p: { todo: Todo }) {
           <span class="truncate">
             {todoWhat(t())} · {t().project.split("/").pop()}
           </span>
-          <span class="ml-auto shrink-0 tabular-nums">{age(t().created, now())}</span>
+          <Ago ts={t().created} class="ml-auto shrink-0 tabular-nums" />
         </div>
       </div>
     </div>
@@ -146,7 +146,7 @@ function TodoBanner(p: { todo: Todo; onDone: () => void }) {
       <div class="flex flex-wrap items-center gap-2 text-base">
         <TodoMark todo={t()} />
         <span class="font-medium text-fg">{todoWhat(t())}</span>
-        <span class="tabular-nums text-fg-3">{age(t().created, now())}</span>
+        <Ago ts={t().created} class="tabular-nums text-fg-3" />
         <div class="ml-auto flex items-center gap-2">
           <a href={t().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
             Open <External size={12} />

@@ -1,12 +1,12 @@
 import { Show } from "solid-js";
 import type { Agent } from "../api";
-import { act, agentRoute, go, isBusy, now } from "../store";
-import { age, cls } from "../util";
+import { act, agentRoute, go, isBusy } from "../store";
+import { cls } from "../util";
 import { Branch, Check, Chevron, Done, Hand, X } from "./icons";
 import { Markdown } from "./Markdown";
 import { Reply } from "./Reply";
 import { ToolDetail } from "./ToolCall";
-import { Button, StatusPill } from "./ui";
+import { Button, StatusPill, Ago } from "./ui";
 
 /** A waiting agent with everything needed to answer it without leaving the agents view. */
 export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => void; replyRef?: (el: HTMLTextAreaElement) => void }) {
@@ -35,7 +35,7 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
             <span class="truncate">{a().branch}</span>
           </span>
         </Show>
-        <span class="ml-auto shrink-0 text-sm tabular-nums text-fg-3">{age(a().timestamp, now())} ago</span>
+        <Ago ts={a().timestamp} suffix class="ml-auto shrink-0 text-sm tabular-nums text-fg-3" />
         <button
           class="-mr-1.5 inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-sm text-fg-2 hover:bg-hover hover:text-fg"
           onClick={(e) => {
