@@ -5,6 +5,7 @@ import { Menu } from "./components/icons";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
 import { ChangesReview } from "./components/ChangesReview";
+import { Eggs } from "./components/Eggs";
 import { Confirm, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
@@ -213,6 +214,7 @@ export function App() {
       <Palette />
       <NewAgent />
       <ChangesReview />
+      <Eggs />
       <Help />
       <Settings />
       <Confirm />

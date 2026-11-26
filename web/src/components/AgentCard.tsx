@@ -15,6 +15,7 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
   const deny = () => act({ type: "deny", agent: a().key }, { key: `deny:${a().key}` });
   return (
     <article
+      data-agent-card
       onClick={() => p.onFocus?.()}
       class={cls(
         "animate-slide-up overflow-hidden rounded-2xl border bg-panel transition-[border-color,box-shadow] duration-150",
