@@ -495,7 +495,7 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   danger?: boolean;
   run: () => void;
 } | null>(null);
-export const [diffView, setDiffView] = createSignal<{ path: string; file: string | null; title: string } | null>(null);
+export const [diffView, setDiffView] = createSignal<{ workspace: string; path: string; file: string | null; title: string } | null>(null);
 
 export function openPalette(mode: PaletteMode = "all") {
   setPaletteMode(mode);

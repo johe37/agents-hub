@@ -356,7 +356,14 @@ async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, Strin
         return (StatusCode::NOT_FOUND, "Unknown directory").into_response();
     }
     let file = q.get("file").cloned();
-    let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref())).await.unwrap_or_default();
+    let commit = q.get("commit").cloned();
+    if commit.as_deref().is_some_and(|c| !review::is_sha(c)) {
+        return (StatusCode::BAD_REQUEST, "Not a commit").into_response();
+    }
+    if q.contains_key("commits") {
+        return Json(tokio::task::spawn_blocking(move || model::commits(&path)).await.unwrap_or_default()).into_response();
+    }
+    let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref())).await.unwrap_or_default();
     Json(json!({"diff": text})).into_response()
 }
 

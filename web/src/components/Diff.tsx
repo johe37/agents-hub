@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show } from "solid-js";
 import { cls } from "../util";
 
 export interface DiffLine {
@@ -137,30 +137,5 @@ export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: str
         </tbody>
       </table>
     </div>
-  );
-}
-
-export function UnifiedDiff(p: { text: string }) {
-  const files = createMemo(() => parseUnified(p.text));
-  return (
-    <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">No changes against HEAD</div>}>
-      <div class="flex flex-col gap-4">
-        <For each={files()}>
-          {(f) => (
-            <section class="overflow-hidden rounded-xl border border-line bg-panel">
-              <header class="sticky top-0 z-[1] flex items-center gap-2 border-b border-line bg-raised/95 px-3 py-2 backdrop-blur">
-                <span class="truncate font-mono text-[12px] text-fg">{f.name}</span>
-                <span class="ml-auto font-mono text-[11.5px] tabular-nums">
-                  <span class="text-add">+{f.added}</span> <span class="text-del">−{f.removed}</span>
-                </span>
-              </header>
-              <Show when={!f.binary} fallback={<div class="px-3 py-3 text-fg-3">Binary file</div>}>
-                <DiffLines lines={f.lines} />
-              </Show>
-            </section>
-          )}
-        </For>
-      </div>
-    </Show>
   );
 }

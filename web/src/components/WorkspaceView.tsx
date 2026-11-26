@@ -92,7 +92,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
             </span>
           </Show>
           <Show when={g()?.files.length}>
-            <button class="ml-auto text-[12px] text-fg-2 hover:text-fg" onClick={() => setDiffView({ path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
+            <button class="ml-auto text-[12px] text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
               Review all
             </button>
           </Show>
@@ -127,7 +127,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
                     <button
                       class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
                       title={`${c.title}: ${file}`}
-                      onClick={() => setDiffView({ path: p.ws.path, file, title: file })}
+                      onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
                     >
                       <span class={cls("w-3 shrink-0 text-center font-mono text-[11px] font-semibold", c.tone)}>{c.letter}</span>
                       <span class="min-w-0 truncate font-mono text-[12px]">
