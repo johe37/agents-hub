@@ -50,6 +50,12 @@ impl Window {
             _ => "process",
         }
     }
+
+    /// A terminal whose shell runs a command in the foreground, e.g. `cargo build`.
+    /// Editors and agents have their own markers, so they do not count.
+    pub fn busy(&self) -> bool {
+        self.kind() == "process"
+    }
 }
 
 #[derive(Clone)]
@@ -785,5 +791,19 @@ fn write_summary(sessions: &[Session]) {
     let path = tmux::summary_file();
     if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         let _ = std::fs::write(path, text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_foreground_command_makes_a_terminal_busy() {
+        let win = |command: &str| Window { index: 1, name: "w".into(), window_id: "@1".into(), pane_id: "%1".into(), command: command.into(), pid: 1, claude: None, width: 80, height: 24, screen: None };
+        assert!(win("cargo").busy());
+        assert!(!win("zsh").busy(), "an idle shell");
+        assert!(!win("nvim").busy(), "editors have their own kind");
+        assert!(!win("claude").busy(), "agents have their own status");
     }
 }

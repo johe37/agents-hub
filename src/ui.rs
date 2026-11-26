@@ -332,6 +332,12 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
             if terms > 0 {
                 r.push(s(format!(" ❯{terms}"), fg(colors().dim)));
             }
+
+            // Terminals running a command get a spinner, so a long build is visible while folded.
+            let busy = ws.windows.iter().filter(|w| w.busy()).count();
+            if busy > 0 {
+                r.push(s(format!(" {}{busy}", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().info)));
+            }
             if let Some(mr) = &ws.mr {
                 r.push(s(format!("  !{} ", mr.iid), fg(colors().muted)));
                 if mr.state == "opened" {
@@ -466,7 +472,9 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
         }
         Row::Terminal(wi, ti) => {
             let win = &app.snap.workspaces[wi].windows[ti];
-            let mut l = vec![s(branch, fg(colors().border).bold()), s("❯ ", fg(colors().muted)), s(format!("{} ", win.index), fg(colors().dim)), s(win.name.clone(), fg(colors().fg))];
+            // A spinner instead of the prompt mark while the shell runs a command.
+            let mark = if win.busy() { s(format!("{} ", SPINNER[(t / 80) as usize % SPINNER.len()]), fg(colors().info)) } else { s("❯ ", fg(colors().muted)) };
+            let mut l = vec![s(branch, fg(colors().border).bold()), mark, s(format!("{} ", win.index), fg(colors().dim)), s(win.name.clone(), fg(colors().fg))];
             if win.command != win.name {
                 l.push(s(format!("  {}", win.command), fg(colors().muted)));
             }
