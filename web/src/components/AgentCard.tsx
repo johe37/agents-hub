@@ -16,6 +16,10 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
   return (
     <article
       data-juggle
+      tabIndex={0}
+      aria-label={`${a().title}, waiting`}
+      aria-current={p.focused ? "true" : undefined}
+      onFocusIn={() => p.onFocus?.()}
       onClick={() => p.onFocus?.()}
       class={cls(
         "animate-slide-up overflow-hidden rounded-2xl border bg-panel transition-[border-color,box-shadow] duration-150",
