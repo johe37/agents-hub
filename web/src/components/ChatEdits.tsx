@@ -48,8 +48,8 @@ export function change(t: Tool): Change | null {
   return { file, lines, added: lines.filter((l) => l.type === "add").length, removed: lines.filter((l) => l.type === "del").length, exact: false };
 }
 
-function openFile(a: Agent, file: string | null) {
-  openDiff({ workspace: a.workspace ?? a.name, path: a.path, file, title: file ? tilde(file) : `All changes in ${a.short_path}`, agent: a.key });
+function openFile(a: Agent, file: string) {
+  openDiff({ workspace: a.workspace ?? a.name, path: a.path, file, title: tilde(file), agent: a.key });
 }
 
 function Stat(p: { added: number; removed: number }) {
@@ -145,9 +145,6 @@ export function TurnChanges(p: { agent: Agent; changes: Change[] }) {
           {files().length} {files().length === 1 ? "file" : "files"} changed
         </span>
         <Stat {...total()} />
-        <button class="ml-auto text-fg-3 hover:text-fg" onClick={() => openFile(p.agent, null)} title="All uncommitted changes in the checkout">
-          Review all
-        </button>
       </div>
       <For each={files()}>
         {([file, s]) => (

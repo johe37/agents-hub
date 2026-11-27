@@ -167,7 +167,7 @@ function SidePanel(p: { ws: Workspace }) {
             </Show>
             <Show when={g()?.files.length}>
               <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
-                Review all
+                View diff
               </button>
             </Show>
             <Show when={g()}>
