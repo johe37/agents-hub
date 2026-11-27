@@ -137,9 +137,9 @@ at in both places changes size when you switch between them.
 `Ctrl+K` goes to the terminal program. Use `Ctrl+Shift+K` for the palette there.
 
 The other shortcuts go to the terminal program too. Press `Ctrl+Shift+Space` first: the
-page shows that the prefix is armed, and the next key acts as a shortcut (`c`, `t`, `[`,
-`w`, `g a` …). `Esc` or a click cancels it. `Alt+1–9` and `Alt+Shift+←/→` switch windows
-from a terminal without the prefix.
+page shows a menu of the main shortcuts, and the next key or a click in the menu runs one
+(`c`, `t`, `[`, `w`, `g a` …). `Esc` or a click outside cancels it. `Alt+1–9` and
+`Alt+Shift+←/→` switch windows from a terminal without the prefix.
 
 ## Security
 

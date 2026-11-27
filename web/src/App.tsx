@@ -6,11 +6,11 @@ import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
 import { ChangesReview } from "./components/ChangesReview";
 import { Eggs } from "./components/Eggs";
-import { Confirm, Help, Toasts } from "./components/Overlays";
+import { Confirm, Help, PrefixMenu, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
-import { Edge, IconButton, Kbd, Resizer } from "./components/ui";
+import { Edge, IconButton, Resizer } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
 import {
   agentRoute,
@@ -23,11 +23,10 @@ import {
   helpOpen,
   openPalette,
   paletteOpen,
-  prefixArmed,
   route,
   setComposer,
   setHelpOpen,
-  setPrefixArmed,
+  setPrefix,
   setSettingsOpen,
   settingsOpen,
   state,
@@ -148,7 +147,7 @@ export function App() {
     }
     e.preventDefault();
   };
-  const disarm = () => setPrefixArmed(false);
+  const disarm = (e: MouseEvent) => !(e.target as HTMLElement).closest?.("[data-prefix-menu]") && setPrefix(null);
   onMount(() => {
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("mousedown", disarm, true);
@@ -229,11 +228,7 @@ export function App() {
       <Settings />
       <Confirm />
       <Toasts />
-      <Show when={prefixArmed()}>
-        <div class="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-pop-in rounded-full border border-accent bg-raised px-4 py-2 text-sm text-fg shadow-float">
-          Prefix: press a shortcut key · <Kbd>esc</Kbd> cancels
-        </div>
-      </Show>
+      <PrefixMenu />
     </div>
   );
 }

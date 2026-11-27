@@ -1,5 +1,5 @@
 import { For, Show, createEffect, on } from "solid-js";
-import { confirmBox, dismiss, helpOpen, setConfirmBox, setHelpOpen, toasts } from "../store";
+import { confirmBox, dismiss, helpOpen, prefix, setConfirmBox, setHelpOpen, setPrefix, toasts } from "../store";
 import { MOD, cls } from "../util";
 import { Check, X } from "./icons";
 import { Button, IconButton, Kbd, SectionTitle } from "./ui";
@@ -136,6 +136,98 @@ const KEYS: [string, [string, string][]][] = [
     ],
   ],
 ];
+
+/** Replay a key outside the terminal, where the app's own shortcuts listen. */
+export function forward(e: { key: string; code?: string; shiftKey?: boolean; altKey?: boolean }) {
+  const { key, code, shiftKey, altKey } = e;
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key, code, shiftKey, altKey, bubbles: true, cancelable: true }));
+}
+
+type PrefixItem = { key: string; shift?: boolean; label: string };
+
+const PREFIX_ROOT: [string, PrefixItem[]][] = [
+  [
+    "Window",
+    [
+      { key: "c", label: "New Claude" },
+      { key: "t", label: "New terminal" },
+      { key: "[", label: "Previous window" },
+      { key: "]", label: "Next window" },
+      { key: "s", label: "Split or close the split" },
+      { key: "v", label: "Chat or terminal" },
+      { key: "m", label: "Mark the agent done" },
+      { key: "\\", label: "Side panel" },
+    ],
+  ],
+  [
+    "App",
+    [
+      { key: "w", label: "Next agent that needs you" },
+      { key: "n", label: "New agent with a task" },
+      { key: "C", shift: true, label: "New chat" },
+      { key: "o", label: "Open a workspace" },
+      { key: "g", label: "Go to…" },
+      { key: "z", label: "Focus mode" },
+      { key: "|", label: "Sidebar" },
+      { key: "?", label: "All shortcuts" },
+    ],
+  ],
+];
+
+const PREFIX_G: [string, PrefixItem[]][] = [
+  [
+    "Go to",
+    [
+      { key: "a", label: "Agents" },
+      { key: "l", label: "GitLab" },
+    ],
+  ],
+];
+
+/** Run a key typed after the prefix. "g" starts a chord, so the prefix stays armed for its second key. */
+export function pressPrefixed(key: string, shiftKey = false) {
+  const chord = prefix();
+  setPrefix(key === "g" && chord === "" ? "g" : null);
+  if (key === "Escape") return;
+  if (chord === "g") forward({ key: "g" });
+  forward({ key, shiftKey });
+}
+
+export function PrefixMenu() {
+  const label = (it: PrefixItem) => (it.shift ? `⇧ ${it.key.toLowerCase()}` : it.key);
+  return (
+    <Show when={prefix() !== null}>
+      <div class="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 animate-fade-in" onMouseDown={(e) => e.target === e.currentTarget && setPrefix(null)} data-prefix-menu>
+        <div class="w-full max-w-lg rounded-2xl border border-accent bg-raised p-5 shadow-float animate-pop-in">
+          <div class="mb-3 flex items-center gap-2 text-sm text-fg-2">
+            <span class="font-semibold text-fg">{prefix() === "g" ? "Go to" : "Prefix"}</span>
+            <span>press a key</span>
+            <span class="ml-auto flex items-center gap-1"><Kbd>esc</Kbd> cancels</span>
+          </div>
+          <div class={cls("grid gap-5", prefix() === "" && "sm:grid-cols-2")}>
+            <For each={prefix() === "g" ? PREFIX_G : PREFIX_ROOT}>
+              {([group, items]) => (
+                <section>
+                  <SectionTitle class="mb-1.5">{group}</SectionTitle>
+                  <div class="flex flex-col">
+                    <For each={items}>
+                      {(it) => (
+                        <button class="flex items-center gap-3 rounded-lg px-2 py-1.5 text-left text-sm text-fg-2 hover:bg-hover hover:text-fg" onMouseDown={(e) => e.preventDefault()} onClick={() => pressPrefixed(it.key, it.shift)}>
+                          <span class="w-7 shrink-0"><Kbd>{label(it)}</Kbd></span>
+                          {it.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </section>
+              )}
+            </For>
+          </div>
+        </div>
+      </div>
+    </Show>
+  );
+}
 
 export function Help() {
   return (
