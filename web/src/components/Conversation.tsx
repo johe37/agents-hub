@@ -206,6 +206,16 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
   });
   const queuedCount = () => (conv.latest?.queued?.length ?? 0) + unseen().length;
 
+  // A sent prompt makes the agent work a moment before the transcript shows the prompt.
+  // Until then the last turn stays finished, so its answer keeps its card.
+  let restedAt = -1;
+  createEffect(on(() => a().key, () => (restedAt = -1)));
+  const finished = createMemo(() => {
+    const n = conv.latest?.items.length ?? 0;
+    if (a().status !== "working") restedAt = n;
+    return a().status !== "working" || n === restedAt;
+  });
+
   // The turn is over when Claude rests and spoke last.
   const done = createMemo(() => {
     const items = conv.latest?.items ?? [];
@@ -266,7 +276,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                 <div class="text-sm text-fg-3">Write the first prompt below.</div>
               </div>
             </Show>
-            <Index each={group(conv.latest!.items, a().status !== "working")}>
+            <Index each={group(conv.latest!.items, finished())}>
               {(g) => (
                 <Switch>
                   <Match when={g().kind === "tools" && (g() as Extract<Entry, { kind: "tools" }>)}>
