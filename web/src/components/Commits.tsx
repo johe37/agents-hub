@@ -307,7 +307,11 @@ export function Commits(p: { ws: Workspace }) {
           aria-label="Refresh commits"
           title="Refresh commits"
           disabled={loading()}
-          onClick={reload}
+          onClick={() => {
+            // The changes above are stale too, when you are refreshing.
+            void act({ type: "refresh_git", workspace: p.ws.name }, { key: `refresh_git:${p.ws.name}`, quiet: true });
+            reload();
+          }}
         >
           <Show when={loading()} fallback={<Refresh size={13} />}>
             <Spinner size={12} />

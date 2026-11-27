@@ -48,6 +48,12 @@ pub enum Action {
     Publish { workspace: String },
     /// Commit the staged changes, or all of them when nothing is staged.
     Commit { workspace: String, message: String },
+    /// Run git status again now, instead of when the cached one is old.
+    RefreshGit { workspace: String },
+    Stage { workspace: String, files: Vec<String> },
+    Unstage { workspace: String, files: Vec<String> },
+    /// Throw away the unstaged changes of the files; untracked files are deleted.
+    Discard { workspace: String, files: Vec<String> },
     GitlabRefresh,
     /// Mark one To-Do done, or all of them without an id.
     TodoDone { id: Option<u64> },
@@ -193,6 +199,29 @@ fn clone_of(hub: &Hub, project: &str, url: &str, key: &str) -> Result<String, St
 fn forget_mr(hub: &Hub, key: &str) {
     let path = hub.snapshot().workspaces.iter().find(|w| w.mr.as_ref().is_some_and(|wm| mr_key(wm) == key)).map(|w| w.path.clone());
     forget_gitlab(hub, path.as_deref());
+}
+
+fn forget_git(hub: &Hub, path: &str) {
+    let _ = hub.cmd.lock().unwrap().send(Cmd::ForgetGit(path.to_string()));
+}
+
+fn workspace_path(hub: &Hub, workspace: &str) -> Result<String, String> {
+    hub.snapshot().workspaces.iter().find(|w| w.name == workspace).map(|w| w.path.clone()).ok_or_else(|| "This workspace is gone".into())
+}
+
+/// Run a git change on files, given relative to the repo root as git status lists them.
+fn change_files(hub: &Hub, workspace: &str, files: &[String], f: fn(&str, &[String]) -> Result<(), String>) -> Result<Done, String> {
+    let path = workspace_path(hub, workspace)?;
+    if files.is_empty() {
+        return Err("No files given".into());
+    }
+    if files.iter().any(|f| f.is_empty() || f.starts_with('/') || f.split('/').any(|s| s == "..")) {
+        return Err("Bad file path".into());
+    }
+    let root = super::model::toplevel(&path).ok_or("Not a git repository")?;
+    let r = f(&root, files);
+    forget_git(hub, &path);
+    r.map(|()| Done::default())
 }
 
 fn forget_gitlab(hub: &Hub, path: Option<&str>) {
@@ -503,8 +532,17 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             if message.trim().is_empty() {
                 return Err("Write a commit message".into());
             }
-            Ok(said(crate::gitlab::commit(&ws.path, message.trim())?))
+            let r = crate::gitlab::commit(&ws.path, message.trim());
+            forget_git(hub, &ws.path);
+            Ok(said(r?))
         }
+        Action::RefreshGit { workspace } => {
+            forget_git(hub, &workspace_path(hub, &workspace)?);
+            Ok(Done::default())
+        }
+        Action::Stage { workspace, files } => change_files(hub, &workspace, &files, crate::git::stage),
+        Action::Unstage { workspace, files } => change_files(hub, &workspace, &files, crate::git::unstage),
+        Action::Discard { workspace, files } => change_files(hub, &workspace, &files, crate::git::discard),
         Action::ReopenWorkspace { id } => {
             let c = crate::closed::get(&id).ok_or("It is no longer in the list")?;
             let dir = if std::path::Path::new(&c.path).is_dir() {

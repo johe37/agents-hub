@@ -189,7 +189,7 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
   const [diff, { refetch }] = createResource(
     () => p.target,
     (d) => {
-      const q = (d.commit ? `&commit=${d.commit.sha}` : "") + (d.file ? `&file=${encodeURIComponent(d.file)}` : "");
+      const q = (d.commit ? `&commit=${d.commit.sha}` : "") + (d.file ? `&file=${encodeURIComponent(d.file)}` : "") + (d.stage ? `&stage=${d.stage}` : "");
       return getJSON<{ diff: string }>(`/api/diff?path=${encodeURIComponent(d.path)}${q}`);
     },
   );
@@ -263,7 +263,7 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
         </Show>
         <Show when={refreshing() || !diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
           <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
-            <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
+            <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : p.target.stage === "staged" ? "Nothing is staged" : p.target.stage ? "No unstaged changes" : "No changes against HEAD"}</div>}>
               <p class="mb-3 text-sm text-fg-3">Select lines, or use ✦ on a file, to ask Claude about them: the one already here, or a new one. The question is typed in Claude's input; you finish and send it.</p>
               <div class="flex flex-col gap-4">
                 <For each={files()}>

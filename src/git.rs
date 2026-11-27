@@ -114,6 +114,8 @@ pub struct GitCache {
     status: Mutex<HashMap<String, (Instant, GitStatus)>>,
     /// Repos with a status refresh running in the background.
     busy: Mutex<HashSet<String>>,
+    /// Bumped by forget, so a refresh that started before it cannot store its older status.
+    gens: Mutex<HashMap<String, u64>>,
 }
 
 impl GitCache {
@@ -141,7 +143,14 @@ impl GitCache {
         st
     }
 
+    /// Drop the cached status, so the next lookup runs git status at once.
+    pub fn forget(&self, repo: &str) {
+        *self.gens.lock().unwrap().entry(repo.to_string()).or_default() += 1;
+        self.status.lock().unwrap().remove(repo);
+    }
+
     fn refresh(&self, repo: &str) -> GitStatus {
+        let generation = self.gens.lock().unwrap().get(repo).copied();
         let mut st = git(repo, &["status", "--porcelain=v2", "--branch"]).map(|o| parse_status(&o)).unwrap_or_default();
         for line in git(repo, &["diff", "--numstat", "HEAD"]).unwrap_or_default().lines() {
             let mut f = line.split('\t');
@@ -150,9 +159,80 @@ impl GitCache {
                 st.removed += r;
             }
         }
-        self.status.lock().unwrap().insert(repo.to_string(), (Instant::now(), st.clone()));
+        if self.gens.lock().unwrap().get(repo).copied() == generation {
+            self.status.lock().unwrap().insert(repo.to_string(), (Instant::now(), st.clone()));
+        }
         st
     }
+}
+
+/// Run git in the repo for a change the user asked for; the error is git's own message.
+fn git_change(root: &str, args: &[&str]) -> Result<(), String> {
+    let out = Command::new("timeout")
+        .args(["30", "git", "-C", root])
+        .args(args)
+        // Paths come from git status: a name with * or [ is a file, not a pattern.
+        .env("GIT_LITERAL_PATHSPECS", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    Err(err.lines().find(|l| !l.trim().is_empty()).unwrap_or("git failed").trim().to_string())
+}
+
+/// Status entries of the files as (XY code, path, path before a rename).
+fn entries(root: &str, files: &[String]) -> Vec<(String, String, Option<String>)> {
+    let out = git(root, &["status", "--porcelain=v2"]).unwrap_or_default();
+    out.lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let (code, path) = changed_file(l);
+            let orig = (l.as_bytes()[0] == b'2').then(|| l.rsplit('\t').next().map(String::from)).flatten();
+            (code, path, orig)
+        })
+        .filter(|(_, p, _)| files.contains(p))
+        .collect()
+}
+
+fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
+    let mut v = args.to_vec();
+    v.push("--");
+    v.extend(paths.iter().map(String::as_str));
+    v
+}
+
+pub fn stage(root: &str, files: &[String]) -> Result<(), String> {
+    git_change(root, &with_paths(&["add", "-A"], files))
+}
+
+pub fn unstage(root: &str, files: &[String]) -> Result<(), String> {
+    let mut paths = files.to_vec();
+    // A staged rename leaves its old path deleted in the index unless that is restored too.
+    paths.extend(entries(root, files).into_iter().filter_map(|(_, _, orig)| orig));
+    if git(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_none() {
+        return git_change(root, &with_paths(&["rm", "--cached", "-r", "-q"], &paths));
+    }
+    git_change(root, &with_paths(&["restore", "--staged"], &paths))
+}
+
+/// Throw away the changes that are not staged: tracked files go back to the index, untracked files are deleted.
+pub fn discard(root: &str, files: &[String]) -> Result<(), String> {
+    let found = entries(root, files);
+    let pick = |untracked: bool| -> Vec<String> {
+        found.iter().filter(|(c, _, _)| (c == "??") == untracked && (untracked || !c.ends_with('.'))).map(|(_, p, _)| p.clone()).collect()
+    };
+    let (tracked, untracked) = (pick(false), pick(true));
+    if !tracked.is_empty() {
+        git_change(root, &with_paths(&["restore", "--worktree"], &tracked))?;
+    }
+    if !untracked.is_empty() {
+        git_change(root, &with_paths(&["clean", "-f", "-d", "-q"], &untracked))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -187,6 +267,42 @@ mod tests {
         let root = cache.repo_root(wt.to_str().unwrap()).unwrap();
         assert_eq!(std::fs::canonicalize(&root).unwrap(), std::fs::canonicalize(&wt).unwrap());
         assert_eq!(cache.status(&root).branch.as_deref(), Some("feature"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stages_unstages_and_discards() {
+        let dir = std::env::temp_dir().join(format!("jugglr-stage-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        let run = |args: &[&str]| git_change(p, args).unwrap();
+        let files = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let codes = || entries(p, &files(&["a", "b", "c", "d", "new/"])).into_iter().map(|(c, f, _)| format!("{c} {f}")).collect::<Vec<_>>();
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "t"]);
+        run(&["config", "user.email", "t@t"]);
+        for f in ["a", "b", "c"] {
+            std::fs::write(dir.join(f), f).unwrap();
+        }
+        run(&["add", "-A"]);
+        run(&["commit", "-qm", "init"]);
+
+        std::fs::write(dir.join("a"), "a2").unwrap();
+        std::fs::write(dir.join("b"), "b2").unwrap();
+        std::fs::create_dir_all(dir.join("new")).unwrap();
+        std::fs::write(dir.join("new/x"), "x").unwrap();
+        run(&["mv", "c", "d"]);
+        stage(p, &files(&["a"])).unwrap();
+        assert_eq!(codes(), ["M. a", ".M b", "R. d", "?? new/"]);
+
+        std::fs::write(dir.join("a"), "a3").unwrap();
+        discard(p, &files(&["a", "b", "new/"])).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a")).unwrap(), "a2");
+        assert_eq!(std::fs::read_to_string(dir.join("b")).unwrap(), "b");
+        assert!(!dir.join("new").exists());
+
+        unstage(p, &files(&["a", "d"])).unwrap();
+        assert_eq!(codes(), [".M a", ".D c", "?? d"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

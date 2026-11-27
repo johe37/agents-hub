@@ -547,12 +547,13 @@ export const [modes, setModes] = createSignal<Record<string, "chat" | "terminal"
 
 /** agent is the Claude to ask about the diff, when it came from one; else the workspace's Claude. */
 /** A preview tab is replaced by the next preview opened in its workspace, until you pin it. */
-export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit; agent?: string; preview?: boolean };
+/** stage limits an uncommitted diff to one side of the index; without it the diff is against HEAD. */
+export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit; agent?: string; preview?: boolean; stage?: "staged" | "unstaged" };
 /** A diff for an agent without a workspace: it opens over everything. */
 export const [diffView, setDiffView] = createSignal<DiffTarget | null>(null);
 
 /** A diff tab's window id in the URL. tmux window ids start with @, so it never clashes. */
-export const diffId = (d: DiffTarget) => `diff:${d.commit?.sha ?? "HEAD"}${d.file ? ":" + d.file : ""}`;
+export const diffId = (d: DiffTarget) => `diff:${d.commit?.sha ?? d.stage ?? "HEAD"}${d.file ? ":" + d.file : ""}`;
 export const isDiff = (window: string | null) => !!window?.startsWith("diff:");
 /** The diff tabs of each workspace, after its windows. */
 export const [diffTabs, setDiffTabs] = createSignal<Record<string, DiffTarget[]>>(
@@ -593,6 +594,7 @@ export function pinDiff(workspace: string, id: string) {
 export function diffLabel(d: DiffTarget) {
   const name = d.file ? d.file.replace(/\/$/, "").split("/").pop()! : null;
   if (d.commit) return name ? `${name} @ ${d.commit.short}` : d.commit.short;
+  if (d.stage === "staged") return `${name ?? "All changes"} (staged)`;
   return name ?? "All changes";
 }
 

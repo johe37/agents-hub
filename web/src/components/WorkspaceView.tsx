@@ -6,7 +6,7 @@ import { cls, worst } from "../util";
 import { DiffPane } from "./ChangesReview";
 import { Commits } from "./Commits";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, Minus, PanelRight, Pipeline, Plus, Refresh, Rename, Terminal as TermIcon, Trash, Undo, X } from "./icons";
 import { Badge, Button, Edge, Empty, IconButton, Kbd, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Resizer } from "./ui";
 import { focus, panelWidth, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
@@ -15,9 +15,98 @@ const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Termi
 
 const FILE_TONE: Record<string, string> = { M: "text-waiting", A: "text-add", D: "text-del", R: "text-working", "?": "text-add", U: "text-danger" };
 
-function fileCode(code: string) {
-  const c = code === "??" ? "?" : (code.replace(".", "").trim()[0] ?? "M");
+/** The letter of one column of git's XY code: index for staged, worktree for unstaged. */
+function fileCode(code: string, side: "staged" | "unstaged") {
+  const c = code === "??" ? "?" : code[side === "staged" ? 0 : 1];
   return { letter: c === "?" ? "U" : c, tone: FILE_TONE[c] ?? "text-fg-2", title: code === "??" ? "Untracked" : code };
+}
+
+const isStaged = (code: string) => code[0] !== "." && code[0] !== "?";
+const isUnstaged = (code: string) => code === "??" || code[1] !== ".";
+const baseName = (file: string) => file.replace(/\/$/, "").split("/").pop()!;
+
+/** Stage, unstage or discard files, asking first before a discard. */
+function changeFiles(ws: Workspace, type: "stage" | "unstage" | "discard", files: [string, string][]) {
+  const names = files.map(([, f]) => f);
+  const run = () => void act({ type, workspace: ws.name, files: names }, { key: `git:${ws.name}` });
+  if (type !== "discard") return run();
+  const untracked = files.filter(([c]) => c === "??").length;
+  const one = files.length === 1;
+  ask({
+    title: one ? (untracked ? `Delete ${baseName(names[0])}?` : `Discard the changes in ${baseName(names[0])}?`) : `Discard ${files.length} changes?`,
+    body: untracked
+      ? `${one ? "The file is untracked: it is" : `${untracked} untracked ${untracked === 1 ? "file is" : "files are"}`} deleted for good. This can not be undone.`
+      : "Staged changes stay. This can not be undone.",
+    confirm: untracked && one ? "Delete" : "Discard",
+    danger: true,
+    run,
+  });
+}
+
+function ChangeGroup(p: { ws: Workspace; side: "staged" | "unstaged"; files: [string, string][] }) {
+  const [open, setOpen] = createSignal(true);
+  const staged = () => p.side === "staged";
+  const busy = () => isBusy(`git:${p.ws.name}`);
+  const tool = "grid size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg disabled:opacity-40";
+  // Shown on hover with a mouse; a touch screen has no hover, so there they always show.
+  const onHover = "md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100";
+  const actions = (files: [string, string][]) => (
+    <>
+      <Show when={!staged()}>
+        <button class={tool} disabled={busy()} title="Discard changes" aria-label="Discard changes" onClick={(e) => (e.stopPropagation(), changeFiles(p.ws, "discard", files))}>
+          <Undo size={12} />
+        </button>
+      </Show>
+      <button
+        class={tool}
+        disabled={busy()}
+        title={staged() ? "Unstage" : "Stage"}
+        aria-label={staged() ? "Unstage" : "Stage"}
+        onClick={(e) => (e.stopPropagation(), changeFiles(p.ws, staged() ? "unstage" : "stage", files))}
+      >
+        {staged() ? <Minus size={12} /> : <Plus size={12} />}
+      </button>
+    </>
+  );
+  return (
+    <div class="flex flex-col">
+      <div class="group flex items-center gap-1 px-1 py-0.5">
+        <SectionTitle class="flex-1" count={p.files.length} open={open()} onToggle={() => setOpen(!open())}>
+          {staged() ? "Staged changes" : "Changes"}
+        </SectionTitle>
+        <div class={cls("flex items-center gap-0.5", onHover)}>{actions(p.files)}</div>
+      </div>
+      <Show when={open()}>
+        <For each={p.files}>
+          {([code, file]) => {
+            const c = fileCode(code, p.side);
+            // Git lists an untracked directory once, with a trailing slash.
+            const dir = file.endsWith("/");
+            const i = dir ? -1 : file.lastIndexOf("/");
+            return (
+              <div
+                role="button"
+                tabIndex={0}
+                class="group flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
+                title={`${c.title}: ${file}`}
+                onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: file, stage: p.side })}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.click()}
+              >
+                <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
+                <span class="min-w-0 flex-1 truncate font-mono text-sm">
+                  <span class="text-fg">{file.slice(i + 1)}</span>
+                  <Show when={i > 0}>
+                    <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
+                  </Show>
+                </span>
+                <div class={cls("flex shrink-0 items-center gap-0.5", onHover)}>{actions([[code, file]])}</div>
+              </div>
+            );
+          }}
+        </For>
+      </Show>
+    </div>
+  );
 }
 
 function SidePanel(p: { ws: Workspace }) {
@@ -29,8 +118,9 @@ function SidePanel(p: { ws: Workspace }) {
     return g()!.ahead > 0 || (!p.ws.mr && b !== "main" && b !== "master");
   };
   const [message, setMessage] = createSignal("");
-  // Index column of git's XY code: something is staged.
-  const staged = () => !!g()?.files.some(([code]) => code[0] !== "." && code[0] !== "?");
+  const stagedFiles = () => g()?.files.filter(([code]) => isStaged(code)) ?? [];
+  const unstagedFiles = () => g()?.files.filter(([code]) => isUnstaged(code)) ?? [];
+  const staged = () => stagedFiles().length > 0;
   return (
     <aside class="relative flex h-full shrink-0 flex-col border-l border-line bg-panel" style={{ width: `${panelWidth.width()}px` }}>
       <Resizer size={panelWidth} side="left" label="Side panel width" />
@@ -80,6 +170,19 @@ function SidePanel(p: { ws: Workspace }) {
                 Review all
               </button>
             </Show>
+            <Show when={g()}>
+              <button
+                class={cls("grid size-6 place-items-center rounded-md text-fg-3 hover:bg-hover hover:text-fg", !g()!.files.length && "ml-auto")}
+                aria-label="Refresh changes"
+                title="Refresh changes"
+                disabled={isBusy(`refresh_git:${p.ws.name}`)}
+                onClick={() => void act({ type: "refresh_git", workspace: p.ws.name }, { key: `refresh_git:${p.ws.name}`, quiet: true })}
+              >
+                <Show when={isBusy(`refresh_git:${p.ws.name}`)} fallback={<Refresh size={13} />}>
+                  <Spinner size={12} />
+                </Show>
+              </button>
+            </Show>
           </div>
           <Show when={canPush()}>
             <Button
@@ -121,31 +224,13 @@ function SidePanel(p: { ws: Workspace }) {
           </Show>
           <Show when={g()} fallback={<div class="px-1 text-sm text-fg-3">Not a git repository</div>}>
             <Show when={g()!.files.length} fallback={<div class="px-1 text-sm text-fg-3">Working tree clean</div>}>
-              <div class="flex flex-col">
-                <For each={g()!.files}>
-                  {([code, file]) => {
-                    const c = fileCode(code);
-                    // Git lists an untracked directory once, with a trailing slash.
-                    const dir = file.endsWith("/");
-                    const i = dir ? -1 : file.lastIndexOf("/");
-                    return (
-                      <button
-                        class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
-                        title={`${c.title}: ${file}`}
-                        onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
-                      >
-                        <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
-                        <span class="min-w-0 truncate font-mono text-sm">
-                          <span class="text-fg">{file.slice(i + 1)}</span>
-                          <Show when={i > 0}>
-                            <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
-                          </Show>
-                        </span>
-                        <FileDiff size={13} class="ml-auto shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
-                      </button>
-                    );
-                  }}
-                </For>
+              <div class="flex flex-col gap-1">
+                <Show when={stagedFiles().length}>
+                  <ChangeGroup ws={p.ws} side="staged" files={stagedFiles()} />
+                </Show>
+                <Show when={unstagedFiles().length}>
+                  <ChangeGroup ws={p.ws} side="unstaged" files={unstagedFiles()} />
+                </Show>
               </div>
             </Show>
           </Show>

@@ -385,7 +385,12 @@ async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, Strin
     if commit.as_deref().is_some_and(|c| !review::is_sha(c)) {
         return (StatusCode::BAD_REQUEST, "Not a commit").into_response();
     }
-    let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref())).await.unwrap_or_default();
+    let side = match q.get("stage").map(String::as_str) {
+        Some("staged") => model::Side::Staged,
+        Some("unstaged") => model::Side::Unstaged,
+        _ => model::Side::All,
+    };
+    let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref(), side)).await.unwrap_or_default();
     Json(json!({"diff": text})).into_response()
 }
 

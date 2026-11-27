@@ -288,6 +288,10 @@ export type Action =
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }
   | { type: "commit"; workspace: string; message: string }
+  | { type: "refresh_git"; workspace: string }
+  | { type: "stage"; workspace: string; files: string[] }
+  | { type: "unstage"; workspace: string; files: string[] }
+  | { type: "discard"; workspace: string; files: string[] }
   | { type: "gitlab_refresh" }
   | { type: "todo_done"; id?: number }
   | { type: "mr_note"; mr: string; body: string; position?: Record<string, unknown>; draft: boolean }

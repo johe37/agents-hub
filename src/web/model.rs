@@ -417,11 +417,28 @@ pub fn branches(path: &str) -> Value {
     json!({"current": current, "branches": list})
 }
 
-/// The change of one file against HEAD, or of the whole checkout, or what one commit changed. New files show in full.
-pub fn diff(path: &str, file: Option<&str>, commit: Option<&str>) -> String {
+/// Which side of the index a working-tree diff shows.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Side {
+    /// HEAD against the working tree.
+    All,
+    /// HEAD against the index.
+    Staged,
+    /// The index against the working tree, with untracked files.
+    Unstaged,
+}
+
+/// The change of one file, or of the whole checkout, on one side of the index, or what one commit changed. New files show in full.
+pub fn diff(path: &str, file: Option<&str>, commit: Option<&str>, side: Side) -> String {
     let Some(root) = toplevel(path) else {
         return String::new();
     };
+    let base: &[&str] = match side {
+        Side::All => &["diff", "HEAD", "--no-color"],
+        Side::Staged => &["diff", "--cached", "--no-color"],
+        Side::Unstaged => &["diff", "--no-color"],
+    };
+    let new_file = |f: &str| git_out(&root, &["diff", "--no-color", "--no-index", "--", "/dev/null", f]).unwrap_or_default();
     let mut text = match (commit, file) {
         (Some(sha), f) => {
             let mut args = vec!["show", "--no-color", "--format=", "--first-parent", sha];
@@ -429,19 +446,17 @@ pub fn diff(path: &str, file: Option<&str>, commit: Option<&str>) -> String {
             git_out(&root, &args).unwrap_or_default()
         }
         (None, Some(f)) => {
-            let tracked = git_out(&root, &["diff", "HEAD", "--no-color", "--", f]).unwrap_or_default();
-            let untracked = git_out(&root, &["ls-files", "--others", "--exclude-standard", "--", f]).unwrap_or_default();
-            if tracked.is_empty() && !untracked.trim().is_empty() {
-                git_out(&root, &["diff", "--no-color", "--no-index", "--", "/dev/null", f]).unwrap_or_default()
-            } else {
-                tracked
-            }
+            let tracked = git_out(&root, &[base, &["--", f]].concat()).unwrap_or_default();
+            let untracked = if side == Side::Staged { String::new() } else { git_out(&root, &["ls-files", "--others", "--exclude-standard", "--", f]).unwrap_or_default() };
+            if tracked.is_empty() && !untracked.trim().is_empty() { new_file(f) } else { tracked }
         }
         (None, None) => {
-            let mut all = git_out(&root, &["diff", "HEAD", "--no-color"]).unwrap_or_default();
-            let untracked = git_out(&root, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
-            for f in untracked.lines().take(50) {
-                all.push_str(&git_out(&root, &["diff", "--no-color", "--no-index", "--", "/dev/null", f]).unwrap_or_default());
+            let mut all = git_out(&root, base).unwrap_or_default();
+            if side != Side::Staged {
+                let untracked = git_out(&root, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+                for f in untracked.lines().take(50) {
+                    all.push_str(&new_file(f));
+                }
             }
             all
         }
@@ -497,7 +512,7 @@ mod tests {
         assert_eq!(commits(p, &LogQuery { search: Some("T"), ..q(0, 50) })["commits"].as_array().unwrap().len(), 3, "the author matches");
         let sha = commits(p, &q(1, 1))["commits"][0]["sha"].as_str().unwrap().to_string();
         assert_eq!(commit_files(p, &sha), json!([["A", "a.txt"]]));
-        let d = diff(p, None, Some(&sha));
+        let d = diff(p, None, Some(&sha), Side::All);
         assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
         assert_eq!(commits(p, &LogQuery { rev: Some("main"), ..q(0, 50) })["commits"].as_array().unwrap().len(), 2);
         assert_eq!(commits(p, &LogQuery { rev: Some("--all"), ..q(0, 50) })["error"], json!("Unknown branch"));

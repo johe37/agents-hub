@@ -213,6 +213,8 @@ pub enum Cmd {
     PrewarmClaude(String),
     /// Fetch the merge request of the workspace at this path again.
     ForgetMr(String),
+    /// Run git status again for the checkout holding this path.
+    ForgetGit(String),
     /// Push the branch checked out at path, opening a draft merge request when asked.
     Publish { path: String, open_mr: bool },
     /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
@@ -352,6 +354,12 @@ impl Collector {
                 }
                 Ok(Cmd::ForgetMr(path)) => {
                     self.mrs.forget(&path);
+                    last = Instant::now() - interval;
+                }
+                Ok(Cmd::ForgetGit(path)) => {
+                    if let Some(root) = self.git.repo_root(&path) {
+                        self.git.forget(&root);
+                    }
                     last = Instant::now() - interval;
                 }
                 Ok(Cmd::ForgetInbox(section)) => {
