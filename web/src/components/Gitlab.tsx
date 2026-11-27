@@ -223,12 +223,12 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
           }}
           onKeyDown={(e) => {
             e.stopPropagation();
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
               e.preventDefault();
               if (text().trim()) void send(false);
             } else if (e.key === "Escape") e.currentTarget.blur();
           }}
-          placeholder="Reply on GitLab… (Ctrl+Enter sends)"
+          placeholder="Reply on GitLab… (Enter sends)"
           class="w-full resize-none rounded-lg border border-line-strong bg-raised px-2.5 py-1.5 text-base text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
         />
         <div class="mt-2 flex flex-wrap items-center gap-2">

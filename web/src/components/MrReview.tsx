@@ -330,7 +330,7 @@ function TextBox(p: { value: string; onInput: (v: string) => void; placeholder: 
       onInput={(e) => p.onInput(e.currentTarget.value)}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
           e.preventDefault();
           p.onSubmit();
         } else if (e.key === "Escape") {
@@ -452,7 +452,7 @@ function CommentForm(p: { label: string; text: string; onText: (t: string) => vo
   return (
     <div class="max-w-3xl rounded-xl border border-line-strong bg-panel p-2.5">
       <div class="mb-1.5 text-sm text-fg-3">Comment on {p.label}</div>
-      <TextBox value={p.text} onInput={p.onText} placeholder="Write a comment… (Ctrl+Enter adds it to your review)" onSubmit={() => p.text.trim() && p.onSubmit(true)} onCancel={p.onCancel} autofocus />
+      <TextBox value={p.text} onInput={p.onText} placeholder="Write a comment… (Enter adds it to your review)" onSubmit={() => p.text.trim() && p.onSubmit(true)} onCancel={p.onCancel} autofocus />
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" disabled={!p.text.trim()} onClick={() => p.onSubmit(true)} title="Keep it as a draft until you finish the review">
           Add to review

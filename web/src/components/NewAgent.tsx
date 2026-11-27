@@ -101,7 +101,7 @@ export function NewAgent() {
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === "Escape") close();
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !e.defaultPrevented) {
               e.preventDefault();
               void start();
             }
@@ -193,7 +193,7 @@ export function NewAgent() {
 
           <div class="flex items-center gap-3 px-5 pb-4 pt-3">
             <span class="text-sm text-fg-3">
-              {chat() ? "Outside any repo." : "The workspace opens if it is not open yet."} <Kbd>{"Ctrl ↵"}</Kbd> starts.
+              {chat() ? "Outside any repo." : "The workspace opens if it is not open yet."} <Kbd>↵</Kbd> starts, <Kbd>⇧ ↵</Kbd> new line.
             </span>
             <div class="ml-auto flex gap-2">
               <Button variant="ghost" onClick={close}>
