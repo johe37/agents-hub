@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { getJSON, type Agent } from "../api";
-import { act, draft, isBusy, setDraft, toast } from "../store";
+import { act, draft, forgetSent, isBusy, markSent, setDraft, toast } from "../store";
 import { basename, cls, fuzzy } from "../util";
 import { heard, listening, toggleVoice, voiceAgent, voiceSupported } from "../voice";
 import { ImagePlus, Mic, Send } from "./icons";
@@ -138,12 +138,20 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
   const send = async () => {
     const t = text().trim();
     if (!t || uploading()) return;
+    // Clear the box at once; the text comes back if the agent did not get it.
+    const id = markSent(p.agent.key, t);
+    setText("");
+    area.value = "";
+    fit();
+    setTok(null);
     const r = await act({ type: "reply", agent: p.agent.key, text: t }, { key: key() });
-    if (r.ok) {
-      setText("");
-      area.value = "";
-      fit();
-      setTok(null);
+    if (!r.ok) {
+      forgetSent(p.agent.key, [id]);
+      if (!text()) {
+        setText(t);
+        area.value = t;
+        fit();
+      }
     }
   };
   const voice = () => voiceAgent() === p.agent.key;

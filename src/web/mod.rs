@@ -339,9 +339,13 @@ async fn action(State(hub): State<Arc<Hub>>, Json(body): Json<Value>) -> Respons
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": format!("Bad action: {e}")}))).into_response(),
     };
     let h = Arc::clone(&hub);
+    // Keys typed into an agent change nothing the state shows, so the page need not wait for a new snapshot.
+    let typed = matches!(act, actions::Action::Reply { .. } | actions::Action::Type { .. } | actions::Action::Interrupt { .. });
     let result = tokio::task::spawn_blocking(move || actions::run(&h, act)).await;
     // The page goes to what the action made as soon as it has the answer, so the state must show it by then.
-    hub.fresh().await;
+    if !typed {
+        hub.fresh().await;
+    }
     match result {
         Ok(Ok(done)) => Json(json!({"ok": true, "message": done.message, "workspace": done.workspace, "window": done.window, "path": done.path})).into_response(),
         Ok(Err(e)) => (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"ok": false, "error": e}))).into_response(),

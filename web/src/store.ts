@@ -533,6 +533,26 @@ export function closeWindow(ws: Workspace, w: Win) {
     run,
   });
 }
+/** Prompts sent from the page that the transcript does not show yet, per agent. */
+export type Sent = { id: number; text: string; at: number };
+export const [sent, setSent] = createSignal<Record<string, Sent[]>>({});
+let sentId = 0;
+/** Same as the server, which sends one paragraph. */
+export const oneLine = (t: string) => t.trim().split(/\s+/).join(" ");
+export function markSent(agent: string, text: string) {
+  const s = { id: ++sentId, text: oneLine(text), at: Date.now() };
+  setSent((m) => ({ ...m, [agent]: [...(m[agent] ?? []), s] }));
+  // A prompt the transcript never shows as typed, such as a slash command, must not wait forever.
+  setTimeout(() => forgetSent(agent, [s.id]), 20_000);
+  return s.id;
+}
+export function forgetSent(agent: string, ids: number[]) {
+  setSent((m) => {
+    const left = (m[agent] ?? []).filter((s) => !ids.includes(s.id));
+    if (left.length === (m[agent] ?? []).length) return m;
+    return { ...m, [agent]: left };
+  });
+}
 /** Text to put in an agent's reply box, to edit before sending. */
 export const [draft, setDraft] = createSignal<{ agent: string; text: string } | null>(null);
 export const [confirmBox, setConfirmBox] = createSignal<{

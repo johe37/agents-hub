@@ -1,6 +1,6 @@
 import { Index, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { getJSON, type Agent, type ConversationItem } from "../api";
-import { act, isBusy, tilde } from "../store";
+import { act, forgetSent, isBusy, oneLine, sent, tilde } from "../store";
 import { basename, cls, toolLine } from "../util";
 import { EditView, TurnChanges, change, isEdit, keep, type Change, type Tool } from "./ChatEdits";
 import { Check, ChevronDown, Stop, Wrench, X } from "./icons";
@@ -22,7 +22,19 @@ function greeting(key: string) {
 
 const typing = (el: Element | null) => !!el && (el.matches("input, textarea, select") || (el as HTMLElement).isContentEditable);
 
-type Entry = { kind: "msg"; item: ConversationItem } | { kind: "tools"; items: Tool[] } | { kind: "changes"; changes: Change[] };
+type Entry = { kind: "msg"; item: ConversationItem; answer?: boolean } | { kind: "tools"; items: Tool[] } | { kind: "changes"; changes: Change[] };
+
+/** "8s", "3m 12s", "1h 4m" between two transcript timestamps. */
+function took(from: string, to: string) {
+  const s = Math.round((Date.parse(to) - Date.parse(from)) / 1000);
+  if (!(s >= 0)) return null;
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** The server clips long prompts, so compare their start. */
+const same = (a: string, b: string) => oneLine(a).slice(0, 200) === oneLine(b).slice(0, 200);
 
 function todoLine(input: Record<string, unknown>) {
   const todos = Array.isArray(input.todos) ? (input.todos as { status?: string }[]) : [];
@@ -116,6 +128,7 @@ function ToolGroup(p: { items: Tool[]; agent: Agent; plan: string | null }) {
 }
 
 const message = (e: Entry, kind: "user" | "assistant") => (e.kind === "msg" && e.item.kind === kind ? e.item : null);
+const answer = (e: Entry) => e.kind === "msg" && !!e.answer;
 
 /** Tool calls between two messages fold into one group, and a turn that edited files ends with a list of them. */
 function group(items: ConversationItem[], done: boolean) {
@@ -125,7 +138,17 @@ function group(items: ConversationItem[], done: boolean) {
     if (turn.length) out.push({ kind: "changes", changes: turn });
     turn = [];
   };
-  for (const it of items) {
+  // Claude's last text in a finished turn is the answer; text between tool calls is narration.
+  const answers = new Set<number>();
+  let last = -1;
+  items.forEach((it, i) => {
+    if (it.kind === "user") {
+      if (last >= 0) answers.add(last);
+      last = -1;
+    } else last = it.kind === "assistant" ? i : -1;
+  });
+  if (done && last >= 0) answers.add(last);
+  for (const [i, it] of items.entries()) {
     if (it.kind === "user") flush();
     if (it.kind === "tool") {
       const c = change(it);
@@ -133,7 +156,7 @@ function group(items: ConversationItem[], done: boolean) {
       const last = out[out.length - 1];
       if (last?.kind === "tools") last.items.push(it);
       else out.push({ kind: "tools", items: [it] });
-    } else out.push({ kind: "msg", item: it });
+    } else out.push({ kind: "msg", item: it, answer: answers.has(i) });
   }
   if (done) flush();
   return out;
@@ -166,13 +189,39 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
     return id;
   });
 
+  // A prompt you sent shows at once; it goes when the transcript shows it, queued or read.
+  const unseen = createMemo(() => {
+    const c = conv.latest;
+    const mine = sent()[a().key] ?? [];
+    if (!c || !mine.length) return mine;
+    const seen = (s: { text: string; at: number }) =>
+      (c.queued ?? []).some((q) => same(q, s.text)) || c.items.some((it) => it.kind === "user" && Date.parse(it.ts) >= s.at - 10_000 && same(it.text, s.text));
+    return mine.filter((s) => !seen(s));
+  });
+  createEffect(() => {
+    const mine = sent()[a().key] ?? [];
+    const left = new Set(unseen().map((s) => s.id));
+    const gone = mine.filter((s) => !left.has(s.id)).map((s) => s.id);
+    if (gone.length) forgetSent(a().key, gone);
+  });
+  const queuedCount = () => (conv.latest?.queued?.length ?? 0) + unseen().length;
+
+  // The turn is over when Claude rests and spoke last.
+  const done = createMemo(() => {
+    const items = conv.latest?.items ?? [];
+    const last = items[items.length - 1];
+    if (a().status !== "idle" || last?.kind !== "assistant" || unseen().length) return null;
+    const asked = [...items].reverse().find((it) => it.kind === "user");
+    return { took: asked ? took(asked.ts, last.ts) : null, at: last.ts };
+  });
+
   let scroller!: HTMLDivElement;
   const [stuck, setStuck] = createSignal(true);
   const onScroll = () => setStuck(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80);
   const toBottom = (smooth = false) => scroller?.scrollTo({ top: scroller.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   createEffect(
     on(
-      () => conv.latest?.items.length,
+      () => [conv.latest?.items.length, queuedCount(), !!done(), a().status === "working"],
       () => {
         if (stuck()) requestAnimationFrame(() => toBottom());
       },
@@ -227,10 +276,15 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   </Match>
                   <Match when={message(g(), "assistant")}>
                     {(m) => (
-                      <div>
-                        <Markdown text={m().text} class="chat-measure text-base leading-relaxed text-fg animate-fade-in" />
-                        {p.action?.(m().text)}
-                      </div>
+                      <Show
+                        when={answer(g())}
+                        fallback={<Markdown text={m().text} class="chat-measure text-sm leading-relaxed text-fg-2 animate-fade-in" />}
+                      >
+                        <div class="rounded-2xl border border-line bg-raised px-5 py-4 animate-fade-in">
+                          <Markdown text={m().text} class="chat-measure text-base leading-relaxed text-fg" />
+                          {p.action?.(m().text)}
+                        </div>
+                      </Show>
                     )}
                   </Match>
                 </Switch>
@@ -244,11 +298,37 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                 </div>
               )}
             </Index>
+            <Index each={unseen()}>
+              {(s) => (
+                <div class="ml-auto flex max-w-[min(85%,65ch)] flex-col items-end gap-1 animate-fade-in">
+                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-fg-2">{s().text}</div>
+                  <span class="flex items-center gap-1.5 text-xs text-fg-3">
+                    <Spinner size={9} /> {a().status === "working" ? "Queuing…" : "Sending…"}
+                  </span>
+                </div>
+              )}
+            </Index>
             <Show when={a().status === "working"}>
               <div class="flex items-center gap-2 text-sm text-working">
                 <StatusDot status="working" size={7} />
                 <span class="truncate">{a().tool ?? "Thinking…"}</span>
+                <Show when={queuedCount()}>
+                  <span class="shrink-0 text-fg-3">· {queuedCount()} queued</span>
+                </Show>
               </div>
+            </Show>
+            <Show when={done()}>
+              {(d) => (
+                <div class="flex items-center gap-2 text-sm text-idle animate-fade-in" title={new Date(d().at).toLocaleString()}>
+                  <span class="grid size-5 place-items-center rounded-full bg-idle-soft">
+                    <Check size={12} stroke-width={2.5} />
+                  </span>
+                  <span class="font-medium">Done</span>
+                  <Show when={d().took}>
+                    <span class="text-fg-3">· took {d().took}</span>
+                  </Show>
+                </div>
+              )}
             </Show>
           </Show>
         </div>
