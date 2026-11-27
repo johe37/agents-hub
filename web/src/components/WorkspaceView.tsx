@@ -89,7 +89,7 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
           )}
         </Show>
 
-        <section class="flex min-h-0 flex-1 flex-col p-3">
+        <section class="flex shrink-0 flex-col p-3">
           <div class="mb-2 flex items-center gap-2 px-1">
             <SectionTitle>Changes</SectionTitle>
             <Show when={g()}>

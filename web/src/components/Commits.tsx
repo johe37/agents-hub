@@ -281,7 +281,7 @@ export function Commits(p: { ws: Workspace }) {
   };
 
   return (
-    <section class="border-t border-line p-3">
+    <section class="shrink-0 border-t border-line p-3">
       <div class="mb-2 flex items-center gap-1 px-1">
         <SectionTitle class="flex-1">Commits</SectionTitle>
         <Show when={page().base}>
