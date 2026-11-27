@@ -347,7 +347,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
             let root = super::model::toplevel(&ws.path).unwrap_or_else(|| ws.path.clone());
             let full = std::path::Path::new(&root).join(&file);
-            if file.split('/').any(|p| p == "..") || !full.is_file() {
+            if file.starts_with('/') || file.split('/').any(|p| p == "..") || !full.is_file() {
                 return Err(format!("Can't open {file}: it is not in the checkout. A later commit removed or moved it."));
             }
             let (command, name) = editor_at(&full.to_string_lossy(), line);

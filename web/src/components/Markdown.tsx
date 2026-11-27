@@ -15,9 +15,9 @@ const md = new Marked({
     html({ text }) {
       return escape(text);
     },
-    link({ href, text }) {
+    link({ href, tokens }) {
       const safe = /^(https?:|mailto:|#)/i.test(href) ? href : "#";
-      return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+      return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${this.parser.parseInline(tokens)}</a>`;
     },
     image({ text }) {
       return escape(text);
