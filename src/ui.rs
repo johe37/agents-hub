@@ -1658,6 +1658,8 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "From any terminal"),
     ("HUBKEY", "back to the hub, or click ◀ jugglr in the top bar"),
+    ("Ctrl+Tab", "next window in the workspace; Ctrl+Shift+Tab the previous one"),
+    ("Alt+W", "close the window; the last one closes the workspace"),
     ("", ""),
     ("", "Mouse"),
     ("click", "select; click again or double-click to open"),

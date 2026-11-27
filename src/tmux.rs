@@ -170,6 +170,9 @@ set -as terminal-features ",*:RGB"
 # Pass clickable links (OSC 8) on to your terminal.
 set -as terminal-features ",*:hyperlinks"
 set -g escape-time 10
+# Tell Ctrl+Tab from Tab, if the terminal supports it (iTerm: "Report modifiers using CSI u").
+set -s extended-keys on
+set -as terminal-features ",*:extkeys"
 set -g mouse on
 set -g history-limit 50000
 # The web terminal sends one wheel report per line, so it scrolls one line per report.
@@ -200,6 +203,10 @@ set -g mode-style "bg={selection},fg={bright}"
 bind -n MouseDown1Status if -F "#{{==:#{{mouse_status_range}},hub}}" "new-session -A -s {HUB_SESSION} {hub_cmd}" "select-window -t ="
 bind -n {key} new-session -A -s {HUB_SESSION} {hub_cmd}
 set -g @hub_key {key}
+bind -n C-Tab next-window
+bind -n C-S-Tab previous-window
+# The window id is saved first: after the switch to the hub, #{{window_id}} is the hub's.
+bind -n M-w if -F "#{{==:#{{session_name}},{HUB_SESSION}}}" "" {{ confirm-before -p "Close #W? (y/n)" {{ run -C "set -g @closing #{{window_id}}" ; if -F "#{{==:#{{session_windows}},1}}" {{ switch-client -t ={HUB_SESSION} }} ; run -C "kill-window -t #{{@closing}}" }} }}
 # The session and window lists hide the pool of spare shells.
 bind s choose-tree -Zs -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"
 bind w choose-tree -Zw -f "#{{!=:#{{session_name}},{POOL_SESSION}}}"

@@ -49,6 +49,8 @@ Press `n` to open your first workspace, then `c` to start Claude in it.
 | `j` / `k` | Move down / up |
 | `Enter` | Go to the agent, terminal or workspace |
 | `Alt+Q` | Back to the hub from any terminal |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous window in the workspace |
+| `Alt+W` | Close the window |
 | `n` | Open a workspace |
 | `c` / `t` / `e` | New Claude / terminal / nvim in the workspace |
 | `r` | Reply to the agent |
