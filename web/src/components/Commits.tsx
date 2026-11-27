@@ -514,19 +514,19 @@ export function Commits(p: { ws: Workspace }) {
       <Show when={picker()}>
         {(at) => <BranchPicker path={p.ws.path} at={at()} anchor={pickerBtn} current={rev()} onPick={setRev} onClose={() => setPicker(null)} />}
       </Show>
-      <Show when={menu()}>
+      <Show when={menu()} keyed>
         {(m) => {
           const close = () => setMenu(null);
           return (
-            <Popup at={m()} onClose={close} class="min-w-[12rem]">
+            <Popup at={m} onClose={close} class="min-w-[12rem]">
               <div role="menu">
-                <MenuItem icon={<FileDiff size={14} />} label="Show changes" run={() => show(m().c, null)} close={close} />
+                <MenuItem icon={<FileDiff size={14} />} label="Show changes" run={() => show(m.c, null)} close={close} />
                 <Show when={hasAgent()}>
-                  <MenuItem icon={<Sparkles size={14} />} label={`Review with ${agentLabel()}`} run={() => void review(m().c)} close={close} />
+                  <MenuItem icon={<Sparkles size={14} />} label={`Review with ${agentLabel()}`} run={() => void review(m.c)} close={close} />
                 </Show>
-                <MenuItem icon={<Copy size={14} />} label="Copy SHA" run={() => copy(m().c.sha, "SHA")} close={close} />
-                <MenuItem label="Copy short SHA" run={() => copy(m().c.short, "short SHA")} close={close} />
-                <MenuItem label="Copy message" run={() => copy(m().c.message ? `${m().c.title}\n\n${m().c.message}` : m().c.title, "message")} close={close} />
+                <MenuItem icon={<Copy size={14} />} label="Copy SHA" run={() => copy(m.c.sha, "SHA")} close={close} />
+                <MenuItem label="Copy short SHA" run={() => copy(m.c.short, "short SHA")} close={close} />
+                <MenuItem label="Copy message" run={() => copy(m.c.message ? `${m.c.title}\n\n${m.c.message}` : m.c.title, "message")} close={close} />
               </div>
             </Popup>
           );
