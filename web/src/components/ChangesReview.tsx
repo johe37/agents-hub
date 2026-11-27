@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { getJSON, type Agent, type Commit } from "../api";
 import { language } from "../highlight";
-import { act, agentRoute, diffView, go, setDiffView, setModes, state, type DiffTarget } from "../store";
+import { act, agentRoute, diffId, diffView, go, pinDiff, returnTo, setDiffView, setModes, state, type DiffTarget } from "../store";
 import { alive, cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
 import { Code, FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
@@ -40,10 +40,12 @@ function ask(d: DiffTarget, text: string, fresh: boolean) {
   });
 }
 
-/** Open the file in $EDITOR in the workspace, at line, and show that window. */
+/** Open the file in $EDITOR in the workspace, at line, and show that window. Closing it comes back to this diff. */
 function edit(d: DiffTarget, file: string, line: number | undefined) {
   void act({ type: "open_file", workspace: d.workspace, file, line }, { key: `edit:${file}` }).then((r) => {
     if (!r.ok || !r.window) return;
+    pinDiff(d.workspace, diffId(d));
+    returnTo(r.window, diffId(d));
     setDiffView(null);
     go({ view: "workspace", name: d.workspace, window: r.window });
   });
@@ -99,6 +101,9 @@ function CommitInfo(p: { c: Commit }) {
 }
 
 type Sel = { file: string; a: number; b: number };
+
+/** Where each diff was scrolled to: a tab you leave and come back to opens there again. */
+const scrolls = new Map<string, number>();
 
 function FileSection(p: {
   f: DiffFile;
@@ -203,6 +208,14 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
 
   const [sel, setSel] = createSignal<Sel | null>(null);
   createEffect(() => (p.target, setSel(null)));
+  let scroller!: HTMLDivElement;
+  let restored = "";
+  createEffect(() => {
+    const id = diffId(p.target);
+    if (diff.state !== "ready" || restored === id) return;
+    restored = id;
+    queueMicrotask(() => (scroller.scrollTop = scrolls.get(id) ?? 0));
+  });
   const askAbout = (f: DiffFile, whole: boolean, fresh: boolean) => {
     const s = sel();
     const lines = !whole && s?.file === f.name ? linesLabel(f.lines.slice(s.a, s.b + 1).filter((l) => l.type !== "hunk")) : null;
@@ -257,7 +270,7 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
           <X size={16} />
         </IconButton>
       </header>
-      <div class="min-h-0 flex-1 overflow-y-auto p-5">
+      <div class="min-h-0 flex-1 overflow-y-auto p-5" ref={scroller} onScroll={(e) => scrolls.set(diffId(p.target), e.currentTarget.scrollTop)}>
         <Show when={commit()} keyed>
           {(c) => <CommitInfo c={c} />}
         </Show>

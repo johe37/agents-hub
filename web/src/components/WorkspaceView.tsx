@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, pinDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
+import { act, ask, backTo, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, pinDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { DiffPane } from "./ChangesReview";
@@ -423,10 +423,16 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
 
   // Without a window in the URL, show the last one shown here, else the one that needs you, else the first agent, else the first window.
   // A window just opened is in the URL before the hub lists it: give it a moment to show up.
+  // A window that was shown here and is gone has closed: there is nothing to wait for.
+  const seen = new Set<string>();
   createEffect(() => {
     const w = ws();
-    if (!w || current() || onDiff()) return;
+    const c = current();
+    if (c) seen.add(c.id);
+    if (!w || c || onDiff()) return;
     const pickOne = () => {
+      const back = backTo(w.name, p.window);
+      if (back) return go({ view: "workspace", name: w.name, window: back }, true);
       const last = lastWindow(w.name);
       const pick =
         w.windows.find((x) => x.id === last) ??
@@ -435,7 +441,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
         w.windows[0];
       if (pick) go({ view: "workspace", name: w.name, window: pick.id }, true);
     };
-    if (!p.window || isDiff(p.window)) return pickOne();
+    if (!p.window || isDiff(p.window) || seen.has(p.window)) return pickOne();
     const t = setTimeout(() => untrack(current) || pickOne(), 4000);
     onCleanup(() => clearTimeout(t));
   });

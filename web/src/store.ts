@@ -518,7 +518,7 @@ export function closeWindow(ws: Workspace, w: Win) {
       const here = route();
       if (here.view !== "workspace" || here.name !== ws.name) return;
       if (!rest.length) go({ view: "agents" });
-      else if (here.window === w.id) go({ view: "workspace", name: ws.name, window: rest[0].id }, true);
+      else if (here.window === w.id) go({ view: "workspace", name: ws.name, window: backTo(ws.name, w.id) ?? rest[0].id }, true);
     };
     void actHiding({ type: "close_window", window: w.id }, what, { quiet: true, before });
   };
@@ -599,6 +599,15 @@ export function diffLabel(d: DiffTarget) {
 }
 
 /** Close a diff tab. Closing the one shown shows the diff next to it, else the window you came from. */
+/** The diff tab each window was opened from, to go back to when the window closes. */
+const openedFrom = new Map<string, string>();
+export const returnTo = (window: string, diff: string) => openedFrom.set(window, diff);
+/** The diff tab that window was opened from, while that tab is still open. */
+export function backTo(workspace: string, window: string | null | undefined): string | undefined {
+  const id = window ? openedFrom.get(window) : undefined;
+  return id && diffTabs()[workspace]?.some((d) => diffId(d) === id) ? id : undefined;
+}
+
 export function closeDiff(workspace: string, id: string) {
   const list = diffTabs()[workspace] ?? [];
   const at = list.findIndex((x) => diffId(x) === id);
