@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::fs::MetadataExt;
+use std::sync::{LazyLock, Mutex};
 
 use serde_json::{Value, json};
 
@@ -80,30 +82,94 @@ fn prompt(content: &Value) -> Option<String> {
     (!text.starts_with('<')).then(|| clip(text, MAX_TEXT))
 }
 
+/// What a transcript held when it was last read, so the next request parses only what was written since.
+#[derive(Default)]
+struct Tail {
+    ino: u64,
+    /// The end of the last whole line read.
+    offset: u64,
+    /// The first line from offset is cut in half.
+    skip: bool,
+    truncated: bool,
+    items: Vec<Value>,
+    tools: HashMap<String, usize>,
+    /// Prompts typed while Claude works wait here until Claude reads them.
+    queue: Vec<String>,
+}
+
+const CACHED: usize = 16;
+static CACHE: LazyLock<Mutex<HashMap<String, Tail>>> = LazyLock::new(Mutex::default);
+
 pub fn read(path: &str) -> Value {
-    let Ok(mut f) = std::fs::File::open(path) else { return json!({"items": [], "missing": true}) };
-    let size = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let start = size.saturating_sub(TAIL);
-    let mut data = vec![];
-    if f.seek(SeekFrom::Start(start)).and_then(|_| f.read_to_end(&mut data)).is_err() {
-        return json!({"items": []});
+    let cached = CACHE.lock().unwrap().remove(path);
+    let Some(tail) = Tail::update(path, cached.unwrap_or_default()) else { return json!({"items": [], "missing": true}) };
+    let out = tail.json();
+    let mut cache = CACHE.lock().unwrap();
+    if cache.len() >= CACHED {
+        if let Some(k) = cache.keys().next().cloned() {
+            cache.remove(&k);
+        }
     }
-    let text = String::from_utf8_lossy(&data);
-    let mut lines = text.lines();
-    if start > 0 {
-        // The first line is cut in half.
-        lines.next();
+    cache.insert(path.to_string(), tail);
+    out
+}
+
+impl Tail {
+    fn update(path: &str, mut t: Tail) -> Option<Tail> {
+        let mut f = std::fs::File::open(path).ok()?;
+        let meta = f.metadata().ok()?;
+        let size = meta.len();
+        if meta.ino() != t.ino || size < t.offset {
+            let offset = size.saturating_sub(TAIL);
+            t = Tail { ino: meta.ino(), offset, skip: offset > 0, truncated: offset > 0, ..Tail::default() };
+        }
+        if size == t.offset {
+            return Some(t);
+        }
+        let mut data = vec![];
+        if f.seek(SeekFrom::Start(t.offset)).and_then(|_| f.read_to_end(&mut data)).is_err() {
+            return Some(t);
+        }
+        let mut end = 0;
+        if t.skip {
+            let Some(nl) = data.iter().position(|b| *b == b'\n') else { return Some(t) };
+            end = nl + 1;
+            t.skip = false;
+        }
+        for line in data[end..].split_inclusive(|b| *b == b'\n') {
+            match serde_json::from_str::<Value>(&String::from_utf8_lossy(line)) {
+                Ok(r) => t.record(&r),
+                // Claude has not written all of the last line yet.
+                Err(_) if !line.ends_with(b"\n") => break,
+                Err(_) => {}
+            }
+            end += line.len();
+        }
+        t.offset += end as u64;
+        if t.items.len() > 2 * MAX_ITEMS {
+            let cut = t.items.len() - MAX_ITEMS;
+            t.items.drain(..cut);
+            t.tools.retain(|_, i| {
+                let keep = *i >= cut;
+                *i = i.saturating_sub(cut);
+                keep
+            });
+            t.truncated = true;
+        }
+        Some(t)
     }
 
-    let mut items: Vec<Value> = vec![];
-    let mut tools: HashMap<String, usize> = HashMap::new();
-    // Prompts typed while Claude works wait here until Claude reads them.
-    let mut queue: Vec<String> = vec![];
-    for line in lines {
-        let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
+    fn json(&self) -> Value {
+        let cut = self.items.len().saturating_sub(MAX_ITEMS);
+        let queued: Vec<String> = self.queue.iter().filter_map(|q| prompt(&json!(q))).collect();
+        json!({"items": &self.items[cut..], "queued": queued, "truncated": self.truncated || cut > 0})
+    }
+
+    fn record(&mut self, r: &Value) {
         if r["isSidechain"] == true {
-            continue;
+            return;
         }
+        let (items, tools, queue) = (&mut self.items, &mut self.tools, &mut self.queue);
         let ts = r["timestamp"].clone();
         match r["type"].as_str() {
             Some("user") => {
@@ -179,9 +245,6 @@ pub fn read(path: &str) -> Value {
             _ => {}
         }
     }
-    let cut = items.len().saturating_sub(MAX_ITEMS);
-    let queued: Vec<String> = queue.iter().filter_map(|q| prompt(&json!(q))).collect();
-    json!({"items": items.split_off(cut), "queued": queued, "truncated": start > 0 || cut > 0})
 }
 
 #[cfg(test)]
@@ -241,6 +304,28 @@ mod tests {
         let texts: Vec<_> = out["items"].as_array().unwrap().iter().map(|i| i["text"].as_str().unwrap()).collect();
         assert_eq!(texts, ["Start", "Read mid-turn", "Next turn"]);
         assert_eq!(out["queued"], json!(["Still waiting"]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reads_only_what_was_written_since() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("jugglr-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let p = path.to_str().unwrap();
+        let line = |t: &str| json!({"type": "user", "message": {"content": t}}).to_string();
+        std::fs::write(&path, format!("{}\n", line("one"))).unwrap();
+        let texts = |v: Value| v["items"].as_array().unwrap().iter().map(|i| i["text"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(texts(read(p)), ["one"]);
+        let two = line("two");
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(two[..10].as_bytes()).unwrap();
+        assert_eq!(texts(read(p)), ["one"], "a half-written line waits");
+        f.write_all(format!("{}\n", &two[10..]).as_bytes()).unwrap();
+        assert_eq!(texts(read(p)), ["one", "two"]);
+        std::fs::write(&path, format!("{}\n", line("new"))).unwrap();
+        assert_eq!(texts(read(p)), ["new"], "a rewritten file is read again");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
