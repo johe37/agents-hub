@@ -937,7 +937,7 @@ fn review_side(app: &App, i: usize, t: u128) -> Side {
     ];
     let buttons = match ws {
         Some(_) => vec![("↵", "shell in the checkout", colors().accent, Action::Open), ("x", "close", colors().accent, Action::Close)],
-        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with agent", colors().accent, Action::NewWindow("agent")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
     let (tabs, body, body_links) = mr_tabs(app, m, t);
     Side {
@@ -966,8 +966,8 @@ fn mine_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
         },
     ];
     let buttons = match ws {
-        Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
-        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "check out with agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "agent", colors().accent, Action::NewWindow("agent")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "check out with agent", colors().accent, Action::NewWindow("agent")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
     let (tabs, body, body_links) = mr_tabs(app, m, t);
     Side {
@@ -1029,7 +1029,7 @@ fn issue_side(is: &gitlab::Issue) -> Side {
         meta: Line::from(s(format!(" {} ", is.project), fg(colors().dim))),
         color: colors().info,
         banner,
-        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "work on it with agent", colors().accent, Action::NewWindow("claude"))],
+        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "work on it with agent", colors().accent, Action::NewWindow("agent"))],
         tabs: vec![("Description", 0)],
         body,
         link: Some((0, is.url.clone())),
@@ -1089,7 +1089,7 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             return;
         }
     };
-    side.buttons.retain(|b| app.snap.agent_installed || b.3 != Action::NewWindow("claude"));
+    side.buttons.retain(|b| app.snap.agent_installed || b.3 != Action::NewWindow("agent"));
     let block = panel(Line::from(s(format!(" {} ", side.title), fg(colors().bright).bold())), false).title_bottom(side.meta);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
@@ -1537,7 +1537,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     let right = area.right().saturating_sub(uw);
     let mut x = area.x + 1;
     let actions = app.actions(side_visible(f.area()));
-    for (key, label, action) in actions.into_iter().filter(|a| app.snap.agent_installed || a.2 != Action::NewWindow("claude")) {
+    for (key, label, action) in actions.into_iter().filter(|a| app.snap.agent_installed || a.2 != Action::NewWindow("agent")) {
         let key_w = key.chars().count() as u16 + 2;
         let w = key_w + label.chars().count() as u16 + 3;
         if x + w > right {

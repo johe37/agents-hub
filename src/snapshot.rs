@@ -30,21 +30,25 @@ pub struct Window {
     pub claude: Option<Session>,
     /// Unix time of the last output, for the status of agents without hooks.
     pub activity: u64,
+    /// Started as an agent, or one runs in it now; see Pane::runs_agent.
+    pub runs_agent: bool,
+    pub runs_claude: bool,
+    pub agent_mark: bool,
     pub width: u16,
     pub height: u16,
     pub screen: Option<Vec<Line<'static>>>,
 }
 
 impl Window {
-    /// Claude, or the agent set in the config, found by its window name as its process may be `node`.
+    /// Claude or another agent, found by what runs in it, so a renamed window still counts.
     pub fn is_agent(&self) -> bool {
         // An attach window shows a background agent that already has its own row.
-        (self.claude.is_some() || self.command == "claude" || self.name == crate::agent::name()) && !self.name.starts_with(ATTACH_PREFIX)
+        (self.claude.is_some() || self.runs_agent) && !self.name.starts_with(ATTACH_PREFIX)
     }
 
     /// Claude Code has a transcript to show; other agents show their screen, like a terminal.
     pub fn is_claude(&self) -> bool {
-        self.claude.is_some() || self.command == "claude" || self.name == "claude"
+        self.claude.is_some() || self.runs_claude
     }
 
     /// agent, editor, shell or process: what the window is for, from what runs in it.
@@ -110,8 +114,7 @@ impl Agent {
             }
         }
         match &self.window_name {
-            Some(n) if n == "claude" => "Claude".into(),
-            Some(n) if *n == crate::agent::name() => crate::agent::label(),
+            Some(n) if crate::agent::is_agent_program(n) => crate::agent::label_of(n),
             Some(n) => n.clone(),
             None => "Claude".into(),
         }
@@ -138,7 +141,7 @@ impl Agent {
 /// Agents without hooks work while their screen changes. Claude windows without hooks stay unknown:
 /// its spinner would read as working, and a missing hook is worth noticing.
 fn output_status(w: &Window) -> Status {
-    if w.command == "claude" || w.activity == 0 {
+    if w.is_claude() || w.activity == 0 {
         return Status::Unknown;
     }
     if crate::state::now().saturating_sub(w.activity) <= 2 { Status::Working } else { Status::Idle }
@@ -441,6 +444,9 @@ impl Collector {
         let mut workspaces = self.workspaces(&panes, &in_hub);
         if !self.cfg.passive {
             self.previews(&mut workspaces, &all_panes);
+            for w in workspaces.iter().flat_map(|ws| &ws.windows).filter(|w| w.is_agent() != w.agent_mark) {
+                tmux::mark_agent(&w.window_id, w.is_agent());
+            }
         }
 
         let git = &self.git;
@@ -517,7 +523,7 @@ impl Collector {
             let main = wp
                 .iter()
                 .find(|p| claude_by_pane.contains_key(&p.pane_id))
-                .or_else(|| wp.iter().find(|p| p.command == "claude"))
+                .or_else(|| wp.iter().find(|p| p.runs_agent()))
                 .unwrap_or(active);
             let w = Window {
                 index: active.window_index,
@@ -528,6 +534,9 @@ impl Collector {
                 pid: main.pid,
                 claude,
                 activity: main.activity,
+                runs_agent: main.runs_agent(),
+                runs_claude: main.runs_claude(),
+                agent_mark: main.agent_mark,
                 width: main.width,
                 height: main.height,
                 screen: None,
@@ -824,7 +833,7 @@ mod tests {
 
     #[test]
     fn only_a_foreground_command_makes_a_terminal_busy() {
-        let win = |command: &str| Window { index: 1, name: "w".into(), window_id: "@1".into(), pane_id: "%1".into(), command: command.into(), pid: 1, claude: None, activity: 0, width: 80, height: 24, screen: None };
+        let win = |command: &str| Window { index: 1, name: "w".into(), window_id: "@1".into(), pane_id: "%1".into(), command: command.into(), pid: 1, claude: None, activity: 0, runs_agent: command == "claude", runs_claude: command == "claude", agent_mark: false, width: 80, height: 24, screen: None };
         assert!(win("cargo").busy());
         assert!(!win("zsh").busy(), "an idle shell");
         assert!(!win("nvim").busy(), "editors have their own kind");

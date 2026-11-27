@@ -237,7 +237,7 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
           <Button size="sm" loading={isBusy(key("resolve"))} onClick={() => send(true)} title="Post the reply, if any, and resolve the thread">
             <Check size={13} /> {text().trim() ? "Reply and resolve" : "Resolve"}
           </Button>
-          <Button size="sm" variant="ghost" class="ml-auto" loading={isBusy(`checkout:${p.mr.key}`)} onClick={() => openMr(p.mr, "claude", p.thread.prompt)} title={`Put the thread in a ${agentLabel()} prompt in the MR's workspace, to edit before sending`}>
+          <Button size="sm" variant="ghost" class="ml-auto" loading={isBusy(`checkout:${p.mr.key}`)} onClick={() => openMr(p.mr, "agent", p.thread.prompt)} title={`Put the thread in a ${agentLabel()} prompt in the MR's workspace, to edit before sending`}>
             <Sparkles size={13} /> Ask {agentLabel()} to fix
           </Button>
         </div>
@@ -257,7 +257,7 @@ function OpenButtons(p: { mr: Mr }) {
           <Layers size={13} /> Go to {p.mr.workspace}
         </Button>
       </Show>
-      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("claude")} kbd="c" title={review() ? `Check out the code and start ${agentLabel()} with a review prompt to edit first` : `Open ${agentLabel()} on the MR's branch`}>
+      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("agent")} kbd="c" title={review() ? `Check out the code and start ${agentLabel()} with a review prompt to edit first` : `Open ${agentLabel()} on the MR's branch`}>
         <Sparkles size={13} /> {review() ? `Review with ${agentLabel()}` : agentLabel()}
       </Button>
       <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="t">
@@ -608,7 +608,7 @@ export function Gitlab() {
         done(cur.todo);
         break;
       case "c":
-        if (cur?.mr) void openMr(cur.mr, "claude");
+        if (cur?.mr) void openMr(cur.mr, "agent");
         else if (cur?.issue) void startIssue(cur.issue);
         else return;
         break;

@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import type { Issue, Mr, Todo } from "./api";
 import { act, go, setComposer, setDraft, state } from "./store";
 
-export type Kind = "claude" | "shell";
+export type Kind = "agent" | "shell";
 
 export const allMrs = (): Mr[] => {
   const g = state.gitlab;
@@ -33,7 +33,7 @@ function toClaude(workspace: string | null, path: string, prompt: string) {
 
 /** Open the MR's code with a window of kind; Claude gets the review prompt (for a review) to edit first. */
 export async function openMr(m: Mr, kind: Kind, prompt?: string) {
-  const p = kind === "claude" ? (prompt ?? (isReview(m) ? m.review_prompt : "")) : "";
+  const p = kind === "agent" ? (prompt ?? (isReview(m) ? m.review_prompt : "")) : "";
   // With a prompt to edit, only check the code out: the workspace opens with the agent you start.
   const r = await act({ type: "checkout", mr: m.key, kind: p ? undefined : kind }, { key: `checkout:${m.key}` });
   if (!r.ok || !r.path) return;

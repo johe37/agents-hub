@@ -270,16 +270,16 @@ export type Action =
   | { type: "resume"; agent: string }
   | { type: "close_agent"; agent: string }
   | { type: "adopt"; agent: string }
-  | { type: "new_window"; workspace: string; kind: "claude" | "shell" | "nvim" }
+  | { type: "new_window"; workspace: string; kind: "agent" | "shell" | "nvim" }
   | { type: "set_agent"; command: string }
   | { type: "new_agent"; path: string; prompt?: string }
-  | { type: "open_workspace"; path: string; kind?: "claude" | "shell" | "nvim" }
+  | { type: "open_workspace"; path: string; kind?: "agent" | "shell" | "nvim" }
   | { type: "close_workspace"; workspace: string }
   | { type: "close_window"; window: string }
   | { type: "move_window"; window: string; before: string | null }
   | { type: "rename_workspace"; workspace: string; name: string }
   | { type: "rescan" }
-  | { type: "checkout"; mr: string; kind?: "claude" | "shell" | "nvim" }
+  | { type: "checkout"; mr: string; kind?: "agent" | "shell" | "nvim" }
   | { type: "issue_checkout"; issue: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
   | { type: "publish"; workspace: string }

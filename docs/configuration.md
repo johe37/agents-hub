@@ -41,5 +41,7 @@ Claude Code is the only agent with full support. The others:
 - get a prompt typed in once their screen is still, instead of as an argument;
 - are not pre-started (`prewarm_claude`), resumed or adopted.
 
-The hub finds an agent's window by its name, which is the program's name, e.g. `codex`. If the
+The hub finds an agent's window by the command it started with, or by the program that runs in
+it, so a renamed window still counts. It knows `claude`, `codex`, `gemini`, `aider` and
+`opencode`, and the program set as `agent`. Agent windows have a ◆ in the tmux status bar. If the
 program is not in `PATH`, the hub hides the agent actions and says why.

@@ -52,7 +52,7 @@ function toAgent(workspace: string, text: string) {
     return;
   }
   setPending({ workspace, text });
-  void act({ type: "new_window", workspace, kind: "claude" }, { key: `new:claude` }).then((r) => {
+  void act({ type: "new_window", workspace, kind: "agent" }, { key: `new:agent` }).then((r) => {
     if (!r.ok) setPending(null);
     else if (r.window) go({ view: "workspace", name: workspace, window: r.window });
   });

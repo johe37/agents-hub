@@ -348,14 +348,14 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     for (const w of [current(), second()]) if (agentOf(w)?.key === d.agent) setModeOf(w, "chat", false);
   });
 
-  const open = (kind: "claude" | "shell") =>
+  const open = (kind: "agent" | "shell") =>
     act({ type: "new_window", workspace: p.name, kind }, { key: `new:${kind}`, quiet: true }).then((r) => {
       if (r.ok && r.window) {
         go({ view: "workspace", name: p.name, window: r.window });
       }
     });
 
-  const openBeside = (kind: "claude" | "shell") =>
+  const openBeside = (kind: "agent" | "shell") =>
     act({ type: "new_window", workspace: p.name, kind }, { key: `new:${kind}`, quiet: true }).then((r) => {
       if (r.ok && r.window) beside(r.window);
     });
@@ -370,14 +370,14 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const newWindowMenu = (cls_: string) => (
     <MenuButton
       label="New window (c, t)"
-      icon={<Show when={isBusy("new:claude") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
+      icon={<Show when={isBusy("new:agent") || isBusy("new:shell")} fallback={<Plus size={15} />}><Spinner size={13} /></Show>}
       size="sm"
       class={cls_}
       items={[
-        ...(hasAgent() ? [{ label: "Agent", icon: <Bot size={14} />, hint: "c", run: () => open("claude") }] : []),
+        ...(hasAgent() ? [{ label: "Agent", icon: <Bot size={14} />, hint: "c", run: () => open("agent") }] : []),
         { label: "Terminal", icon: <TermIcon size={14} />, hint: "t", run: () => open("shell") },
         { label: "Terminal beside", icon: <Columns size={14} />, run: () => openBeside("shell") },
-        ...(hasAgent() ? [{ label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("claude") }] : []),
+        ...(hasAgent() ? [{ label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("agent") }] : []),
       ]}
     />
   );
@@ -471,7 +471,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     } else if (e.altKey) return;
     else if (k === "]" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i + 1) % wins.length].id });
     else if (k === "[" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i - 1 + wins.length) % wins.length].id });
-    else if (k === "c" && hasAgent()) open("claude");
+    else if (k === "c" && hasAgent()) open("agent");
     else if (k === "c") toast(noAgent(), true);
     else if (k === "t") open("shell");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");

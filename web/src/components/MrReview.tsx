@@ -116,7 +116,7 @@ export async function askClaude(m: Mr, text: string) {
   const starting = pendingAsk()?.mr === m.key;
   setPendingAsk({ mr: m.key, text });
   if (starting) return;
-  const r = await act({ type: "checkout", mr: m.key, kind: "claude" }, { key: `checkout:${m.key}` });
+  const r = await act({ type: "checkout", mr: m.key, kind: "agent" }, { key: `checkout:${m.key}` });
   if (!r.ok) setPendingAsk(null);
 }
 

@@ -117,8 +117,13 @@ fn new_workspace(path: &str, kind: &str, command: Option<&str>) -> Result<(Strin
     Ok((session, w))
 }
 
-fn check_kind(kind: &str) -> Result<(), String> {
-    if matches!(kind, "claude" | "shell" | "nvim") { Ok(()) } else { Err(format!("Unknown window kind {kind}")) }
+/// The window kind; `claude` is its old name, which a page loaded before an upgrade still sends.
+fn check_kind(kind: &str) -> Result<String, String> {
+    match kind {
+        "agent" | "claude" => Ok("agent".into()),
+        "shell" | "nvim" => Ok(kind.into()),
+        _ => Err(format!("Unknown window kind {kind}")),
+    }
 }
 
 /// A window in session: a pre-started one from the pool when there is one, which shows its prompt at once.
@@ -274,9 +279,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
         }
         Action::NewWindow { workspace, kind } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
-            if !matches!(kind.as_str(), "claude" | "shell" | "nvim") {
-                return Err(format!("Unknown window kind {kind}"));
-            }
+            let kind = check_kind(&kind)?;
             let w = window(&ws.name, &ws.path, &crate::app::window_name(&kind), crate::app::window_command(&kind).as_deref())?;
             Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
         }
@@ -337,7 +340,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let Some(kind) = kind else {
                 return Ok(Done { workspace: open, path: Some(path), ..Done::default() });
             };
-            check_kind(&kind)?;
+            let kind = check_kind(&kind)?;
             let (name, command) = (crate::app::window_name(&kind), crate::app::window_command(&kind));
             if let Some(session) = open {
                 let w = window(&session, &path, &name, command.as_deref())?;
@@ -396,9 +399,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             Ok(said("Scanning for repos"))
         }
         Action::Checkout { mr: key, kind } => {
-            if let Some(k) = &kind {
-                check_kind(k)?;
-            }
+            let kind = kind.as_deref().map(check_kind).transpose()?;
             let m = find_mr(hub, &key)?;
             let (open, review) = {
                 let snap = hub.snapshot();

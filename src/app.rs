@@ -185,17 +185,17 @@ pub const FLASH: Duration = Duration::from_millis(1500);
 /// so moving through the list must not start one for every row passed.
 const CLAUDE_DWELL: Duration = Duration::from_millis(700);
 
-/// The window kind `claude` stands for the agent set in the config, Claude Code or another.
+/// The window kind `agent` is the agent set in the config, Claude Code or another.
 pub fn window_command(kind: &str) -> Option<String> {
     match kind {
-        "claude" => Some(crate::agent::command()),
+        "agent" => Some(crate::agent::command()),
         "nvim" => Some("nvim".into()),
         _ => None,
     }
 }
 
 pub fn window_name(kind: &str) -> String {
-    if kind == "claude" { crate::agent::name() } else { kind.to_string() }
+    if kind == "agent" { crate::agent::name() } else { kind.to_string() }
 }
 
 impl App {
@@ -806,7 +806,7 @@ impl App {
         let mut v = vec![];
         if !side_visible && self.current_review().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
-            v.push(("c", "review with agent", Action::NewWindow("claude")));
+            v.push(("c", "review with agent", Action::NewWindow("agent")));
         }
         if !side_visible && matches!(self.current(), Some(Row::Header(title, _)) if gitlab_section(title).is_some()) {
             v.push(("^R", "refresh", Action::Refresh));
@@ -816,7 +816,7 @@ impl App {
         }
         if !side_visible && self.current_issue().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
-            v.push(("c", "work on it with agent", Action::NewWindow("claude")));
+            v.push(("c", "work on it with agent", Action::NewWindow("agent")));
         }
         if !side_visible && self.current_thread().is_some() {
             v.push(("r", "reply", Action::Reply));
@@ -855,9 +855,9 @@ impl App {
             Action::Open => self.open(),
             Action::Refresh => self.refresh_mr(),
             Action::NewWorkspace => self.open_picker(""),
-            Action::NewWindow("claude") if self.current_review().is_some() => self.start_review("claude"),
+            Action::NewWindow("agent") if self.current_review().is_some() => self.start_review("agent"),
             Action::NewWindow(kind) if self.current_review().is_some() && self.current_workspace().is_none() => self.start_review(kind),
-            Action::NewWindow("claude") if self.current_issue().is_some() => self.start_issue(),
+            Action::NewWindow("agent") if self.current_issue().is_some() => self.start_issue(),
             Action::NewWindow(kind) if self.current_mr().is_some() && self.current_workspace().is_none() => self.start_mine(kind),
             Action::NewWindow(kind) => self.new_window(kind),
             Action::NewChat => self.new_chat(),
@@ -1444,7 +1444,7 @@ impl App {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.act(Action::Tab((self.tab + 1) % 4)),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.act(Action::Tab((self.tab + 3) % 4)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
-            KeyCode::Char('c') => self.act(Action::NewWindow("claude")),
+            KeyCode::Char('c') => self.act(Action::NewWindow("agent")),
             KeyCode::Char('C') => self.act(Action::NewChat),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
             KeyCode::Char('e') => self.act(Action::NewWindow("nvim")),
@@ -1543,7 +1543,7 @@ impl App {
                         return;
                     }
                     KeyCode::Enter => return self.choose("shell"),
-                    KeyCode::Char('o') if ctrl => return self.choose("claude"),
+                    KeyCode::Char('o') if ctrl => return self.choose("agent"),
                     KeyCode::Char('r') if ctrl => {
                         self.rescanning = true;
                         let _ = self.cmd.send(Cmd::Rescan);

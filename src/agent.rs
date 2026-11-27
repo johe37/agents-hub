@@ -33,9 +33,21 @@ fn from_config(text: &str) -> Option<String> {
 }
 
 /// The program a command runs: `codex` for `OPENAI_LOG=1 /usr/bin/codex --full-auto`.
+/// Quotes are dropped, as tmux quotes a pane's start command: `"codex --full-auto"`.
 pub fn program(command: &str) -> Option<String> {
-    let word = command.split_whitespace().find(|w| !w.contains('='))?;
+    let word = command.split_whitespace().map(|w| w.trim_matches(['"', '\'']).trim_start_matches('\\')).find(|w| !w.is_empty() && !w.contains('='))?;
     Some(Path::new(word).file_name()?.to_string_lossy().into_owned())
+}
+
+/// A known agent, or the one in the config: windows of an agent used before a change still count.
+pub fn is_agent_program(program: &str) -> bool {
+    KNOWN.contains(&program) || program == name()
+}
+
+/// Codex for codex.
+pub fn label_of(name: &str) -> String {
+    let mut c = name.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }
 
 /// The agent's window name, e.g. `codex`.
@@ -50,9 +62,7 @@ pub fn is_claude() -> bool {
 
 /// Codex rather than codex, for buttons and messages.
 pub fn label() -> String {
-    let n = name();
-    let mut c = n.chars();
-    c.next().map_or(n.clone(), |f| f.to_uppercase().chain(c).collect())
+    label_of(&name())
 }
 
 fn installed(command: &str) -> bool {
@@ -122,6 +132,8 @@ mod tests {
         assert_eq!(program("claude").as_deref(), Some("claude"));
         assert_eq!(program("FOO=1 /opt/bin/codex --full-auto").as_deref(), Some("codex"));
         assert_eq!(program("  "), None);
+        assert_eq!(program("\"claude 'fix the bug'\"").as_deref(), Some("claude"));
+        assert_eq!(program("\"codex\"").as_deref(), Some("codex"));
     }
 
     #[test]

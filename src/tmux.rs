@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 16] = [
+const FIELDS: [&str; 18] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -37,6 +37,9 @@ const FIELDS: [&str; 16] = [
     "@spare",
     "pane_pid",
     "window_activity",
+    // tmux shows a newline or tab in it as \n or \t, so it keeps to one field.
+    "pane_start_command",
+    "@agent",
 ];
 
 #[derive(Clone, Debug)]
@@ -59,6 +62,30 @@ pub struct Pane {
     pub pid: u32,
     /// Unix time of the window's last output.
     pub activity: u64,
+    /// The command the pane started with, quoted by tmux.
+    pub start: String,
+    /// The hub marked the window as an agent, for the ◆ in the status bar.
+    pub agent_mark: bool,
+}
+
+impl Pane {
+    /// Runs an agent: started as one (its process may be `node`), or one runs in its shell now.
+    pub fn runs_agent(&self) -> bool {
+        crate::agent::program(&self.start).is_some_and(|p| crate::agent::is_agent_program(&p)) || crate::agent::is_agent_program(&self.command)
+    }
+
+    pub fn runs_claude(&self) -> bool {
+        self.command == "claude" || crate::agent::program(&self.start).as_deref() == Some("claude")
+    }
+}
+
+/// Agents typed into a shell come and go, so the mark goes with them.
+pub fn mark_agent(window_id: &str, on: bool) {
+    if on {
+        run(&["set-option", "-w", "-t", window_id, "@agent", "1"]);
+    } else {
+        run(&["set-option", "-wu", "-t", window_id, "@agent"]);
+    }
 }
 
 /// Why a tmux action did not complete in place.
@@ -163,8 +190,8 @@ set -g status-left "#[range=user|hub,bg={accent},fg={on_accent},bold]  ◀  jugg
 set -g status-right-length 80
 set -g status-right "#{{?client_prefix,#[bg={info} fg={on_accent} bold] PREFIX #[bg={bar} nobold] ,}}#(cat {summary} 2>/dev/null)#[fg={dim}] %H:%M "
 set -g window-status-separator ""
-set -g window-status-format "#[fg={muted}]  #I #{{?#{{==:#W,claude}},◆ ,}}#W  "
-set -g window-status-current-format "#[bg={bg},fg={accent}]▎#[fg={bright},bold]#I #{{?#{{==:#W,claude}},◆ ,}}#W  "
+set -g window-status-format "#[fg={muted}]  #I #{{?@agent,◆ ,}}#W  "
+set -g window-status-current-format "#[bg={bg},fg={accent}]▎#[fg={bright},bold]#I #{{?@agent,◆ ,}}#W  "
 set -g message-style "bg={accent},fg={on_accent},bold"
 set -g pane-border-status off
 set -g pane-border-style "fg={border}"
@@ -257,6 +284,8 @@ pub fn list_all_panes() -> Vec<Pane> {
                 spare: p[13].into(),
                 pid: p[14].parse().unwrap_or(0),
                 activity: p[15].parse().unwrap_or(0),
+                start: p[16].into(),
+                agent_mark: p[17] == "1",
             })
         })
         .collect()
@@ -843,6 +872,8 @@ mod tests {
             spare: spare.into(),
             pid: 0,
             activity: 0,
+            start: String::new(),
+            agent_mark: false,
         };
         let pool = claude_pool(&[pane("claude:/r", "100 main abc"), pane("claude-next:/r", "200  abc"), pane("claude:/old", "")]);
         assert_eq!((pool[0].started, pool[0].checkout.clone(), pool[0].next), (Some(100), (Some("main".into()), Some("abc".into())), false));

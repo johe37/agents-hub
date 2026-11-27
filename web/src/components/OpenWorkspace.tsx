@@ -4,16 +4,16 @@ import { basename } from "../util";
 import { Bot, Folder, Sparkles, Terminal } from "./icons";
 import { Spinner } from "./ui";
 
-type Kind = "claude" | "shell";
+type Kind = "agent" | "shell";
 
 const ALL_CHOICES: { kind: Kind; title: () => string; body: () => string; key: string; icon: () => any }[] = [
-  { kind: "claude", title: agentLabel, body: () => `${state.agent.claude ? "Claude Code" : agentLabel()} in this directory`, key: "c", icon: () => <Bot size={20} /> },
+  { kind: "agent", title: agentLabel, body: () => `${state.agent.claude ? "Claude Code" : agentLabel()} in this directory`, key: "c", icon: () => <Bot size={20} /> },
   { kind: "shell", title: () => "Terminal", body: () => "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
 ];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
 export function OpenWorkspace(p: { path: string }) {
-  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "claude" || hasAgent());
+  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "agent" || hasAgent());
   const short = () => (state.home && p.path.startsWith(state.home) ? "~" + p.path.slice(state.home.length) : p.path);
   const busy = (k: Kind) => isBusy(`open:${p.path}:${k}`);
   const start = async (kind: Kind) => {
