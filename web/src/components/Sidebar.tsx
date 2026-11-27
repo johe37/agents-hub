@@ -269,6 +269,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                         <Show when={w.git?.branch}>
                           <div class="truncate text-xs text-fg-3">
                             {w.git!.branch}
+                            <Show when={w.git!.base}>
+                              <span> ← {w.git!.base}</span>
+                            </Show>
                             <Show when={w.git!.dirty}>
                               <span class="text-waiting"> · {w.git!.dirty}</span>
                             </Show>

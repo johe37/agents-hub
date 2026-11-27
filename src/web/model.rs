@@ -23,6 +23,9 @@ fn git(g: &GitStatus) -> Value {
         "ahead": g.ahead,
         "behind": g.behind,
         "upstream": g.upstream,
+        "base": g.base,
+        "base_ahead": g.base_ahead,
+        "base_behind": g.base_behind,
         "remotes": g.remotes,
         "push_remote": g.push_remote(),
         "added": g.added,
@@ -302,11 +305,17 @@ pub struct LogQuery<'a> {
     pub limit: usize,
 }
 
-/// The branch that a branch's own commits are counted from. Upstream first: in a fork, that is the repo the branch is meant for.
-fn base_branch(root: &str) -> Option<&'static str> {
+/// The branch that a branch's own commits are counted from: the one it was started from in jugglr, else the default branch.
+/// Upstream first: in a fork, that is the repo the branch is meant for.
+fn base_branch(root: &str, rev: &str) -> Option<String> {
+    let branch = if rev == "HEAD" { git_out(root, &["branch", "--show-current"]).map(|b| b.trim().to_string()) } else { Some(rev.to_string()) };
+    if let Some(base) = branch.filter(|b| !b.is_empty()).and_then(|b| crate::git::base_of(root, &b)) {
+        return Some(base);
+    }
     ["upstream/HEAD", "upstream/main", "upstream/master", "origin/HEAD", "origin/main", "origin/master", "main", "master"]
         .into_iter()
         .find(|b| is_rev(root, b))
+        .map(String::from)
 }
 
 fn is_rev(root: &str, rev: &str) -> bool {
@@ -373,7 +382,8 @@ pub fn commits(path: &str, q: &LogQuery) -> Value {
         (list, more)
     };
     // Counted on the first-parent line, as the list is: on the default branch, a merged MR is one commit.
-    let base = base_branch(&root);
+    let base = base_branch(&root, rev);
+    let base = base.as_deref();
     let shas = |range: &str| git_out(&root, &["rev-list", "--first-parent", "-n", "1000", "--end-of-options", range]).unwrap_or_default();
     let count = |range: &str| git_out(&root, &["rev-list", "--first-parent", "--count", "--end-of-options", range]).and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
     if q.behind {

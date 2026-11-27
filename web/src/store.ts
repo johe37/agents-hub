@@ -439,6 +439,23 @@ export function stops(w: Win): string | null {
 
 /** Close the workspace; it goes to the recently closed ones, so Undo opens it again. Ask first only when something runs. */
 export function closeWorkspace(w: Workspace) {
+  const g = w.git;
+  if (g?.base) {
+    const fate = g.base_ahead ? `${g.branch} keeps its ${g.base_ahead} unmerged commit${g.base_ahead === 1 ? "" : "s"}.` : `${g.branch} is merged into ${g.base}, so the branch goes too.`;
+    return ask({
+      title: `Close “${w.name}” and remove its worktree?`,
+      body: `${fate} Uncommitted changes stop it. Undo cannot bring the worktree back.`,
+      confirm: "Close and remove",
+      danger: true,
+      run: async () => {
+        const before = () => {
+          const here = route();
+          if (here.view === "workspace" && here.name === w.name) go({ view: "agents" });
+        };
+        await actHiding({ type: "close_workspace", workspace: w.name }, { workspace: w.name }, { before });
+      },
+    });
+  }
   const running = w.windows.map(stops).filter((x): x is string => x !== null);
   if (!running.length) return closeNow(w);
   ask({
@@ -571,6 +588,8 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   danger?: boolean;
   /** Options to pick one of before confirming; the first is chosen at the start. */
   choices?: string[];
+  /** A text field; run gets its text, and confirming needs some. note says what the text leads to. */
+  input?: { placeholder: string; note?: (text: string) => string };
   run: (choice?: string) => void;
 } | null>(null);
 /** Chat or terminal for each agent window you switched; the others follow agentView. */

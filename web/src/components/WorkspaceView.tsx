@@ -126,6 +126,34 @@ function SidePanel(p: { ws: Workspace }) {
       run: (choice) => act({ type: "push", workspace: p.ws.name, remote: choice }, { key: `push:${p.ws.name}` }),
     });
   };
+  const plural = (n: number) => (n === 1 ? "" : "s");
+  const newBranch = () => {
+    const from = g()!.branch!;
+    // Mirrors git::branch_dir: next to the checkout, named after it and the branch.
+    const dir = (name: string) => `${p.ws.short_path.replace(/\/+$/, "")}-${(name || "<name>").replaceAll("/", "-")}`;
+    ask({
+      title: `New branch from ${from}`,
+      input: { placeholder: "Branch name", note: (name) => `Worktree: ${dir(name)}. The agent starts there; Merge back puts it into ${from}.` },
+      confirm: "Start",
+      run: (branch) =>
+        branch &&
+        act({ type: "start_branch", workspace: p.ws.name, branch }, { key: `start_branch:${p.ws.name}` }).then(
+          (r) => r.ok && r.workspace && go({ view: "workspace", name: r.workspace, window: r.window ?? null }),
+        ),
+    });
+  };
+  const mergeBack = () => {
+    const { branch, base, base_ahead: n, base_behind: m } = g()!;
+    ask({
+      title: `Merge ${n} commit${plural(n)} from ${branch} into ${base}?`,
+      body: m ? `${base} has ${m} new commit${plural(m)}, so ${branch} is rebased on it first. On a conflict nothing changes.` : `${base} moves forward to ${branch}. No merge commit.`,
+      confirm: "Merge",
+      run: () =>
+        act({ type: "merge_back", workspace: p.ws.name }, { key: `merge_back:${p.ws.name}` }).then(
+          (r) => r.ok && toast(`${r.message ?? "Merged"}. Close the workspace to remove the worktree.`),
+        ),
+    });
+  };
   const [message, setMessage] = createSignal("");
   const stagedFiles = () => g()?.files.filter((f) => isStaged(f.code)) ?? [];
   const unstagedFiles = () => g()?.files.filter((f) => isUnstaged(f.code)) ?? [];
@@ -164,6 +192,34 @@ function SidePanel(p: { ws: Workspace }) {
               </button>
             </section>
           )}
+        </Show>
+
+        <Show when={g()?.branch}>
+          <section class="border-b border-line p-3">
+            <div class="mb-2 px-1">
+              <SectionTitle>Branch</SectionTitle>
+            </div>
+            <Show when={g()!.base}>
+              <div class="mb-2 px-1 text-sm">
+                <div class="flex items-center gap-1.5 font-mono text-fg">
+                  <Branch size={12} /> {g()!.branch} <span class="text-fg-3">← {g()!.base}</span>
+                </div>
+                <div class="mt-0.5 text-fg-2">
+                  {g()!.base_ahead
+                    ? `${g()!.base_ahead} commit${plural(g()!.base_ahead)} to merge into ${g()!.base}` + (g()!.base_behind ? `, which has ${g()!.base_behind} new` : "")
+                    : `Started from ${g()!.base}. Nothing to merge yet.`}
+                </div>
+              </div>
+              <Show when={g()!.base_ahead}>
+                <Button size="sm" class="mb-2 w-full" loading={isBusy(`merge_back:${p.ws.name}`)} onClick={mergeBack}>
+                  <Check size={13} /> Merge back into {g()!.base}
+                </Button>
+              </Show>
+            </Show>
+            <Button size="sm" variant="secondary" class="w-full" loading={isBusy(`start_branch:${p.ws.name}`)} onClick={newBranch} title="A new branch in its own worktree, with an agent">
+              <Plus size={13} /> New branch from {g()!.branch}
+            </Button>
+          </section>
         </Show>
 
         <Show when={canOpenMr()}>
@@ -610,6 +666,9 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 <div class="flex items-center gap-1.5 text-sm text-fg-2">
                   <Badge>
                     <Branch size={12} /> {g().branch ?? "detached"}
+                    <Show when={g().base}>
+                      <span class="text-fg-3">← {g().base}</span>
+                    </Show>
                   </Badge>
                   <Show when={g().dirty}>
                     <Badge tone="waiting" title="Changed files">

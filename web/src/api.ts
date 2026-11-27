@@ -8,6 +8,11 @@ export interface Git {
   behind: number;
   /** Like origin/main; a new branch tracks the branch it was made from until its first push. */
   upstream: string | null;
+  /** The branch this one was started from in jugglr, and where merge_back puts it. */
+  base: string | null;
+  /** Commits that base lacks, and commits on base since this branch was made. */
+  base_ahead: number;
+  base_behind: number;
   remotes: string[];
   /** The remote to push to without asking: the upstream's, else the only one. */
   push_remote: string | null;
@@ -291,6 +296,8 @@ export type Action =
   | { type: "new_agent"; path: string; prompt?: string }
   | { type: "open_workspace"; path: string; kind?: "agent" | "shell" | "nvim" }
   | { type: "close_workspace"; workspace: string }
+  | { type: "start_branch"; workspace: string; branch: string }
+  | { type: "merge_back"; workspace: string }
   | { type: "close_window"; window: string }
   | { type: "move_window"; window: string; before: string | null }
   | { type: "rename_workspace"; workspace: string; name: string }

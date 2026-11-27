@@ -259,7 +259,7 @@ fn base_key(branch: &str) -> String {
 }
 
 /// The branch that branch was made from with `start_branch`, while it still exists.
-fn base_of(cwd: &str, branch: &str) -> Option<String> {
+pub fn base_of(cwd: &str, branch: &str) -> Option<String> {
     let base = git(cwd, &["config", "--get", &base_key(branch)])?.trim().to_string();
     git(cwd, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{base}")]).map(|_| base)
 }

@@ -31,14 +31,26 @@ export function Toasts() {
 
 export function Confirm() {
   let ok!: HTMLButtonElement;
+  let field: HTMLInputElement | undefined;
   const [choice, setChoice] = createSignal<string>();
+  const [text, setText] = createSignal("");
   createEffect(
     on(confirmBox, (c) => {
       setChoice(c?.choices?.[0]);
-      if (c) queueMicrotask(() => ok?.focus());
+      setText("");
+      if (c) queueMicrotask(() => (c.input ? field : ok)?.focus());
     }),
   );
   const close = () => setConfirmBox(null);
+  const confirm = () => {
+    const c = confirmBox();
+    if (!c || (c.input && !text().trim())) return;
+    // Take the action first: the box's contents are gone once it closes.
+    const run = c.run;
+    const picked = c.input ? text().trim() : choice();
+    close();
+    run(picked);
+  };
   return (
     <Show when={confirmBox()}>
       {(c) => (
@@ -74,6 +86,22 @@ export function Confirm() {
                 </For>
               </div>
             </Show>
+            <Show when={c().input}>
+              {(i) => (
+                <>
+                  <input
+                    ref={field}
+                    value={text()}
+                    onInput={(e) => setText(e.currentTarget.value)}
+                    onKeyDown={(e) => e.key === "Enter" && confirm()}
+                    placeholder={i().placeholder}
+                    aria-label={i().placeholder}
+                    class="mt-3 h-8 w-full rounded-md border border-line-strong bg-panel px-2 font-mono text-sm outline-none placeholder:text-fg-3 focus:border-accent/60"
+                  />
+                  <Show when={i().note}>{(note) => <p class="mt-1.5 text-sm text-fg-3">{note()(text().trim())}</p>}</Show>
+                </>
+              )}
+            </Show>
             <div class="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={close}>
                 Cancel
@@ -81,13 +109,8 @@ export function Confirm() {
               <Button
                 ref={ok}
                 variant={c().danger ? "danger" : "primary"}
-                onClick={() => {
-                  // c() throws once the box is closed, so take the action first.
-                  const run = c().run;
-                  const picked = choice();
-                  close();
-                  run(picked);
-                }}
+                disabled={!!c().input && !text().trim()}
+                onClick={confirm}
               >
                 {c().confirm}
               </Button>

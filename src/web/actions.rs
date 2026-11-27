@@ -32,6 +32,10 @@ pub enum Action {
     /// Without kind, only finds the open workspace for path; with it, opens one with a window of that kind.
     OpenWorkspace { path: String, kind: Option<String> },
     CloseWorkspace { workspace: String },
+    /// Make branch from the workspace's branch in its own worktree, and open a workspace there with the agent.
+    StartBranch { workspace: String, branch: String },
+    /// Put the workspace's branch on top of the branch it was started from, and move that branch to it.
+    MergeBack { workspace: String },
     CloseWindow { window: String },
     /// Put window right before another window of its workspace, or last without one.
     MoveWindow { window: String, before: Option<String> },
@@ -420,10 +424,34 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let (session, w) = new_workspace(&path, &name, command.as_deref())?;
             Ok(Done { message: Some(format!("Opened {session}")), workspace: Some(session), window: w, path: Some(path) })
         }
+        Action::StartBranch { workspace, branch } => {
+            let path = workspace_path(hub, &workspace)?;
+            let (dir, base) = crate::git::start_branch(&path, branch.trim())?;
+            let (name, command) = (crate::app::window_name("agent"), crate::app::window_command("agent"));
+            let (session, w) = new_workspace(&dir, &name, command.as_deref())?;
+            Ok(Done { message: Some(format!("Started {} from {base} in {}", branch.trim(), shorten(&dir))), workspace: Some(session), window: w, path: Some(dir) })
+        }
+        Action::MergeBack { workspace } => {
+            let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
+            let working = hub.snapshot().agents.iter().any(|a| a.workspace.as_deref() == Some(&ws.name) && a.status == Status::Working);
+            if working {
+                return Err(format!("An agent is working in {}. Merge when it is done.", ws.name));
+            }
+            let r = crate::git::merge_back(&ws.path);
+            forget_git(hub, &ws.path);
+            Ok(said(r?))
+        }
         Action::CloseWorkspace { workspace } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
             let p = std::path::Path::new(&ws.path);
             let closed = crate::closed::snapshot(&ws);
+            if ws.git.as_ref().is_some_and(|g| g.base.is_some()) {
+                // Removing first keeps the workspace open when git refuses because of uncommitted changes.
+                // Not remembered as closed: its directory is gone, so it can not be reopened.
+                let m = crate::git::remove_branch(&ws.path)?;
+                res(tmux::kill_session(&ws.name))?;
+                return Ok(said(m));
+            }
             if p.starts_with(crate::gitlab::reviews_dir()) {
                 res(tmux::kill_session(&ws.name))?;
                 crate::gitlab::remove_checkout(&ws.path)?;
