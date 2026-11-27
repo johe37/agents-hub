@@ -1,6 +1,5 @@
-import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { Match, Show, Switch, createEffect, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import { AgentPage, Agents } from "./components/Agents";
-import { Gitlab } from "./components/Gitlab";
 import { Menu } from "./components/icons";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
@@ -36,6 +35,8 @@ import {
 } from "./store";
 import { focus, navWidth, showNav, toggleFocus, toggleNav } from "./layout";
 import { cls } from "./util";
+
+const Gitlab = lazy(() => import("./components/Gitlab").then((m) => ({ default: m.Gitlab })));
 
 const logo = new Image();
 logo.src = "/favicon.svg";
