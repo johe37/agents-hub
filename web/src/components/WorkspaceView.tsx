@@ -1,10 +1,11 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
-import { getJSON, type Agent, type Commit, type Win, type Workspace } from "../api";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
+import { type Agent, type Win, type Workspace } from "../api";
 import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
+import { Commits } from "./Commits";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Check, Chevron, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
 import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Ago, Resizer } from "./ui";
 import { focus, panelWidth, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
@@ -32,11 +33,6 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
   const [message, setMessage] = createSignal("");
   // Index column of git's XY code: something is staged.
   const staged = () => !!g()?.files.some(([code]) => code[0] !== "." && code[0] !== "?");
-  // Refetched when HEAD moves: a commit, checkout or pull.
-  const [commits] = createResource(
-    () => g() && ([p.ws.path, g()!.commit] as const),
-    ([path]) => getJSON<Commit[]>(`/api/diff?path=${encodeURIComponent(path)}&commits=1`),
-  );
   return (
     <aside class="relative flex h-full shrink-0 flex-col border-l border-line bg-panel" style={{ width: `${panelWidth.width()}px` }}>
       <Resizer size={panelWidth} side="left" label="Side panel width" />
@@ -177,55 +173,8 @@ function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
           </Show>
         </section>
 
-        <Show when={commits()?.length}>
-          <section class="border-t border-line p-3">
-            <SectionTitle class="mb-2 px-1">Commits</SectionTitle>
-            <div class="flex flex-col">
-              <For each={commits()}>
-                {(c) => {
-                  const [open, setOpen] = createSignal(false);
-                  const show = (file: string | null) => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
-                  return (
-                    <div>
-                      <div class="group flex min-w-0 items-start gap-1 rounded-md px-1 py-1 hover:bg-hover">
-                        <button class="mt-0.5 grid size-4 shrink-0 place-items-center text-fg-3 hover:text-fg" aria-label={open() ? "Hide files" : "Show files"} aria-expanded={open()} onClick={() => setOpen(!open())}>
-                          <Chevron size={12} class={cls("transition-transform", open() && "rotate-90")} />
-                        </button>
-                        <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(null)}>
-                          <div class="truncate text-sm text-fg">{c.title}</div>
-                          <div class="truncate text-xs text-fg-3">
-                            <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
-                          </div>
-                        </button>
-                        <FileDiff size={13} class="mt-1 shrink-0 text-fg-3 opacity-0 group-hover:opacity-100" />
-                      </div>
-                      <Show when={open()}>
-                        <div class="mb-1 ml-5 flex flex-col">
-                          <For each={c.files ?? []}>
-                            {([code, file]) => {
-                              const f = fileCode(code);
-                              const i = file.lastIndexOf("/");
-                              return (
-                                <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(file)}>
-                                  <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", f.tone)}>{f.letter}</span>
-                                  <span class="min-w-0 truncate font-mono text-sm">
-                                    <span class="text-fg">{file.slice(i + 1)}</span>
-                                    <Show when={i > 0}>
-                                      <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
-                                    </Show>
-                                  </span>
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </section>
+        <Show when={g()}>
+          <Commits ws={p.ws} />
         </Show>
       </div>
     </aside>

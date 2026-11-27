@@ -94,8 +94,10 @@ export interface Commit {
   message: string;
   author: string;
   created: number;
-  /** [status letter, path]: only in a workspace's commit list. */
-  files?: [string, string][];
+  /** [head | local | remote | tag, name]: the branches and tags that point at it. */
+  refs?: [string, string][];
+  /** On a branch with an upstream: the upstream lacks it. */
+  unpushed?: boolean;
 }
 
 export interface MrChanges {

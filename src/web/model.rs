@@ -279,30 +279,129 @@ fn toplevel(path: &str) -> Option<String> {
     git_out(path, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-/// The commits on the checked-out branch that the default branch lacks, newest first, at most 10; on the default branch itself, its recent history.
-pub fn commits(path: &str) -> Value {
-    let Some(root) = toplevel(path) else { return json!([]) };
-    // upstream first: in a fork, that is the repo the branch is meant for.
-    let base = ["upstream/HEAD", "upstream/main", "upstream/master", "origin/HEAD", "origin/main", "origin/master", "main", "master"]
+pub struct LogQuery<'a> {
+    pub rev: Option<&'a str>,
+    /// "own" or "all". Without it, the branch's own commits, or its history when it has none.
+    pub mode: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub skip: usize,
+    pub limit: usize,
+}
+
+/// The branch that a branch's own commits are counted from. Upstream first: in a fork, that is the repo the branch is meant for.
+fn base_branch(root: &str) -> Option<&'static str> {
+    ["upstream/HEAD", "upstream/main", "upstream/master", "origin/HEAD", "origin/main", "origin/master", "main", "master"]
         .into_iter()
-        .find(|b| git_out(&root, &["rev-parse", "--verify", "--quiet", b]).is_some_and(|s| !s.trim().is_empty()));
-    let log = |range: &[&str]| {
-        // The fields end with \x1f; --name-status lists the files after them.
-        let mut args = vec!["log", "--no-color", "--name-status", "--first-parent", "--format=%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ct%x1f"];
-        args.extend_from_slice(range);
+        .find(|b| is_rev(root, b))
+}
+
+fn is_rev(root: &str, rev: &str) -> bool {
+    !rev.starts_with('-') && git_out(root, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).is_some_and(|s| !s.trim().is_empty())
+}
+
+/// The branches and tags in a `%D` decoration, as [kind, name]: head, local, remote or tag.
+fn decorations(d: &str) -> Vec<Value> {
+    d.split(", ")
+        .filter_map(|r| {
+            let (r, head) = r.strip_prefix("HEAD -> ").map_or((r, false), |b| (b, true));
+            let (kind, name) = if r == "HEAD" {
+                ("head", "HEAD")
+            } else if let Some(t) = r.strip_prefix("tag: refs/tags/") {
+                ("tag", t)
+            } else if let Some(b) = r.strip_prefix("refs/heads/") {
+                (if head { "head" } else { "local" }, b)
+            } else {
+                let b = r.strip_prefix("refs/remotes/")?;
+                if b.ends_with("/HEAD") {
+                    return None;
+                }
+                ("remote", b)
+            };
+            Some(json!([kind, name]))
+        })
+        .collect()
+}
+
+/// A page of a branch's commits, newest first, on its first-parent line.
+pub fn commits(path: &str, q: &LogQuery) -> Value {
+    let Some(root) = toplevel(path) else { return json!({"commits": [], "more": false}) };
+    let rev = q.rev.unwrap_or("HEAD");
+    if !is_rev(&root, rev) {
+        return json!({"commits": [], "more": false, "error": "Unknown branch"});
+    }
+    // git ANDs --grep with --author, so a search filters here: in the message, the author or the sha.
+    let search = q.search.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+    let log = |range: &str| {
+        let mut args = vec!["log", "--no-color", "--first-parent", "--decorate=full", "--format=%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ct%x1f%D"];
+        let (skip, n) = (format!("--skip={}", q.skip), format!("-n{}", q.limit + 1));
+        if search.is_none() {
+            args.extend([skip.as_str(), n.as_str()]);
+        }
+        args.extend(["--end-of-options", range]);
         let out = git_out(&root, &args).unwrap_or_default();
-        out.split('\x1e')
+        let mut list: Vec<Value> = out
+            .split('\x1e')
             .filter_map(|rec| {
                 let f: Vec<&str> = rec.split('\x1f').collect();
-                let [sha, short, title, body, author, ct, names] = f[..] else { return None };
-                // "M\tpath", or "R100\told\tnew" for a rename.
-                let files: Vec<_> = names.lines().filter_map(|l| l.split_once('\t')).map(|(code, p)| json!([&code[..1], p.rsplit('\t').next().unwrap_or(p)])).collect();
-                Some(json!({"sha": sha, "short": short, "title": title, "message": body.trim(), "author": author, "created": ct.parse::<u64>().unwrap_or(0), "files": files}))
+                let [sha, short, title, body, author, ct, refs] = f[..] else { return None };
+                if let Some(s) = &search {
+                    if ![title, body, author].iter().any(|t| t.to_lowercase().contains(s.as_str())) && !sha.starts_with(s.as_str()) {
+                        return None;
+                    }
+                }
+                Some(json!({"sha": sha, "short": short, "title": title, "message": body.trim(), "author": author, "created": ct.parse::<u64>().unwrap_or(0), "refs": decorations(refs.trim())}))
             })
-            .collect::<Vec<_>>()
+            .skip(if search.is_some() { q.skip } else { 0 })
+            .take(q.limit + 1)
+            .collect();
+        let more = list.len() > q.limit;
+        list.truncate(q.limit);
+        (list, more)
     };
-    let own = base.map(|b| log(&["-n", "10", &format!("{b}..HEAD")])).unwrap_or_default();
-    Value::from(if own.is_empty() { log(&["-n", "10", "HEAD"]) } else { own })
+    let base = base_branch(&root);
+    let own = base.map(|b| format!("{b}..{rev}"));
+    let (mode, (mut list, more)) = match (q.mode, &own) {
+        (Some("all"), _) | (_, None) => ("all", log(rev)),
+        (Some(_), Some(r)) => ("own", log(r)),
+        // The default branch has nothing of its own: show its history.
+        (None, Some(r)) => match log(r) {
+            (l, _) if l.is_empty() && q.skip == 0 => ("all", log(rev)),
+            page => ("own", page),
+        },
+    };
+    let upstream = format!("{rev}@{{upstream}}..{rev}");
+    let unpushed = git_out(&root, &["rev-list", "-n", "1000", &upstream]).unwrap_or_default();
+    for c in &mut list {
+        c["unpushed"] = json!(c["sha"].as_str().is_some_and(|s| unpushed.lines().any(|l| l == s)));
+    }
+    json!({"commits": list, "more": more, "mode": mode, "base": base})
+}
+
+/// The files one commit changes, as [status letter, path], against its first parent.
+pub fn commit_files(path: &str, sha: &str) -> Value {
+    let Some(root) = toplevel(path) else { return json!([]) };
+    let out = git_out(&root, &["show", "--no-color", "--format=", "--name-status", "--first-parent", sha]).unwrap_or_default();
+    // "M\tpath", or "R100\told\tnew" for a rename.
+    out.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(code, p)| json!([&code[..1], p.rsplit('\t').next().unwrap_or(p)]))
+        .collect()
+}
+
+/// Local and remote branches as [kind, name, full ref], most recently committed first.
+pub fn branches(path: &str) -> Value {
+    let Some(root) = toplevel(path) else { return json!({"current": null, "branches": []}) };
+    let out = git_out(&root, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes"]).unwrap_or_default();
+    let list: Vec<Value> = out
+        .lines()
+        .filter(|r| !r.ends_with("/HEAD"))
+        .filter_map(|r| {
+            let (kind, name) = r.strip_prefix("refs/heads/").map(|n| ("local", n)).or_else(|| r.strip_prefix("refs/remotes/").map(|n| ("remote", n)))?;
+            Some(json!([kind, name, r]))
+        })
+        .collect();
+    let current = git_out(&root, &["symbolic-ref", "-q", "HEAD"]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    json!({"current": current, "branches": list})
 }
 
 /// The change of one file against HEAD, or of the whole checkout, or what one commit changed. New files show in full.
@@ -357,20 +456,35 @@ mod tests {
         let sh = |args: &[&str]| assert!(Command::new("git").current_dir(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success());
         sh(&["init", "-q", "-b", "main"]);
         sh(&["commit", "-q", "--allow-empty", "-m", "base"]);
-        assert_eq!(commits(p).as_array().unwrap().len(), 1, "on the default branch: its history");
+        let q = |mode, skip, limit| LogQuery { rev: None, mode, search: None, skip, limit };
+        let page = |q: &LogQuery| {
+            let v = commits(p, q);
+            (v["commits"].as_array().unwrap().iter().map(|c| c["title"].as_str().unwrap().to_string()).collect::<Vec<_>>(), v["mode"].clone(), v["more"].as_bool().unwrap())
+        };
+        assert_eq!(page(&q(None, 0, 50)), (vec!["base".into()], json!("all"), false), "on the default branch: its history");
         sh(&["checkout", "-q", "-b", "feature"]);
         std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
         sh(&["add", "a.txt"]);
         sh(&["commit", "-q", "-m", "add a", "-m", "why"]);
-        let list = commits(p);
-        let list = list.as_array().unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!((list[0]["title"].as_str(), list[0]["message"].as_str()), (Some("add a"), Some("why")));
-        assert_eq!(list[0]["files"], json!([["A", "a.txt"]]));
-        let d = diff(p, None, list[0]["sha"].as_str());
-        sh(&["update-ref", "refs/remotes/upstream/master", "HEAD"]);
-        assert_eq!(commits(p).as_array().unwrap().len(), 2, "upstream/master wins over main: nothing on top, so history");
+        sh(&["commit", "-q", "--allow-empty", "-m", "second"]);
+        let v = commits(p, &q(None, 0, 1));
+        let c = &v["commits"][0];
+        assert_eq!((c["title"].as_str(), v["mode"].as_str(), v["more"].as_bool()), (Some("second"), Some("own"), Some(true)));
+        assert_eq!(c["refs"], json!([["head", "feature"]]));
+        assert_eq!(page(&q(Some("own"), 1, 1)), (vec!["add a".into()], json!("own"), false));
+        assert_eq!(page(&q(Some("all"), 0, 50)).0, ["second", "add a", "base"]);
+        let found = commits(p, &LogQuery { search: Some("ADD"), ..q(Some("all"), 0, 50) });
+        assert_eq!(found["commits"].as_array().unwrap().len(), 1, "search ignores case");
+        assert_eq!(commits(p, &LogQuery { search: Some("T"), ..q(Some("all"), 0, 50) })["commits"].as_array().unwrap().len(), 3, "the author matches");
+        let sha = commits(p, &q(Some("own"), 1, 1))["commits"][0]["sha"].as_str().unwrap().to_string();
+        assert_eq!(commit_files(p, &sha), json!([["A", "a.txt"]]));
+        let d = diff(p, None, Some(&sha));
         assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
+        assert_eq!(commits(p, &LogQuery { rev: Some("main"), ..q(Some("all"), 0, 50) })["commits"].as_array().unwrap().len(), 1);
+        assert_eq!(commits(p, &LogQuery { rev: Some("--all"), ..q(None, 0, 50) })["error"], json!("Unknown branch"));
+        assert_eq!(branches(p), json!({"current": "refs/heads/feature", "branches": [["local", "feature", "refs/heads/feature"], ["local", "main", "refs/heads/main"]]}));
+        sh(&["update-ref", "refs/remotes/upstream/master", "HEAD"]);
+        assert_eq!(page(&q(None, 0, 50)).1, json!("all"), "upstream/master wins over main: nothing on top, so history");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -149,6 +149,9 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/dirs", get(dirs))
             .route("/api/conversation", get(conversation))
             .route("/api/diff", get(diff))
+            .route("/api/commits", get(commits))
+            .route("/api/commits/files", get(commit_files))
+            .route("/api/branches", get(branches))
             .route("/api/timeline", get(timeline))
             .route("/api/mr/changes", get(review::mr_changes))
             .route("/api/mr/drafts", get(review::mr_drafts))
@@ -356,26 +359,60 @@ async fn conversation(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<Strin
     Json(r).into_response()
 }
 
-async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
-    let Some(path) = q.get("path").cloned() else { return (StatusCode::BAD_REQUEST, "path missing").into_response() };
-    // Only directories the hub shows, so the page cannot read any repo on the machine.
-    let known = {
-        let snap = hub.snapshot();
-        snap.workspaces.iter().any(|w| w.path == path) || snap.agents.iter().any(|a| a.path == path)
-    };
-    if !known {
-        return (StatusCode::NOT_FOUND, "Unknown directory").into_response();
+/// The path in the query, when it is a directory the hub shows: the page cannot read any repo on the machine.
+fn known_path(hub: &Hub, q: &HashMap<String, String>) -> Result<String, Response> {
+    let Some(path) = q.get("path").cloned() else { return Err((StatusCode::BAD_REQUEST, "path missing").into_response()) };
+    let snap = hub.snapshot();
+    if snap.workspaces.iter().any(|w| w.path == path) || snap.agents.iter().any(|a| a.path == path) {
+        Ok(path)
+    } else {
+        Err((StatusCode::NOT_FOUND, "Unknown directory").into_response())
     }
+}
+
+async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = match known_path(&hub, &q) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
     let file = q.get("file").cloned();
     let commit = q.get("commit").cloned();
     if commit.as_deref().is_some_and(|c| !review::is_sha(c)) {
         return (StatusCode::BAD_REQUEST, "Not a commit").into_response();
     }
-    if q.contains_key("commits") {
-        return Json(tokio::task::spawn_blocking(move || model::commits(&path)).await.unwrap_or_default()).into_response();
-    }
     let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref())).await.unwrap_or_default();
     Json(json!({"diff": text})).into_response()
+}
+
+async fn commits(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = match known_path(&hub, &q) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let num = |k: &str, d: usize| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let (skip, limit) = (num("skip", 0), num("limit", 50).clamp(1, 500));
+    let r = tokio::task::spawn_blocking(move || {
+        let lq = model::LogQuery { rev: q.get("rev").map(String::as_str), mode: q.get("mode").map(String::as_str), search: q.get("q").map(String::as_str), skip, limit };
+        model::commits(&path, &lq)
+    });
+    Json(r.await.unwrap_or_default()).into_response()
+}
+
+async fn commit_files(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = match known_path(&hub, &q) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let Some(sha) = q.get("sha").filter(|s| review::is_sha(s)).cloned() else { return (StatusCode::BAD_REQUEST, "Not a commit").into_response() };
+    Json(tokio::task::spawn_blocking(move || model::commit_files(&path, &sha)).await.unwrap_or_default()).into_response()
+}
+
+async fn branches(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Response {
+    let path = match known_path(&hub, &q) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    Json(tokio::task::spawn_blocking(move || model::branches(&path)).await.unwrap_or_default()).into_response()
 }
 
 async fn timeline(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Json<Value> {
