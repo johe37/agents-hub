@@ -8,7 +8,9 @@ import { Spinner } from "./ui";
 
 type Completions = { commands: { name: string; description: string }[]; files: string[] };
 type Token = { kind: "/" | "@"; start: number; query: string };
-type Item = { value: string; label: string; detail: string };
+/** A directory goes on completing into itself; a file ends the word. */
+type Item = { value: string; label: string; detail: string; dir?: boolean };
+type Entries = { dir: string; entries: { name: string; dir: boolean }[] };
 
 const lists = new Map<string, { at: number; data: Promise<Completions> }>();
 function completions(agent: string): Promise<Completions> {
@@ -17,6 +19,36 @@ function completions(agent: string): Promise<Completions> {
   const data = getJSON<Completions>(`/api/complete?agent=${encodeURIComponent(agent)}`).catch(() => ({ commands: [], files: [] }));
   lists.set(agent, { at: Date.now(), data });
   return data;
+}
+
+const dirs = new Map<string, { at: number; data: Promise<Entries> }>();
+function entries(agent: string, dir: string): Promise<Entries> {
+  const k = `${agent}\n${dir}`;
+  const c = dirs.get(k);
+  if (c && Date.now() - c.at < 10_000) return c.data;
+  const data = getJSON<{ entries: Entries["entries"] }>(`/api/complete/dir?agent=${encodeURIComponent(agent)}&dir=${encodeURIComponent(dir)}`)
+    .then((r) => ({ dir, entries: r.entries }))
+    .catch(() => ({ dir, entries: [] }));
+  dirs.set(k, { at: Date.now(), data });
+  return data;
+}
+
+/** `@~/…`, `@/…` and `@../…` browse the disk one directory at a time; other `@` words search the repo. */
+function pathParts(query: string): { dir: string; name: string } | null {
+  if (query === "~") return { dir: "~/", name: "" };
+  if (!/^(~\/|\/|\.\.?\/)/.test(query)) return null;
+  const i = query.lastIndexOf("/");
+  return { dir: query.slice(0, i + 1), name: query.slice(i + 1) };
+}
+
+function browse(name: string, list: Entries): Item[] {
+  const shown = list.entries.filter((e) => name.startsWith(".") || !e.name.startsWith("."));
+  const scored = shown.flatMap((e) => {
+    const m = fuzzy(name, e.name);
+    return m ? [[m.score, e] as const] : [];
+  });
+  if (name) scored.sort((a, b) => b[0] - a[0]);
+  return scored.slice(0, MAX_ITEMS).map(([, e]) => ({ value: `@${list.dir}${e.name}${e.dir ? "/" : ""}`, label: e.dir ? `${e.name}/` : e.name, detail: "", dir: e.dir }));
 }
 
 /** The word at the caret, when it asks for a completion. Claude Code only reads a slash command at the start of the prompt. */
@@ -78,6 +110,7 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
 
   const [tok, setTok] = createSignal<Token | null>(null);
   const [data, setData] = createSignal<Completions | null>(null);
+  const [listing, setListing] = createSignal<Entries | null>(null);
   const [sel, setSel] = createSignal(0);
   // Escape closes the list until the caret leaves the word.
   let dismissed = -1;
@@ -87,12 +120,20 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
     const open = t && dismissed < 0 ? t : null;
     if (open?.query !== tok()?.query || open?.kind !== tok()?.kind) setSel(0);
     setTok(open);
-    if (open) void completions(p.agent.key).then(setData);
+    const path = open?.kind === "@" ? pathParts(open.query) : null;
+    if (path) void entries(p.agent.key, path.dir).then((l) => pathParts(tok()?.query ?? "")?.dir === l.dir && setListing(l));
+    else if (open) void completions(p.agent.key).then(setData);
   };
   const items = createMemo(() => {
     const t = tok();
+    if (!t) return [];
+    const path = t.kind === "@" ? pathParts(t.query) : null;
+    if (path) {
+      const l = listing();
+      return l?.dir === path.dir ? browse(path.name, l) : [];
+    }
     const d = data();
-    return t && d ? rank(t, d) : [];
+    return d ? rank(t, d) : [];
   });
   createEffect(() => picker?.querySelector(`[data-i="${sel()}"]`)?.scrollIntoView({ block: "nearest" }));
 
@@ -108,9 +149,10 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
   const accept = (it: Item) => {
     const t = tok();
     if (!t) return;
-    replace(t.start, area.selectionStart, `${it.value} `);
+    replace(t.start, area.selectionStart, it.dir ? it.value : `${it.value} `);
     setTok(null);
     area.focus();
+    if (it.dir) check();
   };
 
   const [uploading, setUploading] = createSignal(0);

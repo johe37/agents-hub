@@ -155,6 +155,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/dirs", get(dirs))
             .route("/api/conversation", get(conversation))
             .route("/api/complete", get(compose::complete))
+            .route("/api/complete/dir", get(compose::entries))
             .route("/api/upload", post(compose::upload).layer(DefaultBodyLimit::max(20 * 1024 * 1024)))
             .route("/api/diff", get(diff))
             .route("/api/commits", get(commits))

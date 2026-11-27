@@ -46,6 +46,38 @@ pub async fn complete(State(hub): State<Arc<Hub>>, Query(q): Query<std::collecti
     Json(r.unwrap_or_default()).into_response()
 }
 
+const MAX_ENTRIES: usize = 2_000;
+
+/// The entries of one directory, for `@~/…`, `@/…` and `@../…`. A relative directory is the agent's.
+pub async fn entries(State(hub): State<Arc<Hub>>, Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
+    let Some(path) = agent_path(&hub, q.get("agent")) else { return (StatusCode::NOT_FOUND, "Unknown agent").into_response() };
+    let dir = resolve(&path, q.get("dir").map(String::as_str).unwrap_or(""));
+    let r = tokio::task::spawn_blocking(move || list(&dir)).await;
+    Json(json!({"entries": r.unwrap_or_default()})).into_response()
+}
+
+fn resolve(base: &str, dir: &str) -> PathBuf {
+    if dir == "~" {
+        home()
+    } else if let Some(rest) = dir.strip_prefix("~/") {
+        home().join(rest)
+    } else {
+        Path::new(base).join(dir)
+    }
+}
+
+fn list(dir: &Path) -> Vec<Value> {
+    let mut out: Vec<(bool, String)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .take(MAX_ENTRIES)
+        .map(|e| (e.path().is_dir(), e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    out.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+    out.into_iter().map(|(d, n)| json!({"name": n, "dir": d})).collect()
+}
+
 fn commands(path: &Path) -> Vec<Value> {
     let mut out: Vec<(String, String)> = BUILTIN.iter().map(|(n, d)| (n.to_string(), d.to_string())).collect();
     let roots = [home().join(".claude"), path.join(".claude")];
@@ -144,6 +176,14 @@ fn forget_old(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_typed_directories() {
+        assert_eq!(resolve("/repo", "~/chats/"), home().join("chats/"));
+        assert_eq!(resolve("/repo", "~"), home());
+        assert_eq!(resolve("/repo", "/etc/"), PathBuf::from("/etc/"));
+        assert_eq!(resolve("/repo", "../x/"), PathBuf::from("/repo/../x/"));
+    }
 
     #[test]
     fn reads_a_description() {
