@@ -151,7 +151,7 @@ function TodoBanner(p: { todo: Todo; onDone: () => void }) {
           <a href={t().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
             Open <External size={12} />
           </a>
-          <Button size="sm" variant="primary" kbd="X" loading={isBusy(`todo:${t().id}`)} onClick={p.onDone} title="Mark the to-do done in GitLab">
+          <Button size="sm" variant="primary" kbd="x" loading={isBusy(`todo:${t().id}`)} onClick={p.onDone} title="Mark the to-do done in GitLab">
             <Check size={13} /> Done
           </Button>
         </div>
@@ -257,10 +257,10 @@ function OpenButtons(p: { mr: Mr }) {
           <Layers size={13} /> Go to {p.mr.workspace}
         </Button>
       </Show>
-      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("claude")} kbd="C" title={review() ? "Check out the code and start Claude with a review prompt to edit first" : "Open Claude on the MR's branch"}>
+      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("claude")} kbd="c" title={review() ? "Check out the code and start Claude with a review prompt to edit first" : "Open Claude on the MR's branch"}>
         <Sparkles size={13} /> {review() ? "Review with Claude" : "Claude"}
       </Button>
-      <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="T">
+      <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="t">
         <Terminal size={13} /> Shell
       </Button>
     </>
@@ -420,7 +420,7 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
         <For each={i().labels}>{(l) => <Badge>{l}</Badge>}</For>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="C" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
+        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="c" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
           <Sparkles size={13} /> Work on it with Claude
         </Button>
         <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">

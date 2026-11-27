@@ -564,10 +564,10 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
       <Show when={barAt(i)}>
         <div class="flex flex-wrap items-center gap-2 animate-pop-in">
           <span class="text-sm text-fg-3">{mine() && label(mine()![0], mine()![1])}</span>
-          <Button size="sm" variant="primary" onClick={() => p.ctx.ask(p.f)} kbd="A" title="Put these lines in a prompt for Claude in the MR's checkout">
+          <Button size="sm" variant="primary" onClick={() => p.ctx.ask(p.f)} kbd="a" title="Put these lines in a prompt for Claude in the MR's checkout">
             <Sparkles size={13} /> Ask Claude
           </Button>
-          <Button size="sm" disabled={!!p.ctx.review.mode()} onClick={() => p.ctx.openForm(p.f)} kbd="C" title={p.ctx.review.mode() ? "Comments go on all changes: switch to them first" : "Comment on these lines"}>
+          <Button size="sm" disabled={!!p.ctx.review.mode()} onClick={() => p.ctx.openForm(p.f)} kbd="c" title={p.ctx.review.mode() ? "Comments go on all changes: switch to them first" : "Comment on these lines"}>
             <Chat size={13} /> Comment
           </Button>
           <Button size="sm" variant="ghost" onClick={p.ctx.clearSel} title="Clear the selection (Esc)">

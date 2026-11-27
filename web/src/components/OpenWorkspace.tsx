@@ -7,8 +7,8 @@ import { Spinner } from "./ui";
 type Kind = "claude" | "shell";
 
 const CHOICES: { kind: Kind; title: string; body: string; key: string; icon: () => any }[] = [
-  { kind: "claude", title: "Claude", body: "Claude Code in this directory", key: "C", icon: () => <Bot size={20} /> },
-  { kind: "shell", title: "Terminal", body: "A shell: run, test or start your editor", key: "T", icon: () => <Terminal size={20} /> },
+  { kind: "claude", title: "Claude", body: "Claude Code in this directory", key: "c", icon: () => <Bot size={20} /> },
+  { kind: "shell", title: "Terminal", body: "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
 ];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
@@ -59,7 +59,7 @@ export function OpenWorkspace(p: { path: string }) {
         </For>
       </div>
       <button class="mt-4 inline-flex items-center gap-1.5 self-start text-base text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
-        <Sparkles size={14} /> Or start Claude with a task <span class="kbd">N</span>
+        <Sparkles size={14} /> Or start Claude with a task <span class="kbd">n</span>
       </button>
     </div>
   );

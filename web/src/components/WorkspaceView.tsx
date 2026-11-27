@@ -374,8 +374,8 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       size="sm"
       class={cls_}
       items={[
-        { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
-        { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
+        { label: "Agent", icon: <Bot size={14} />, hint: "c", run: () => open("claude") },
+        { label: "Terminal", icon: <TermIcon size={14} />, hint: "t", run: () => open("shell") },
         { label: "Terminal beside", icon: <Columns size={14} />, run: () => openBeside("shell") },
         { label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("claude") },
       ]}

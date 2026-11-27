@@ -107,10 +107,10 @@ export function Agents() {
               data-filter
             />
           </label>
-          <Button variant="secondary" onClick={newChat} kbd="⇧C">
+          <Button variant="secondary" onClick={newChat} kbd="⇧ c">
             <Chat size={15} /> New chat
           </Button>
-          <Button variant="primary" onClick={() => setComposer({ path: null })} kbd="N">
+          <Button variant="primary" onClick={() => setComposer({ path: null })} kbd="n">
             <Sparkles size={15} /> New agent
           </Button>
         </div>

@@ -86,10 +86,10 @@ export function AgentCard(p: { agent: Agent; focused?: boolean; onFocus?: () => 
             </>
           }
         >
-          <Button variant="approve" onClick={approve} disabled={!a().reachable} title={a().reachable ? undefined : "Answer it in its own terminal"} loading={isBusy(`approve:${a().key}`)} kbd={p.focused ? "A" : undefined}>
+          <Button variant="approve" onClick={approve} disabled={!a().reachable} title={a().reachable ? undefined : "Answer it in its own terminal"} loading={isBusy(`approve:${a().key}`)} kbd={p.focused ? "a" : undefined}>
             <Check size={15} stroke-width={2.25} /> Approve
           </Button>
-          <Button variant="secondary" onClick={deny} disabled={!a().reachable} loading={isBusy(`deny:${a().key}`)} kbd={p.focused ? "D" : undefined}>
+          <Button variant="secondary" onClick={deny} disabled={!a().reachable} loading={isBusy(`deny:${a().key}`)} kbd={p.focused ? "d" : undefined}>
             <X size={15} /> Deny
           </Button>
           <Reply agent={a()} ref={p.replyRef} placeholder="Or tell Claude what to do instead…" class="min-w-[14rem] flex-1" />

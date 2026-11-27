@@ -10,7 +10,7 @@ import { Confirm, Help, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
-import { Edge, IconButton, Resizer } from "./components/ui";
+import { Edge, IconButton, Kbd, Resizer } from "./components/ui";
 import { WorkspaceView } from "./components/WorkspaceView";
 import {
   agentRoute,
@@ -23,9 +23,11 @@ import {
   helpOpen,
   openPalette,
   paletteOpen,
+  prefixArmed,
   route,
   setComposer,
   setHelpOpen,
+  setPrefixArmed,
   setSettingsOpen,
   settingsOpen,
   state,
@@ -146,8 +148,15 @@ export function App() {
     }
     e.preventDefault();
   };
-  onMount(() => window.addEventListener("keydown", onKey, true));
-  onCleanup(() => window.removeEventListener("keydown", onKey, true));
+  const disarm = () => setPrefixArmed(false);
+  onMount(() => {
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", disarm, true);
+  });
+  onCleanup(() => {
+    window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("mousedown", disarm, true);
+  });
 
   createEffect(() => {
     route();
@@ -220,6 +229,11 @@ export function App() {
       <Settings />
       <Confirm />
       <Toasts />
+      <Show when={prefixArmed()}>
+        <div class="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-pop-in rounded-full border border-accent bg-raised px-4 py-2 text-sm text-fg shadow-float">
+          Prefix: press a shortcut key · <Kbd>esc</Kbd> cancels
+        </div>
+      </Show>
     </div>
   );
 }

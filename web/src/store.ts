@@ -459,6 +459,8 @@ export type PaletteMode = "all" | "open" | "agent" | "theme";
 export const [paletteMode, setPaletteMode] = createSignal<PaletteMode>("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+/** Ctrl ⇧ Space in a terminal arms the prefix: the next key acts as a shortcut instead of typing. */
+export const [prefixArmed, setPrefixArmed] = createSignal(false);
 export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string; chat?: boolean } | null>(null);
 export const newChat = () => setComposer({ path: state.chat_dir, chat: true });
 /** The workspace of chat_dir, for questions that belong to no repo. */

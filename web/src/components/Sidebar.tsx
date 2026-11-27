@@ -182,7 +182,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           Search or run…
           <span class="ml-auto flex gap-0.5">
             <span class="kbd">{MOD}</span>
-            <span class="kbd">K</span>
+            <span class="kbd">k</span>
           </span>
         </button>
       </div>
