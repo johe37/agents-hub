@@ -182,7 +182,7 @@ export function Palette() {
       })),
       ...state.closed.map((c) => ({
         id: `closed:${c.id}`,
-        group: "Recently closed",
+        group: "Closed",
         title: `Reopen ${c.name}`,
         hint: c.short_path,
         keywords: c.path,

@@ -3,15 +3,13 @@ import type { Agent, UsageWindow } from "../api";
 import { act, chatWorkspace, readStored, writeStored, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, alive, cls, until, worst } from "../util";
-import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
+import { Bot, Chat, ChevronDown, Cog, Folder, Git, PanelLeft, Plus, Search, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle, Ago } from "./ui";
 
 const [showClosed, setShowClosed] = stored("show-closed", false);
-const [showClosedChats, setShowClosedChats] = stored("show-closed-chats", false);
 const toggleClosed = () => setShowClosed(!showClosed());
-const toggleClosedChats = () => setShowClosedChats(!showClosedChats());
 const [workspacesOpen, setWorkspacesOpen] = stored("nav-workspaces-open", true);
 const [chatsOpen, setChatsOpen] = stored("nav-chats-open", true);
 
@@ -113,7 +111,13 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   // Closing the last chat closes the chats workspace too; its chats show under Chats instead.
   const closed = createMemo(() => state.closed.filter((c) => c.path !== state.chat_dir));
   const closedChats = createMemo(() =>
-    state.agents.filter((a) => a.id && !a.workspace && !alive(a.status) && a.path === state.chat_dir).sort((a, b) => b.timestamp - a.timestamp),
+    state.agents.filter((a) => a.id && !a.workspace && !alive(a.status) && a.path === state.chat_dir),
+  );
+  const closedItems = createMemo(() =>
+    [
+      ...closed().map((c) => ({ kind: "workspace" as const, c, ts: c.closed_at })),
+      ...closedChats().map((a) => ({ kind: "chat" as const, a, ts: a.timestamp })),
+    ].sort((x, y) => y.ts - x.ts),
   );
   const workspaceAgents = createMemo(() => workspaces().flatMap((w) => store.byWorkspace().get(w.name) ?? []));
   const chatAgents = createMemo(() => chats().flatMap(({ win }) => store.agentsByKey().get(win.agent ?? "") ?? []));
@@ -340,46 +344,6 @@ export function Sidebar(p: { onNavigate?: () => void }) {
             }}
           </For>
 
-          <Show when={closed().length}>
-            <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closed().length} open={showClosed()} onToggle={toggleClosed}>
-              Recently closed
-            </SectionTitle>
-            <Show when={showClosed()}>
-              <For each={closed()}>
-                {(c) => (
-                  <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
-                    <button
-                      class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
-                      title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
-                      disabled={isBusy(`reopen:${c.id}`)}
-                      onClick={() => {
-                        p.onNavigate?.();
-                        void reopen(c.id);
-                      }}
-                    >
-                      <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
-                        <Spinner size={13} />
-                      </Show>
-                      <div class="min-w-0 flex-1">
-                        <div class="truncate text-base text-fg-2 group-hover:text-fg">{c.name}</div>
-                        <div class="truncate text-xs text-fg-3">
-                          {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · <Ago ts={c.closed_at} suffix />
-                        </div>
-                      </div>
-                    </button>
-                    <button
-                      class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                      onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
-                      aria-label={`Remove ${c.name} from the list`}
-                      title="Remove from the list"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                )}
-              </For>
-            </Show>
-          </Show>
         </Show>
 
         <GroupHeader
@@ -437,32 +401,65 @@ export function Sidebar(p: { onNavigate?: () => void }) {
               );
             }}
           </For>
+        </Show>
 
-
-          <Show when={closedChats().length}>
-            <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closedChats().length} open={showClosedChats()} onToggle={toggleClosedChats}>
-              Recently closed
+        <Show when={closedItems().length}>
+          <div class="mt-4 pb-1 pl-2.5 pr-1">
+            <SectionTitle as="div" count={closedItems().length} open={showClosed()} onToggle={toggleClosed}>
+              Closed
             </SectionTitle>
-            <Show when={showClosedChats()}>
-              <For each={closedChats()}>
-                {(a) => (
+          </div>
+          <Show when={showClosed()}>
+            <For each={closedItems()}>
+              {(item) =>
+                item.kind === "workspace" ? (
+                  <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
+                    <button
+                      class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
+                      title={`Open ${item.c.short_path} again with ${item.c.windows.length} window${item.c.windows.length === 1 ? "" : "s"}${item.c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
+                      disabled={isBusy(`reopen:${item.c.id}`)}
+                      onClick={() => {
+                        p.onNavigate?.();
+                        void reopen(item.c.id);
+                      }}
+                    >
+                      <Show when={isBusy(`reopen:${item.c.id}`)} fallback={<Folder size={13} class="shrink-0 text-fg-3" />}>
+                        <Spinner size={13} />
+                      </Show>
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-base text-fg-2 group-hover:text-fg">{item.c.name}</div>
+                        <div class="truncate text-xs text-fg-3">
+                          {item.c.windows.length} window{item.c.windows.length === 1 ? "" : "s"} · <Ago ts={item.c.closed_at} suffix />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                      onClick={() => act({ type: "forget_closed", id: item.c.id }, { quiet: true })}
+                      aria-label={`Remove ${item.c.name} from the list`}
+                      title="Remove from the list"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
                   <button
                     class="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover/70"
                     title="Resume this chat"
-                    disabled={isBusy(`resume:${a.key}`)}
-                    onClick={() => resume(a)}
+                    disabled={isBusy(`resume:${item.a.key}`)}
+                    onClick={() => resume(item.a)}
                   >
-                    <Show when={isBusy(`resume:${a.key}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                    <Show when={isBusy(`resume:${item.a.key}`)} fallback={<Chat size={13} class="shrink-0 text-fg-3" />}>
                       <Spinner size={13} />
                     </Show>
                     <div class="min-w-0 flex-1">
-                      <div class="truncate text-base text-fg-2 group-hover:text-fg">{a.title}</div>
-                      <div class="truncate text-xs text-fg-3"><Ago ts={a.timestamp} suffix /></div>
+                      <div class="truncate text-base text-fg-2 group-hover:text-fg">{item.a.title}</div>
+                      <div class="truncate text-xs text-fg-3"><Ago ts={item.a.timestamp} suffix /></div>
                     </div>
                   </button>
-                )}
-              </For>
-            </Show>
+                )
+              }
+            </For>
           </Show>
         </Show>
       </div>
