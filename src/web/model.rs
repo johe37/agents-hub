@@ -284,7 +284,7 @@ fn git_out(cwd: &str, args: &[&str]) -> Option<String> {
     matches!(out.status.code(), Some(0 | 1)).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn toplevel(path: &str) -> Option<String> {
+pub(super) fn toplevel(path: &str) -> Option<String> {
     git_out(path, &["rev-parse", "--show-toplevel"]).map(|r| r.trim().to_string()).filter(|r| !r.is_empty())
 }
 

@@ -274,6 +274,7 @@ export type Action =
   | { type: "close_agent"; agent: string }
   | { type: "adopt"; agent: string }
   | { type: "new_window"; workspace: string; kind: "agent" | "shell" | "nvim" }
+  | { type: "open_file"; workspace: string; file: string; line?: number }
   | { type: "set_agent"; command: string }
   | { type: "new_agent"; path: string; prompt?: string }
   | { type: "open_workspace"; path: string; kind?: "agent" | "shell" | "nvim" }

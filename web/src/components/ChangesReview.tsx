@@ -4,7 +4,7 @@ import { language } from "../highlight";
 import { act, agentRoute, diffView, go, setDiffView, setModes, state, type DiffTarget } from "../store";
 import { alive, cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
-import { FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
+import { Code, FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
 import { highlightFile, linesLabel, split, toggleSplit, workspaceAgent } from "./MrReview";
 import { ReviewDiff } from "./ReviewDiff";
 import { Ago, Button, IconButton, MenuButton, Spinner } from "./ui";
@@ -38,6 +38,21 @@ function ask(d: DiffTarget, text: string, fresh: boolean) {
     setDiffView(null);
     go({ view: "workspace", name: d.workspace, window: r.window });
   });
+}
+
+/** Open the file in $EDITOR in the workspace, at line, and show that window. */
+function edit(d: DiffTarget, file: string, line: number | undefined) {
+  void act({ type: "open_file", workspace: d.workspace, file, line }, { key: `edit:${file}` }).then((r) => {
+    if (!r.ok || !r.window) return;
+    setDiffView(null);
+    go({ view: "workspace", name: d.workspace, window: r.window });
+  });
+}
+
+/** The line in the file as it is now to open at: the first of the selection, or the first change. */
+function lineIn(f: DiffFile, sel: Sel | null): number | undefined {
+  if (sel) return f.lines.slice(sel.a).find((l) => l.new != null)?.new;
+  return (f.lines.find((l) => l.type === "add") ?? f.lines.find((l) => l.new != null))?.new;
 }
 
 function askPrompt(d: DiffTarget, f: DiffFile, lines: string | null): string {
@@ -91,6 +106,7 @@ function FileSection(p: {
   select: (a: number, b: number) => void;
   clear: () => void;
   ask: (whole: boolean, fresh: boolean) => void;
+  edit: (whole: boolean) => void;
   /** The Claude that Ask Claude types to, if any runs. */
   agent: Agent | undefined;
   canStart: boolean;
@@ -110,6 +126,11 @@ function FileSection(p: {
         <span class="ml-auto font-mono text-xs tabular-nums">
           <span class="text-add">+{p.f.added}</span> <span class="text-del">−{p.f.removed}</span>
         </span>
+        <Show when={p.canStart}>
+          <IconButton label="Open in $EDITOR at the first change" class="size-7" onClick={() => p.edit(true)}>
+            <Code size={13} />
+          </IconButton>
+        </Show>
         <MenuButton
           label="Ask Claude about this file"
           icon={<Sparkles size={13} />}
@@ -146,6 +167,9 @@ function FileSection(p: {
               <Show when={p.canStart}>
                 <Button size="sm" variant={p.agent ? "secondary" : "primary"} onClick={() => p.ask(false, true)} kbd="n" title="Start a new Claude here and type these lines in its input, unsent">
                   <Plus size={13} /> New Claude
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => p.edit(false)} kbd="e" title="Open the file in $EDITOR at these lines">
+                  <Code size={13} /> Editor
                 </Button>
               </Show>
               <Button size="sm" variant="ghost" onClick={p.clear} title="Clear the selection (Esc)">
@@ -185,6 +209,11 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
     setSel(null);
     ask(p.target, askPrompt(p.target, f, lines), fresh);
   };
+  const editAt = (f: DiffFile, whole: boolean) => {
+    const s = sel();
+    setSel(null);
+    edit(p.target, f.name, lineIn(f, !whole && s?.file === f.name ? s : null));
+  };
   const onKey = (e: KeyboardEvent) => {
     const s = sel();
     if (!s || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -192,6 +221,9 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
     else if ((e.key === "a" && askable(p.target)) || (e.key === "n" && canStart(p.target))) {
       const f = files().find((x) => x.name === s.file);
       if (f) askAbout(f, false, e.key === "n");
+    } else if (e.key === "e" && canStart(p.target)) {
+      const f = files().find((x) => x.name === s.file);
+      if (f) editAt(f, false);
     } else return;
     e.preventDefault();
     e.stopPropagation();
@@ -242,6 +274,7 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
                       select={(a, b) => setSel({ file: f.name, a: Math.min(a, b), b: Math.max(a, b) })}
                       clear={() => setSel(null)}
                       ask={(whole, fresh) => askAbout(f, whole, fresh)}
+                      edit={(whole) => editAt(f, whole)}
                       agent={askable(p.target)}
                       canStart={canStart(p.target)}
                     />

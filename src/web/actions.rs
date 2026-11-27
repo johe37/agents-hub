@@ -25,6 +25,8 @@ pub enum Action {
     CloseAgent { agent: String },
     Adopt { agent: String },
     NewWindow { workspace: String, kind: String },
+    /// Open file, relative to the workspace's repo root, in $EDITOR at line.
+    OpenFile { workspace: String, file: String, line: Option<u32> },
     SetAgent { command: String },
     NewAgent { path: String, prompt: Option<String> },
     /// Without kind, only finds the open workspace for path; with it, opens one with a window of that kind.
@@ -138,6 +140,19 @@ fn window(session: &str, path: &str, name: &str, command: Option<&str>) -> Resul
         }
     }
     tmux::open_window(session, path, name, command)
+}
+
+/// The command that opens path at line in $EDITOR, nvim without one, and the editor's name.
+fn editor_at(path: &str, line: Option<u32>) -> (String, String) {
+    let editor = std::env::var("EDITOR").ok().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "nvim".into());
+    let name = editor.split_whitespace().next().and_then(|p| p.rsplit('/').next()).unwrap_or("editor").to_string();
+    let command = match (line, name.as_str()) {
+        (None, _) => format!("{editor} {}", tmux::shell_quote(path)),
+        (Some(n), "hx" | "helix") => format!("{editor} {}", tmux::shell_quote(&format!("{path}:{n}"))),
+        (Some(n), "code" | "codium" | "cursor") => format!("{editor} -g {}", tmux::shell_quote(&format!("{path}:{n}"))),
+        (Some(n), _) => format!("{editor} +{n} {}", tmux::shell_quote(path)),
+    };
+    (command, name)
 }
 
 fn one_line(text: &str) -> String {
@@ -295,6 +310,17 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
             let kind = check_kind(&kind)?;
             let w = window(&ws.name, &ws.path, &crate::app::window_name(&kind), crate::app::window_command(&kind).as_deref())?;
+            Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
+        }
+        Action::OpenFile { workspace, file, line } => {
+            let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
+            let root = super::model::toplevel(&ws.path).unwrap_or_else(|| ws.path.clone());
+            let full = std::path::Path::new(&root).join(&file);
+            if file.split('/').any(|p| p == "..") || !full.is_file() {
+                return Err(format!("Can't open {file}: it is not in the checkout. A later commit removed or moved it."));
+            }
+            let (command, name) = editor_at(&full.to_string_lossy(), line);
+            let w = tmux::open_window(&ws.name, &ws.path, &name, Some(&command))?;
             Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
         }
         Action::NewAgent { path, prompt } => {
