@@ -40,6 +40,14 @@ Safari cut them to a rounded square.
   Hover a span for its times; click a lane to open the agent. The hook logs each status change to
   `~/.local/state/jugglr/history/`, so lanes start after you install this version. Logs that
   do not change for a week are removed.
+- **Mission control** (`g m`). A live map of all workspaces around the hub. Each workspace is a
+  hexagon in the color of its agents' worst status; busy workspaces sit closest to the centre.
+  Agents circle it on the inner orbit, other windows on the outer one. A tool call or a new
+  shell command flies as a beam from its window to the workspace, with a short label. Click a
+  window or a workspace to open it. The **Telemetry** feed on the right (wide windows only)
+  lists Claude's tool calls, shell commands and status changes; click one to open its window.
+  The feed starts when the page loads and keeps the last 60 entries. A command that ends
+  between two state updates does not show.
 - **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the agents, the merge request and the

@@ -1,6 +1,7 @@
 import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { AgentPage, Agents } from "./components/Agents";
 import { Gitlab } from "./components/Gitlab";
+import { Mission } from "./components/Mission";
 import { Menu } from "./components/icons";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
@@ -91,6 +92,7 @@ export function App() {
       pendingG = 0;
       if (k === "a") go({ view: "agents" });
       else if (k === "l") go({ view: "gitlab", key: null });
+      else if (k === "m") go({ view: "mission" });
       else return;
       e.preventDefault();
       return;
@@ -192,13 +194,16 @@ export function App() {
             Lost the connection to jugglr. Reconnecting… Is <code class="font-mono">jugglr web</code> still running?
           </div>
         </Show>
-        <main class={cls("min-h-0 flex-1", route().view === "workspace" || route().view === "agent" ? "overflow-hidden" : "overflow-y-auto")}>
+        <main class={cls("min-h-0 flex-1", route().view === "workspace" || route().view === "agent" || route().view === "mission" ? "overflow-hidden" : "overflow-y-auto")}>
           <Switch>
             <Match when={route().view === "agents"}>
               <Agents />
             </Match>
             <Match when={route().view === "gitlab"}>
               <Gitlab />
+            </Match>
+            <Match when={route().view === "mission"}>
+              <Mission />
             </Match>
             <Match when={(() => { const r = route(); return r.view === "open" ? r : null; })()}>
               {(r) => <OpenWorkspace path={r().path} />}

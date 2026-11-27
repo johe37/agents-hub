@@ -82,7 +82,7 @@ const KEYS: [string, [string, string][]][] = [
       ["N", "New agent with a task"],
       ["⇧ C", "New chat: Claude outside any repo"],
       ["O", "Open a workspace"],
-      ["G A / G L", "Go to agents / GitLab"],
+      ["G A / G M / G L", "Go to agents / mission control / GitLab"],
       ["W", "Next agent that needs you"],
       ["|", "Hide or show the sidebar"],
       ["Z", "Focus mode: only the content"],

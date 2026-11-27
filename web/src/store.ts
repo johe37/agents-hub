@@ -32,6 +32,7 @@ setInterval(() => setNow(Date.now()), 1000);
 
 export type Route =
   | { view: "agents" }
+  | { view: "mission" }
   | { view: "gitlab"; key: string | null }
   | { view: "workspace"; name: string; window: string | null }
   | { view: "agent"; key: string }
@@ -42,6 +43,8 @@ function parse(hash: string): Route {
   switch (parts[0]) {
     case "agents":
       return { view: "agents" };
+    case "mission":
+      return { view: "mission" };
     case "gitlab":
       return { view: "gitlab", key: parts.slice(1).join("/") || null };
     case "w":
@@ -61,6 +64,8 @@ export function href(r: Route): string {
   switch (r.view) {
     case "agents":
       return "#/agents";
+    case "mission":
+      return "#/mission";
     case "gitlab":
       return r.key ? `#/gitlab/${encodeURIComponent(r.key)}` : "#/gitlab";
     case "workspace":

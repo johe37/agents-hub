@@ -3,7 +3,7 @@ import type { Agent, UsageWindow } from "../api";
 import { act, chatWorkspace, readStored, writeStored, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, alive, cls, until, worst } from "../util";
-import { Bot, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
+import { Bot, Radar, Chat, ChevronDown, Cog, Git, PanelLeft, Plus, Search, Undo, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle, Ago } from "./ui";
@@ -195,6 +195,13 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           count={store.waiting().length || store.live().length}
           tone={store.waiting().length ? "waiting" : undefined}
           active={r().view === "agents" || r().view === "agent"}
+          onNavigate={p.onNavigate}
+        />
+        <NavItem
+          to={{ view: "mission" }}
+          icon={<Radar size={15} />}
+          label="Mission control"
+          active={r().view === "mission"}
           onNavigate={p.onNavigate}
         />
         <Show when={state.gitlab.enabled}>

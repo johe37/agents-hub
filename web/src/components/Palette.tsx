@@ -25,7 +25,7 @@ import {
 import { CHOICES, choiceLabel } from "../themes";
 import { allMrs } from "../gitlab";
 import { STATUS, alive, basename, cls, fuzzyWords } from "../util";
-import { Bell, Bot, Cog, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
+import { Bell, Bot, Radar, Cog, Chat, Undo, Folder, Git, Keyboard, Layers, Maximize, PanelLeft, PanelRight, Refresh, Search, Sparkles, Sun, Terminal } from "./icons";
 import { Kbd, StatusDot, SectionTitle } from "./ui";
 import { focus, showList, showNav, showPanel, toggleFocus, toggleList, toggleNav, togglePanel } from "../layout";
 
@@ -134,6 +134,7 @@ export function Palette() {
           ]
         : []),
       { id: "go-agents", group: "Go to", title: "Agents", icon: <Bot size={15} />, run: () => (close(), go({ view: "agents" })) },
+      { id: "go-mission", group: "Go to", title: "Mission control", icon: <Radar size={15} />, keywords: "map telemetry feed commands", run: () => (close(), go({ view: "mission" })) },
       ...(state.gitlab.enabled ? [{ id: "go-gitlab", group: "Go to", title: "GitLab", icon: <Git size={15} />, run: () => (close(), go({ view: "gitlab", key: null })) }] : []),
       ...state.workspaces.map((w) => ({
         id: `ws:${w.name}`,
