@@ -64,7 +64,6 @@ export const Layers = icon(() => <><path d="m12 2 10 5-10 5L2 7l10-5Z" /><path d
 export const Undo = icon(() => <><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></>);
 export const More = icon(() => <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>);
 export const PanelLeft = icon(() => <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /></>);
-export const Columns = icon(() => <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M12 3v18" /></>);
 export const PanelRight = icon(() => <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M15 3v18" /></>);
 export const Maximize = icon(() => <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />);
 export const Minimize = icon(() => <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />);
