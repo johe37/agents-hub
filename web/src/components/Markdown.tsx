@@ -26,7 +26,7 @@ const md = new Marked({
     code({ text, lang }) {
       const name = (lang ?? "").trim().split(/\s+/)[0].toLowerCase();
       if (name !== FINDINGS_LANG) {
-        const body = (name && highlightBlock(text, name)) ?? escape(text);
+        const body = (name ? highlightBlock(text, name) : null) ?? escape(text);
         const head = `<div class="code-head"><span>${escape(name)}</span><button type="button" data-copy title="Copy code">Copy</button></div>`;
         return `<div class="code-block">${head}<pre><code>${body}</code></pre></div>`;
       }
