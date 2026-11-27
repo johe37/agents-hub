@@ -117,8 +117,10 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
 
         let bridge = Arc::clone(&hub);
         std::thread::spawn(move || {
+            let mut running: Option<HashMap<String, String>> = None;
             for snap in snaps {
                 let state = model::state(&snap, &cfg);
+                log_new_commands(&state, &mut running);
                 for (text, error) in &snap.notices {
                     let _ = bridge.events.send(Arc::from(json!({"type": "notice", "text": text, "error": error}).to_string()));
                 }
@@ -150,6 +152,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/conversation", get(conversation))
             .route("/api/diff", get(diff))
             .route("/api/timeline", get(timeline))
+            .route("/api/commands", get(commands))
             .route("/api/mr/changes", get(review::mr_changes))
             .route("/api/mr/drafts", get(review::mr_drafts))
             .route("/api/mr/job", get(review::mr_job))
@@ -376,6 +379,39 @@ async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, Strin
     }
     let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref())).await.unwrap_or_default();
     Json(json!({"diff": text})).into_response()
+}
+
+/// Logs each command that starts in the foreground of a terminal. The first state only primes the
+/// list, so a restart does not log what already ran.
+fn log_new_commands(state: &Value, seen: &mut Option<HashMap<String, String>>) {
+    let mut now_running = HashMap::new();
+    let time = crate::state::now();
+    for ws in state["workspaces"].as_array().into_iter().flatten() {
+        for win in ws["windows"].as_array().into_iter().flatten() {
+            let (Some(id), Some(cmd)) = (win["id"].as_str(), win["running"].as_str()) else { continue };
+            if seen.as_ref().is_some_and(|s| s.get(id).map(String::as_str) != Some(cmd)) {
+                crate::commands::shell(time, ws["name"].as_str().unwrap_or(""), id, win["name"].as_str().unwrap_or(""), cmd);
+            }
+            now_running.insert(id.to_string(), cmd.to_string());
+        }
+    }
+    *seen = Some(now_running);
+}
+
+async fn commands(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Json<Value> {
+    let limit = q.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(100).clamp(1, 500);
+    let mut entries = tokio::task::spawn_blocking(move || crate::commands::recent(limit)).await.unwrap_or_default();
+    let snap = hub.snapshot();
+    for e in &mut entries {
+        let Some(id) = e["session"].as_str() else { continue };
+        if let Some(a) = snap.agents.iter().find(|a| a.session_id() == Some(id)) {
+            e["agent"] = a.key.clone().into();
+            e["workspace"] = a.workspace.clone().into();
+            e["window"] = a.window_id.clone().into();
+            e["title"] = a.title().into();
+        }
+    }
+    Json(Value::Array(entries))
 }
 
 async fn timeline(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Json<Value> {

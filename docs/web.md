@@ -46,8 +46,8 @@ Safari cut them to a rounded square.
   shell command flies as a beam from its window to the workspace, with a short label. Click a
   window or a workspace to open it. The **Telemetry** feed on the right (wide windows only)
   lists Claude's tool calls, shell commands and status changes; click one to open its window.
-  The feed starts when the page loads and keeps the last 60 entries. A command that ends
-  between two state updates does not show.
+  It shows the last 60 commands from the command log (see [Security](#security)). Status
+  changes show from when the page loads.
 - **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the agents, the merge request and the
@@ -144,6 +144,22 @@ token in a cookie, and every request needs it. The token is in
 refuses requests for other host names and from other sites.
 
 Anyone with the token can type into your terminals. Do not share the link.
+
+### The command log
+
+jugglr logs the commands that run, for the **Telemetry** feed. The hook logs each tool call of
+Claude. `jugglr web` logs each new command in the foreground of a terminal, while it runs; a
+command that starts and ends between two state updates is missed. The log is in
+`~/.local/state/jugglr/history/commands-<day>.jsonl`, one file per day, readable by you only.
+Files older than a week are removed.
+
+The log only records. It does not block or check a command.
+
+Before a command is written, jugglr hides values that look like secrets: `*_TOKEN=`,
+`*_PASSWORD=` and similar assignments, the word after `Bearer` and `--password`, tokens that
+start with `glpat-`, `ghp_` or `sk-`, and the password in `https://user:password@host`. This
+is a best effort. A secret in another shape is written as it is. Delete the files to remove
+it.
 
 ## Build
 

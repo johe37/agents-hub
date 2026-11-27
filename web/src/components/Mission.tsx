@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createRoot, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent, Status, Win, Workspace } from "../api";
+import { getJSON } from "../api";
 import { agentRoute, go, now, state, theme } from "../store";
 import { STATUS, age, alive, cls, worst } from "../util";
 
@@ -65,7 +66,7 @@ interface Ring {
 }
 
 export interface FeedEntry {
-  id: number;
+  id: string;
   ts: number;
   source: "claude" | "shell" | "status";
   where: string;
@@ -77,8 +78,47 @@ export interface FeedEntry {
 const ELSEWHERE = "~elsewhere";
 const MAX_FEED = 60;
 
-const [feed, setFeed] = createSignal<FeedEntry[]>([]);
+const [statusFeed, setStatusFeed] = createSignal<FeedEntry[]>([]);
+const [commandFeed, setCommandFeed] = createSignal<FeedEntry[]>([]);
 let feedId = 0;
+const feed = () => [...commandFeed(), ...statusFeed()].sort((a, b) => b.ts - a.ts).slice(0, MAX_FEED);
+
+interface LoggedCommand {
+  time: number;
+  source: "claude" | "shell";
+  text: string;
+  cwd?: string;
+  agent?: string | null;
+  workspace?: string | null;
+  window?: string | null;
+  window_name?: string;
+}
+
+function fromLog(c: LoggedCommand, i: number): FeedEntry {
+  const id = `${c.time}-${i}`;
+  if (c.source === "shell") {
+    return { id, ts: c.time, source: "shell", where: `${c.workspace} · ${c.window_name}`, text: c.text, route: c.workspace ? { view: "workspace", name: c.workspace, window: c.window ?? null } : null };
+  }
+  const agent = c.agent ? state.agents.find((a) => a.key === c.agent) : undefined;
+  return { id, ts: c.time, source: "claude", where: c.workspace ?? c.cwd?.replace(state.home, "~") ?? "", text: c.text, route: agent ? agentRoute(agent) : null };
+}
+
+let lastFetch = 0;
+let fetchTimer = 0;
+/** The server log has every command, also the ones that start and end between two state updates. */
+function fetchCommands() {
+  clearTimeout(fetchTimer);
+  const wait = Math.max(0, lastFetch + 3000 - Date.now());
+  fetchTimer = window.setTimeout(async () => {
+    lastFetch = Date.now();
+    try {
+      const list = await getJSON<LoggedCommand[]>(`/api/commands?limit=${MAX_FEED}`);
+      setCommandFeed(list.map(fromLog));
+    } catch {
+      // The next state update tries again.
+    }
+  }, wait);
+}
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -182,14 +222,14 @@ function where(a: Agent): string {
 }
 
 function log(e: Omit<FeedEntry, "id" | "ts">) {
-  setFeed((f) => [{ ...e, id: ++feedId, ts: Date.now() / 1000 }, ...f].slice(0, MAX_FEED));
+  setStatusFeed((f) => [{ ...e, id: `s${++feedId}`, ts: Date.now() / 1000 }, ...f].slice(0, MAX_FEED));
 }
 
 type Signal = { kind: "claude" | "shell"; sat: string; node: string; label: string } | { kind: "status"; sat: string; color: string };
 const listeners = new Set<(e: Signal) => void>();
 const emit = (e: Signal) => listeners.forEach((l) => l(e));
 
-// Runs for the whole session, so the feed already has history when the view opens.
+// Runs for the whole session, so status changes from before the view opened are in the feed.
 createRoot(() => {
   const seen = { tool: new Map<string, string | null>(), status: new Map<string, Status>(), running: new Map<string, string | null>() };
   let primed = false;
@@ -199,7 +239,6 @@ createRoot(() => {
       const sat = a.workspace && a.window ? `${a.workspace}/${a.window}` : `${ELSEWHERE}/${a.key}`;
       if (primed && a.tool && a.tool !== seen.tool.get(a.key) && alive(a.status)) {
         emit({ kind: "claude", sat, node: a.workspace ?? ELSEWHERE, label: shortTool(a.tool) });
-        log({ source: "claude", where: where(a), text: a.tool, route: agentRoute(a) });
       }
       if (primed && prevStatus && prevStatus !== a.status && (a.status === "waiting" || a.status === "idle" || a.status === "ended")) {
         if (a.status !== "ended") emit({ kind: "status", sat, color: STATUS[a.status].color });
@@ -214,12 +253,12 @@ createRoot(() => {
         const k = `${w.name}/${win.id}`;
         if (primed && win.running && win.running !== seen.running.get(k)) {
           emit({ kind: "shell", sat: k, node: w.name, label: win.running.slice(0, 36) });
-          log({ source: "shell", where: `${w.name} · ${win.name}`, text: win.running, route: { view: "workspace", name: w.name, window: win.id } });
         }
         seen.running.set(k, win.running);
       }
     }
     if (state.workspaces.length || state.agents.length) primed = true;
+    if (listeners.size) fetchCommands();
   });
 });
 
@@ -257,6 +296,7 @@ export function Mission() {
     beams.push({ sat: e.sat, node: e.node, t: 0, color: e.kind === "claude" ? v.working : v.accent, label: e.label });
   };
   listeners.add(onSignal);
+  fetchCommands();
   onCleanup(() => listeners.delete(onSignal));
 
   const pick = (x: number, y: number): { node: Node; sat: Sat | null } | null => {

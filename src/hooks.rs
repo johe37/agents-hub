@@ -50,6 +50,11 @@ pub fn report() {
     }
     let _ = std::fs::create_dir_all(&dir);
     record["polling"] = next_polling(previous.as_ref().is_some_and(|p| p["polling"] == true), &event).into();
+    if event["hook_event_name"] == "PreToolUse" {
+        if let Some(text) = crate::transcript::tool_summary(event["tool_name"].as_str(), &event["tool_input"]) {
+            crate::commands::claude(now, id, event["cwd"].as_str().unwrap_or(""), &text);
+        }
+    }
     if let Some(status) = status_of(&record).filter(|s| previous.as_ref().and_then(status_of) != Some(*s)) {
         crate::history::append(id, now, status);
     }
