@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createRoot, createSignal } from "solid-js";
+import { batch, createEffect, createMemo, createRoot, createSignal, untrack } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { post, wsURL, type Action, type ActionResult, type Agent, type Commit, type State, type Win, type Workspace } from "./api";
 import { apply, choiceLabel, isChoice, resolve } from "./themes";
@@ -598,16 +598,44 @@ export function diffLabel(d: DiffTarget) {
   return name ?? "All changes";
 }
 
-/** Close a diff tab. Closing the one shown shows the diff next to it, else the window you came from. */
-/** The diff tab each window was opened from, to go back to when the window closes. */
-const openedFrom = new Map<string, string>();
-export const returnTo = (window: string, diff: string) => openedFrom.set(window, diff);
+/** The diff tab and file each editor window was opened from, to go back to when the window closes. */
+type From = { diff: string; file: string; ts: number };
+const [openedFrom, setOpenedFrom] = createSignal<Record<string, From>>(
+  (() => {
+    try {
+      return JSON.parse(readStored("opened-from") ?? "{}");
+    } catch {
+      return {};
+    }
+  })(),
+);
+createRoot(() => {
+  createEffect(() => writeStored("opened-from", JSON.stringify(openedFrom())));
+  // tmux reuses window ids after a restart, so a closed window's entry must go. A new window is not listed
+  // at once: give it time first.
+  createEffect(() => {
+    if (!loaded()) return;
+    const live = new Set(state.workspaces.flatMap((w) => w.windows.map((x) => x.id)));
+    const old = Date.now() - 30_000;
+    const all = untrack(openedFrom);
+    const keep = Object.entries(all).filter(([w, f]) => live.has(w) || f.ts > old);
+    if (keep.length < Object.keys(all).length) setOpenedFrom(Object.fromEntries(keep));
+  });
+});
+export const returnTo = (window: string, diff: string, file: string) => setOpenedFrom((m) => ({ ...m, [window]: { diff, file, ts: Date.now() } }));
 /** The diff tab that window was opened from, while that tab is still open. */
 export function backTo(workspace: string, window: string | null | undefined): string | undefined {
-  const id = window ? openedFrom.get(window) : undefined;
+  const id = window ? openedFrom()[window]?.diff : undefined;
   return id && diffTabs()[workspace]?.some((d) => diffId(d) === id) ? id : undefined;
 }
+/** The open windows of workspace that edit file from the diff tab diff. */
+export function editorsOf(workspace: string, diff: string, file: string): Win[] {
+  const from = openedFrom();
+  const ws = state.workspaces.find((w) => w.name === workspace);
+  return ws?.windows.filter((x) => from[x.id]?.diff === diff && from[x.id]?.file === file) ?? [];
+}
 
+/** Close a diff tab. Closing the one shown shows the diff next to it, else the window you came from. */
 export function closeDiff(workspace: string, id: string) {
   const list = diffTabs()[workspace] ?? [];
   const at = list.findIndex((x) => diffId(x) === id);

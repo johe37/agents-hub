@@ -683,6 +683,22 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       <Show when={a()}>
                         <StatusDot status={a()!.status} size={7} />
                       </Show>
+                      <Show when={diffs().find((d) => diffId(d) === backTo(p.name, win.id))}>
+                        {(d) => (
+                          <button
+                            class="flex h-5 max-w-[10rem] items-center gap-1 rounded bg-hover px-1.5 text-xs text-fg-3 hover:bg-accent/15 hover:text-accent"
+                            title={`Opened from ${diffLabel(d())}: go back to it. Closing this window goes back too.`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              go({ view: "workspace", name: p.name, window: diffId(d()) });
+                            }}
+                          >
+                            <Undo size={11} class="shrink-0" />
+                            <span class="truncate">{diffLabel(d())}</span>
+                          </button>
+                        )}
+                      </Show>
                       <button
                         class={cls(
                           "grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg group-hover:opacity-100",

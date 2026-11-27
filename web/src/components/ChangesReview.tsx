@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
-import { getJSON, type Agent, type Commit } from "../api";
+import { getJSON, type Agent, type Commit, type Win } from "../api";
 import { language } from "../highlight";
-import { act, agentRoute, diffId, diffView, go, pinDiff, returnTo, setDiffView, setModes, state, type DiffTarget } from "../store";
+import { act, agentRoute, diffId, diffView, editorsOf, go, pinDiff, returnTo, setDiffView, setModes, state, type DiffTarget } from "../store";
 import { alive, cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
 import { Code, FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
@@ -45,7 +45,7 @@ function edit(d: DiffTarget, file: string, line: number | undefined) {
   void act({ type: "open_file", workspace: d.workspace, file, line }, { key: `edit:${file}` }).then((r) => {
     if (!r.ok || !r.window) return;
     pinDiff(d.workspace, diffId(d));
-    returnTo(r.window, diffId(d));
+    returnTo(r.window, diffId(d), file);
     setDiffView(null);
     go({ view: "workspace", name: d.workspace, window: r.window });
   });
@@ -112,6 +112,9 @@ function FileSection(p: {
   clear: () => void;
   ask: (whole: boolean, fresh: boolean) => void;
   edit: (whole: boolean) => void;
+  /** The editor windows open on this file from this diff. */
+  editors: Win[];
+  goTo: (window: string) => void;
   /** The Claude that Ask Claude types to, if any runs. */
   agent: Agent | undefined;
   canStart: boolean;
@@ -131,6 +134,18 @@ function FileSection(p: {
         <span class="ml-auto font-mono text-xs tabular-nums">
           <span class="text-add">+{p.f.added}</span> <span class="text-del">−{p.f.removed}</span>
         </span>
+        <For each={p.editors}>
+          {(w) => (
+            <button
+              class="flex h-6 items-center gap-1.5 rounded-md bg-accent/15 px-2 text-xs text-accent hover:bg-accent/25"
+              title="This file is open in an editor from this diff: go to it"
+              onClick={() => p.goTo(w.id)}
+            >
+              <span class="size-1.5 rounded-full bg-accent" />
+              {w.running ?? w.name}
+            </button>
+          )}
+        </For>
         <Show when={p.canStart}>
           <IconButton label="Open in $EDITOR at the first change" class="size-7" onClick={() => p.edit(true)}>
             <Code size={13} />
@@ -288,6 +303,8 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
                       clear={() => setSel(null)}
                       ask={(whole, fresh) => askAbout(f, whole, fresh)}
                       edit={(whole) => editAt(f, whole)}
+                      editors={editorsOf(p.target.workspace, diffId(p.target), f.name)}
+                      goTo={(window) => go({ view: "workspace", name: p.target.workspace, window })}
                       agent={askable(p.target)}
                       canStart={canStart(p.target)}
                     />
