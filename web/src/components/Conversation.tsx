@@ -9,7 +9,7 @@ import { Reply } from "./Reply";
 import { ToolDetail } from "./ToolCall";
 import { Button, Spinner, StatusDot } from "./ui";
 
-type Conv = { items: ConversationItem[]; truncated?: boolean; missing?: boolean };
+type Conv = { items: ConversationItem[]; queued?: string[]; truncated?: boolean; missing?: boolean };
 
 type Entry = { kind: "msg"; item: ConversationItem } | { kind: "tools"; items: Tool[] } | { kind: "changes"; changes: Change[] };
 
@@ -172,7 +172,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
   return (
     <div class="relative flex h-full min-h-0 flex-col">
       <div ref={scroller} onScroll={onScroll} class="relative min-h-0 flex-1 overflow-y-auto">
-        <div class="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 sm:px-8">
+        <div class="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 sm:px-8">
           <Show when={conv.latest} fallback={<div class="flex flex-col gap-3">{[0, 1, 2].map(() => <div class="skeleton h-16" />)}</div>}>
             <Show when={conv.latest!.truncated}>
               <div class="text-center text-sm text-fg-3">Earlier messages are in the full transcript</div>
@@ -191,7 +191,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   </Match>
                   <Match when={message(g(), "user")}>
                     {(m) => (
-                      <div class="ml-auto max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-fg animate-fade-in">
+                      <div class="ml-auto max-w-[min(85%,65ch)] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-fg animate-fade-in">
                         {m().text}
                       </div>
                     )}
@@ -199,12 +199,20 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   <Match when={message(g(), "assistant")}>
                     {(m) => (
                       <div>
-                        <Markdown text={m().text} class="text-base leading-relaxed text-fg animate-fade-in" />
+                        <Markdown text={m().text} class="chat-measure text-base leading-relaxed text-fg animate-fade-in" />
                         {p.action?.(m().text)}
                       </div>
                     )}
                   </Match>
                 </Switch>
+              )}
+            </Index>
+            <Index each={conv.latest!.queued ?? []}>
+              {(t) => (
+                <div class="ml-auto flex max-w-[min(85%,65ch)] flex-col items-end gap-1 animate-fade-in" title="Claude reads it when it gets to a pause">
+                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-fg-2">{t()}</div>
+                  <span class="text-xs text-fg-3">Queued</span>
+                </div>
               )}
             </Index>
             <Show when={a().status === "working"}>
@@ -233,14 +241,18 @@ export function Composer(p: { agent: Agent }) {
   const a = () => p.agent;
   return (
     <div class="border-t border-line bg-panel/80 backdrop-blur">
-      <div class="mx-auto w-full max-w-3xl px-4 pb-4 pt-3 sm:px-8">
+      <div class="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-8">
         <Show when={a().needs_permission}>
           <div class="mb-3 rounded-xl border border-waiting/40 bg-waiting-soft/50 p-3 animate-pop-in">
             <div class="mb-2 text-sm font-medium text-waiting">{a().message ?? "Claude asks for permission"}</div>
             <Show when={a().pending_tool}>
-              <div class="mb-3">
-                <ToolDetail name={a().pending_tool!.name} input={a().pending_tool!.input} compact />
-              </div>
+              {(t) => (
+                <div class="mb-3">
+                  <Show when={change({ kind: "tool", id: "pending", ts: "", summary: null, ...t() })} fallback={<ToolDetail name={t().name} input={t().input} compact />}>
+                    {(c) => <EditView id={`pending:${a().key}`} agent={a()} change={c()} class="max-h-[40vh]" />}
+                  </Show>
+                </div>
+              )}
             </Show>
             <div class="flex gap-2">
               <Button variant="approve" size="sm" disabled={!a().reachable} loading={isBusy(`approve:${a().key}`)} onClick={() => act({ type: "approve", agent: a().key }, { key: `approve:${a().key}` })}>

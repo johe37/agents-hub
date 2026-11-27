@@ -1,6 +1,7 @@
 //! `jugglr web`: the hub as a web app on localhost.
 
 mod actions;
+mod compose;
 mod conversation;
 mod model;
 mod review;
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
@@ -153,6 +154,8 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/action", post(action))
             .route("/api/dirs", get(dirs))
             .route("/api/conversation", get(conversation))
+            .route("/api/complete", get(compose::complete))
+            .route("/api/upload", post(compose::upload).layer(DefaultBodyLimit::max(20 * 1024 * 1024)))
             .route("/api/diff", get(diff))
             .route("/api/commits", get(commits))
             .route("/api/commits/files", get(commit_files))

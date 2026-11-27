@@ -34,9 +34,10 @@ export function StatusDot(p: { status: Status | null; size?: number; class?: str
   );
 }
 
-export function StatusPill(p: { status: Status; class?: string }) {
+export function StatusPill(p: { status: Status; class?: string; title?: string }) {
   return (
     <span
+      title={p.title || undefined}
       class={cls("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", p.class)}
       style={{ background: STATUS[p.status].soft, color: STATUS[p.status].color }}
     >

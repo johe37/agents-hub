@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
 import { act, ask, backTo, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, pinDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
@@ -605,6 +605,26 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               )}
             </Show>
             <div class="ml-auto flex items-center gap-1">
+              <Show when={!onDiff() && shown()?.kind === "agent" && agentOf(shown())}>
+                {(a) => (
+                  <div class="mr-1 flex items-center gap-2">
+                    <StatusPill status={a().status} title={[a().status === "working" ? (a().tool ?? "Thinking…") : a().status === "waiting" ? a().message : null, a().model].filter(Boolean).join(" · ")} />
+                    <Show when={a().status === "waiting" && !a().needs_permission}>
+                      <Button size="sm" variant="ghost" class="shrink-0" onClick={() => act({ type: "mark_done", agent: a().key })} title="Stop showing it as waiting (m)">
+                        <Done size={13} /> Done
+                      </Button>
+                    </Show>
+                    <div class="flex rounded-lg bg-hover p-0.5 text-sm">
+                      <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")} title="Chat (v)">
+                        <Chat size={12} /> Chat
+                      </button>
+                      <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("terminal")} title="Terminal (v)">
+                        <TermIcon size={12} /> Terminal
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Show>
               <Show when={shown() && !onDiff() && mode() === "terminal"}>
                 <span class="mr-1 hidden items-center gap-1.5 text-sm text-fg-3 md:flex" title="In a terminal, press Ctrl ⇧ Space and then a key to run a shortcut">
                   <Kbd>Ctrl ⇧ Space</Kbd> shortcuts
@@ -750,32 +770,6 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               <Show when={shown()} fallback={<Show when={!onDiff()}><div class="grid flex-1 place-items-center"><Spinner size={18} /></div></Show>}>
                 {(win) => (
                   <div class={cls("flex min-h-0 flex-1 flex-col", onDiff() && "hidden")}>
-                    <Show when={win().kind === "agent" && agentOf(win())}>
-                      {(a) => (
-                        <div class="flex items-center gap-2 border-b border-line px-4 py-1.5 sm:px-5">
-                          <StatusPill status={a().status} />
-                          <span class="min-w-0 truncate text-sm text-fg-2">
-                            <Switch fallback={a().model ?? ""}>
-                              <Match when={a().status === "working"}>{a().tool ?? "Thinking…"}</Match>
-                              <Match when={a().status === "waiting"}>{a().message}</Match>
-                            </Switch>
-                          </span>
-                          <Show when={a().status === "waiting" && !a().needs_permission}>
-                            <Button size="sm" variant="ghost" class="ml-auto shrink-0" onClick={() => act({ type: "mark_done", agent: a().key })} title="Stop showing it as waiting (m)">
-                              <Done size={13} /> Done
-                            </Button>
-                          </Show>
-                          <div class={cls("flex rounded-lg bg-hover p-0.5 text-sm", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")} title="Chat (v)">
-                              <Chat size={12} /> Chat
-                            </button>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("terminal")} title="Terminal (v)">
-                              <TermIcon size={12} /> Terminal
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </Show>
                     <div class="min-h-0 flex-1">
                       <Show when={mode() === "chat" && agentOf(win())} fallback={<Terminal window={win().id} focus={!onDiff()} />}>
                         {(a) => <Conversation agent={a()} />}

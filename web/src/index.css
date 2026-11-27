@@ -185,6 +185,8 @@ textarea:focus-visible {
 .prose-chat blockquote { border-left: 3px solid var(--line-strong); padding-left: 0.8em; color: var(--fg-2); }
 .prose-chat table { border-collapse: collapse; display: block; overflow-x: auto; }
 .prose-chat th, .prose-chat td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+/* Prose keeps a readable line length; code and tables may use the full width. */
+.chat-measure > :is(p, ul, ol, h1, h2, h3, h4, blockquote) { max-width: 75ch; }
 .prose-chat hr { border: 0; border-top: 1px solid var(--line); }
 
 .xterm-host .xterm {

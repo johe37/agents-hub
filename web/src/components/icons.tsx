@@ -34,6 +34,7 @@ export const Copy = icon(() => <><rect x="8" y="8" width="14" height="14" rx="2"
 export const Check = icon(() => <path d="M20 6 9 17l-5-5" />);
 export const X = icon(() => <><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>);
 export const Mic = icon(() => <><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v5" /></>);
+export const ImagePlus = icon(() => <><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" /><path d="M16 5h6M19 2v6" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" /></>);
 export const Send =icon(() => <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>);
 export const Branch = icon(() => <><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="8" r="2.5" /><path d="M6 8.5v7" /><path d="M18 10.5c0 4-6 3-11 5.5" /></>);
 export const ArrowUp = icon(() => <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>);

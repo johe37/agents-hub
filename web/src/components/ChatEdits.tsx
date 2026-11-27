@@ -75,7 +75,7 @@ function FileName(p: { file: string }) {
 }
 
 /** One edit as a diff. Select lines in the gutter to ask Claude about them. */
-export function EditView(p: { id: string; agent: Agent; change: Change }) {
+export function EditView(p: { id: string; agent: Agent; change: Change; class?: string }) {
   const sel = createMemo(() => keep<[number, number] | null>(`sel:${p.id}`, null));
   let anchor = 0;
   const pick = (i: number, extend: boolean) => {
@@ -107,7 +107,7 @@ export function EditView(p: { id: string; agent: Agent; change: Change }) {
         <FileDiff size={12} class="shrink-0 text-fg-3 group-hover/file:text-fg" />
       </button>
       <div class="overflow-hidden rounded-lg border border-line bg-bg">
-        <DiffLines lines={p.change.lines} numbers={p.change.exact} class="max-h-96" sel={sel()[0]()} pick={pick} />
+        <DiffLines lines={p.change.lines} numbers={p.change.exact} class={p.class ?? "max-h-96"} sel={sel()[0]()} pick={pick} />
       </div>
       <Show when={picked().length}>
         <div class="flex items-center gap-2 animate-fade-in">

@@ -97,6 +97,8 @@ pub fn read(path: &str) -> Value {
 
     let mut items: Vec<Value> = vec![];
     let mut tools: HashMap<String, usize> = HashMap::new();
+    // Prompts typed while Claude works wait here until Claude reads them.
+    let mut queue: Vec<String> = vec![];
     for line in lines {
         let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
         if r["isSidechain"] == true {
@@ -151,11 +153,35 @@ pub fn read(path: &str) -> Value {
                     }
                 }
             }
+            Some("queue-operation") => {
+                let content = r["content"].as_str().unwrap_or("");
+                match r["operation"].as_str() {
+                    Some("enqueue") => queue.push(content.to_string()),
+                    // The next turn starts with it as a normal prompt.
+                    Some("dequeue") if !queue.is_empty() => {
+                        queue.remove(0);
+                    }
+                    // Claude read it during the turn (an attachment follows), or it was deleted.
+                    Some("remove") => {
+                        if let Some(i) = queue.iter().position(|q| q == content) {
+                            queue.remove(i);
+                        }
+                    }
+                    Some("popAll") => queue.clear(),
+                    _ => {}
+                }
+            }
+            Some("attachment") if r["attachment"]["type"] == "queued_command" && r["attachment"]["commandMode"] != "bash" => {
+                if let Some(text) = prompt(&r["attachment"]["prompt"]) {
+                    items.push(json!({"kind": "user", "text": text, "ts": ts}));
+                }
+            }
             _ => {}
         }
     }
     let cut = items.len().saturating_sub(MAX_ITEMS);
-    json!({"items": items.split_off(cut), "truncated": start > 0 || cut > 0})
+    let queued: Vec<String> = queue.iter().filter_map(|q| prompt(&json!(q))).collect();
+    json!({"items": items.split_off(cut), "queued": queued, "truncated": start > 0 || cut > 0})
 }
 
 #[cfg(test)]
@@ -191,6 +217,30 @@ mod tests {
         assert_eq!(items[3]["result"]["text"], "a\nb");
         assert!(items[3]["result"]["patch"].is_null());
         assert_eq!(items[4]["result"]["patch"], "@@ -3,2 +3,2 @@\n a\n-x\n+y\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn shows_queued_prompts_until_claude_reads_them() {
+        let dir = std::env::temp_dir().join(format!("jugglr-queue-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let op = |o: &str, c: Option<&str>| json!({"type": "queue-operation", "operation": o, "content": c});
+        let lines = [
+            json!({"type": "user", "message": {"content": "Start"}}),
+            op("enqueue", Some("Read mid-turn")),
+            op("enqueue", Some("Next turn")),
+            op("enqueue", Some("Still waiting")),
+            op("remove", Some("Read mid-turn")),
+            json!({"type": "attachment", "attachment": {"type": "queued_command", "prompt": "Read mid-turn", "commandMode": "prompt"}}),
+            op("dequeue", None),
+            json!({"type": "user", "message": {"content": "Next turn"}}),
+        ];
+        std::fs::write(&path, lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let out = read(path.to_str().unwrap());
+        let texts: Vec<_> = out["items"].as_array().unwrap().iter().map(|i| i["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["Start", "Read mid-turn", "Next turn"]);
+        assert_eq!(out["queued"], json!(["Still waiting"]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
