@@ -17,6 +17,8 @@ pub enum Action {
     Approve { agent: String },
     Deny { agent: String },
     Reply { agent: String, text: String },
+    /// Type text into the agent's input without sending it.
+    Type { agent: String, text: String },
     Interrupt { agent: String },
     MarkDone { agent: String },
     Resume { agent: String },
@@ -222,6 +224,17 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             }
             tmux::send_text(&sock, &pane, &text)?;
             Ok(said(format!("Sent → {}", a.title())))
+        }
+        Action::Type { agent: key, text } => {
+            let a = agent(hub, &key)?;
+            let (sock, pane) = target(&a)?;
+            // A newline would send the prompt in Claude Code.
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                return Err("Nothing to type".into());
+            }
+            tmux::type_text(&sock, &pane, &format!("{text} "))?;
+            Ok(Done::default())
         }
         Action::Interrupt { agent: key } => {
             let a = agent(hub, &key)?;

@@ -49,7 +49,7 @@ export function change(t: Tool): Change | null {
 }
 
 function openFile(a: Agent, file: string | null) {
-  openDiff({ workspace: a.workspace ?? a.name, path: a.path, file, title: file ? tilde(file) : `All changes in ${a.short_path}` });
+  openDiff({ workspace: a.workspace ?? a.name, path: a.path, file, title: file ? tilde(file) : `All changes in ${a.short_path}`, agent: a.key });
 }
 
 function Stat(p: { added: number; removed: number }) {

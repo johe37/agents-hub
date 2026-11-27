@@ -265,6 +265,7 @@ export type Action =
   | { type: "approve"; agent: string }
   | { type: "deny"; agent: string }
   | { type: "reply"; agent: string; text: string }
+  | { type: "type"; agent: string; text: string }
   | { type: "interrupt"; agent: string }
   | { type: "mark_done"; agent: string }
   | { type: "resume"; agent: string }

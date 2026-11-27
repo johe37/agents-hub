@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, diffId, diffLabel, diffTabs, isDiff, state, store, toast } from "../store";
+import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { DiffPane } from "./ChangesReview";
@@ -19,9 +19,6 @@ function fileCode(code: string) {
   const c = code === "??" ? "?" : (code.replace(".", "").trim()[0] ?? "M");
   return { letter: c === "?" ? "U" : c, tone: FILE_TONE[c] ?? "text-fg-2", title: code === "??" ? "Untracked" : code };
 }
-
-/** Chat or terminal for each agent window you switched; the others follow agentView. */
-const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
 
 function SidePanel(p: { ws: Workspace }) {
   const g = () => p.ws.git;
@@ -648,8 +645,6 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       e.preventDefault();
                       go({ view: "workspace", name: p.name, window: lastWindow(p.name) ?? null });
                     }}
-                    tabIndex={-1}
-                    ref={(el) => queueMicrotask(() => el.focus())}
                   >
                     <DiffPane target={d} onClose={() => closeDiff(p.name, diffId(d))} />
                   </div>

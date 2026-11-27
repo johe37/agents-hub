@@ -542,7 +542,11 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   danger?: boolean;
   run: () => void;
 } | null>(null);
-export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit };
+/** Chat or terminal for each agent window you switched; the others follow agentView. */
+export const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
+
+/** agent is the Claude to ask about the diff, when it came from one; else the workspace's Claude. */
+export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit; agent?: string };
 /** A diff for an agent without a workspace: it opens over everything. */
 export const [diffView, setDiffView] = createSignal<DiffTarget | null>(null);
 
