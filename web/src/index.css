@@ -227,3 +227,18 @@ html.dragging-lines * {
   cursor: ns-resize !important;
   user-select: none !important;
 }
+
+/* The span an agent is in right now breathes at its right edge. */
+.lane-live::after {
+  content: "";
+  position: absolute;
+  inset: -2px -2px -2px auto;
+  width: 4px;
+  border-radius: 2px;
+  background: inherit;
+  animation: lane-breathe 1.6s ease-in-out infinite;
+}
+@keyframes lane-breathe {
+  0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: 1; box-shadow: 0 0 6px 1px color-mix(in oklab, var(--fg) 25%, transparent); }
+}

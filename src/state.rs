@@ -56,6 +56,7 @@ impl Session {
         record["event"]["hook_event_name"] = "Stop".into();
         let tmp = self.path.with_extension("done");
         std::fs::write(&tmp, record.to_string())?;
+        crate::history::append(&self.session_id, now(), Status::Idle);
         // shortcut: a hook event landing between the read and the rename is lost; the agent's next event fixes the status.
         std::fs::rename(&tmp, &self.path)
     }
@@ -69,8 +70,8 @@ fn opt(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(String::from)
 }
 
-fn read_event(path: PathBuf) -> Option<Session> {
-    let record: Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+/// The status a stored hook record stands for.
+pub fn status_of(record: &Value) -> Option<Status> {
     let event = &record["event"];
     let name = event["hook_event_name"].as_str()?;
     let mut status = match name {
@@ -90,6 +91,14 @@ fn read_event(path: PathBuf) -> Option<Session> {
     if turn_ended && record["polling"] == true {
         status = Status::Polling;
     }
+    Some(status)
+}
+
+fn read_event(path: PathBuf) -> Option<Session> {
+    let record: Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    let event = &record["event"];
+    let name = event["hook_event_name"].as_str()?;
+    let status = status_of(&record)?;
     let waiting = status == Status::Waiting;
     Some(Session {
         session_id: opt(&event["session_id"])?,

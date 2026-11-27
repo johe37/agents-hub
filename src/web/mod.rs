@@ -149,6 +149,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
             .route("/api/dirs", get(dirs))
             .route("/api/conversation", get(conversation))
             .route("/api/diff", get(diff))
+            .route("/api/timeline", get(timeline))
             .route("/api/mr/changes", get(review::mr_changes))
             .route("/api/mr/drafts", get(review::mr_drafts))
             .route("/api/mr/job", get(review::mr_job))
@@ -375,6 +376,34 @@ async fn diff(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, Strin
     }
     let text = tokio::task::spawn_blocking(move || model::diff(&path, file.as_deref(), commit.as_deref())).await.unwrap_or_default();
     Json(json!({"diff": text})).into_response()
+}
+
+async fn timeline(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, String>>) -> Json<Value> {
+    let hours = q.get("hours").and_then(|h| h.parse::<u64>().ok()).unwrap_or(8).clamp(1, 168);
+    let until = crate::state::now();
+    let from = until - hours * 3600;
+    let logs = tokio::task::spawn_blocking(move || crate::history::load(from)).await.unwrap_or_default();
+    let snap = hub.snapshot();
+    let mut lanes: Vec<Value> = logs
+        .iter()
+        .filter_map(|(id, changes)| {
+            let agent = snap.agents.iter().find(|a| a.session_id() == Some(id));
+            let alive = agent.is_some_and(|a| a.status.alive());
+            let spans = crate::history::spans(changes, from, until, alive);
+            let first = spans.first()?.0;
+            Some(json!({
+                "id": id,
+                "agent": agent.map(|a| a.key.clone()),
+                "title": agent.map_or_else(|| "Claude".to_string(), |a| a.title()),
+                "name": agent.map(|a| a.name()),
+                "status": agent.map(|a| model::status(a.status)),
+                "first": first,
+                "spans": spans.iter().map(|(s, e, st)| json!([s, e, model::status(*st)])).collect::<Vec<_>>(),
+            }))
+        })
+        .collect();
+    lanes.sort_by_key(|l| l["first"].as_u64());
+    Json(json!({"from": from, "until": until, "lanes": lanes}))
 }
 
 #[cfg(test)]

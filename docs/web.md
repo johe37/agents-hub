@@ -35,6 +35,11 @@ Safari cut them to a rounded square.
   command or the diff of the edit, so you can approve or deny it there. Text you send instead
   of an answer declines the tool and goes to Claude as your next prompt. Below the inbox: the
   agents that work now, and the ones that finished a turn.
+- **Activity.** One lane per agent over the last 1, 4, 8 or 24 hours: when it worked and when
+  it waited for you. The graph above the lanes shows how many agents worked and waited at once.
+  Hover a span for its times; click a lane to open the agent. The hook logs each status change to
+  `~/.local/state/jugglr/history/`, so lanes start after you install this version. Logs that
+  do not change for a week are removed.
 - **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the agents, the merge request and the

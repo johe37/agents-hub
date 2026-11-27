@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 use crate::config::{home, state_dir};
+use crate::state::status_of;
 
 const HOOK_EVENTS: [&str; 7] =
     ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SessionEnd"];
@@ -39,16 +40,19 @@ pub fn report() {
         "tmux_pane": std::env::var("TMUX_PANE").unwrap_or_default(),
         "event": event,
     });
+    let target = dir.join(format!("{id}.json"));
+    let previous = std::fs::read(&target).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     // A permission prompt names no tool; the PreToolUse event before it holds what Claude asks to run.
     if event["hook_event_name"] == "Notification" {
-        let previous = std::fs::read(dir.join(format!("{id}.json"))).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-        if let Some(prev) = previous.filter(|p| p["event"]["hook_event_name"] == "PreToolUse") {
+        if let Some(prev) = previous.as_ref().filter(|p| p["event"]["hook_event_name"] == "PreToolUse") {
             record["pending_tool"] = json!({"name": prev["event"]["tool_name"], "input": prev["event"]["tool_input"]});
         }
     }
     let _ = std::fs::create_dir_all(&dir);
-    let target = dir.join(format!("{id}.json"));
-    record["polling"] = next_polling(stored_polling(&target), &event).into();
+    record["polling"] = next_polling(previous.as_ref().is_some_and(|p| p["polling"] == true), &event).into();
+    if let Some(status) = status_of(&record).filter(|s| previous.as_ref().and_then(status_of) != Some(*s)) {
+        crate::history::append(id, now, status);
+    }
     // Write and rename: the rename bumps the directory mtime, which the hub watches.
     let tmp = dir.join(format!(".{id}.{}", std::process::id()));
     if std::fs::write(&tmp, record.to_string()).is_ok() {
@@ -173,13 +177,6 @@ pub fn next_polling(previous: bool, event: &Value) -> bool {
         }
         _ => previous,
     }
-}
-
-/// The polling flag of the session's stored record, false when there is none.
-fn stored_polling(path: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else { return false };
-    let Ok(record) = serde_json::from_slice::<Value>(&bytes) else { return false };
-    record["polling"] == true
 }
 
 #[cfg(test)]

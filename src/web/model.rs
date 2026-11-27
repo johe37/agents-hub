@@ -11,15 +11,7 @@ use crate::snapshot::{Agent, Snapshot, Workspace};
 use crate::state::Status;
 
 pub fn status(s: Status) -> &'static str {
-    match s {
-        Status::Waiting => "waiting",
-        Status::Working => "working",
-        Status::Polling => "polling",
-        Status::Idle => "idle",
-        Status::Unknown => "unknown",
-        Status::Ended => "ended",
-        Status::Stale => "stale",
-    }
+    crate::history::name(s)
 }
 
 fn git(g: &GitStatus) -> Value {

@@ -3,6 +3,7 @@ mod closed;
 mod config;
 mod fuzzy;
 mod git;
+mod history;
 mod gitlab;
 mod hooks;
 mod input;

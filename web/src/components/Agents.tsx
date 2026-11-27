@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import type { Agent } from "../api";
 import { act, agentRoute, ask, go, isBusy, loaded, newChat, setComposer, state, store } from "../store";
 import { STATUS, alive, cls, fuzzyWords, modelName, money } from "../util";
+import { Activity } from "./Activity";
 import { AgentCard } from "./AgentCard";
 import { Conversation } from "./Conversation";
 import { Bot, Branch, Chat, Check, Done, Play, Search, Sparkles, Trash } from "./icons";
@@ -142,6 +143,8 @@ export function Agents() {
               </div>
             </Show>
           </section>
+
+          <Activity />
 
           <For each={GROUPS}>
             {(g) => {
