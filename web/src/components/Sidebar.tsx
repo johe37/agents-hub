@@ -140,14 +140,14 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   onCleanup(() => clearTimeout(juggleTimer));
   return (
     <div class="flex h-full w-full flex-col">
-      <div class="flex items-center gap-2.5 px-4 pb-2 pt-4">
-        <button type="button" onClick={startJuggle} class="flex items-center gap-2.5 rounded-lg" aria-label="Juggle">
-          <img src={juggle() ? `/logo-juggling.webp?${juggle()}` : "/logo.png"} alt="" class="size-10" />
-          <span class="text-lg font-semibold tracking-[-0.01em] text-fg">jugglr</span>
+      <div class="flex items-center gap-1 px-4 pb-2 pt-4">
+        <button type="button" onClick={startJuggle} class="flex min-w-0 items-center gap-2.5 rounded-lg" aria-label="Juggle">
+          <img src={juggle() ? `/logo-juggling.webp?${juggle()}` : "/logo.png"} alt="" class="size-10 shrink-0" />
+          <span class="truncate text-lg font-semibold tracking-[-0.01em] text-fg">jugglr</span>
         </button>
         <span
           class={cls(
-            "ml-auto flex h-5 items-center gap-1.5 rounded-full text-xs font-medium",
+            "ml-auto flex h-5 shrink-0 items-center gap-1.5 rounded-full text-xs font-medium",
             connection() === "live" ? "px-1" : "px-2",
             connection() === "connecting" && "bg-waiting-soft text-waiting",
             connection() === "offline" && "bg-danger-soft text-danger",
