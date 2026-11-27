@@ -226,7 +226,8 @@ export interface State {
   workspaces: Workspace[];
   agents: Agent[];
   usage: { five_hour: UsageWindow | null; seven_day: UsageWindow | null } | null;
-  claude_installed: boolean;
+  /** The agent new windows start: Claude Code or another CLI, from config.toml. */
+  agent: { command: string; name: string; label: string; claude: boolean; installed: boolean; known: string[] };
   gitlab: {
     enabled: boolean;
     loading: boolean;
@@ -270,6 +271,7 @@ export type Action =
   | { type: "close_agent"; agent: string }
   | { type: "adopt"; agent: string }
   | { type: "new_window"; workspace: string; kind: "claude" | "shell" | "nvim" }
+  | { type: "set_agent"; command: string }
   | { type: "new_agent"; path: string; prompt?: string }
   | { type: "open_workspace"; path: string; kind?: "claude" | "shell" | "nvim" }
   | { type: "close_workspace"; workspace: string }

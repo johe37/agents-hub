@@ -6,7 +6,8 @@ import {
   configTheme,
   enableNotifications,
   go,
-  hasClaude,
+  agentLabel,
+  hasAgent,
   newChat,
   paletteMode,
   paletteOpen,
@@ -127,10 +128,10 @@ export function Palette() {
     if (paletteMode() === "theme") return themeItems();
     const ws = here();
     const commands: Item[] = [
-      ...(hasClaude()
+      ...(hasAgent()
         ? [
-            { id: "new-agent", group: "Actions", title: "New agent…", hint: "Start Claude with a task", icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
-            { id: "new-chat", group: "Actions", title: "New chat…", hint: "Claude outside any repo", icon: <Chat size={15} />, keywords: "claude question ask", run: () => (close(), newChat()) },
+            { id: "new-agent", group: "Actions", title: "New agent…", hint: `Start ${agentLabel()} with a task`, icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
+            { id: "new-chat", group: "Actions", title: "New chat…", hint: `${agentLabel()} outside any repo`, icon: <Chat size={15} />, keywords: "claude question ask", run: () => (close(), newChat()) },
           ]
         : []),
       ...(ws

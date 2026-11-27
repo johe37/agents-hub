@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "../api";
-import { act, agentRoute, ask, go, hasClaude, isBusy, loaded, newChat, setComposer, state, store } from "../store";
+import { act, agentRoute, ask, go, hasAgent, isBusy, loaded, newChat, setComposer, state, store } from "../store";
 import { STATUS, alive, cls, fuzzyWords, modelName, money } from "../util";
 import { Activity } from "./Activity";
 import { AgentCard } from "./AgentCard";
@@ -107,7 +107,7 @@ export function Agents() {
               data-filter
             />
           </label>
-          <Show when={hasClaude()}>
+          <Show when={hasAgent()}>
             <Button variant="secondary" onClick={newChat} kbd="⇧ c">
               <Chat size={15} /> New chat
             </Button>
@@ -119,7 +119,7 @@ export function Agents() {
       </header>
 
       <Show when={loaded()} fallback={<div class="flex flex-col gap-3">{[0, 1].map(() => <div class="skeleton h-44" />)}</div>}>
-        <Show when={state.agents.length} fallback={<Empty icon={<Bot size={22} />} title="Nothing to juggle yet">{hasClaude() ? "Start one with N or from a workspace." : "Install Claude Code to start agents. Workspaces and terminals work without it."}</Empty>}>
+        <Show when={state.agents.length} fallback={<Empty icon={<Bot size={22} />} title="Nothing to juggle yet">{hasAgent() ? "Start one with N or from a workspace." : `Install ${state.agent.name}, or choose another agent in Settings. Workspaces and terminals work without one.`}</Empty>}>
           <section class="mb-8">
             <GroupTitle title="Needs you" count={waiting().length} />
             <Show

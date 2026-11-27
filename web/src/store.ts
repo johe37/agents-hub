@@ -10,7 +10,7 @@ const EMPTY: State = {
   workspaces: [],
   agents: [],
   usage: null,
-  claude_installed: true,
+  agent: { command: "claude", name: "claude", label: "Claude", claude: true, installed: true, known: [] },
   gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [], todos: [] },
   closed: [],
   chat_dir: "~/chats",
@@ -466,10 +466,12 @@ export const [prefix, setPrefix] = createSignal<string | null>(null);
 type Composer = { path: string | null; prompt?: string; chat?: boolean };
 const [composer, openComposer] = createSignal<Composer | null>(null);
 export { composer };
-export const NO_CLAUDE = "Claude Code is not installed: there is no claude in PATH";
-export const hasClaude = () => state.claude_installed;
+export const hasAgent = () => state.agent.installed;
+/** Claude, Codex, …: for buttons and hints. */
+export const agentLabel = () => state.agent.label;
+export const noAgent = () => `${state.agent.name} is not installed: there is no ${state.agent.name} in PATH`;
 export function setComposer(c: Composer | null) {
-  if (c && !hasClaude()) return void toast(NO_CLAUDE, true);
+  if (c && !hasAgent()) return void toast(noAgent(), true);
   openComposer(c);
 }
 export const newChat = () => setComposer({ path: state.chat_dir, chat: true });

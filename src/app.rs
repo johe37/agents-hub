@@ -79,6 +79,8 @@ pub enum Modal {
     /// `done` is shown when `then` succeeds.
     Confirm { question: String, then: Box<dyn Fn() -> Res>, yes: bool, done: Option<String> },
     Rename { from: String, input: Input },
+    /// The command that starts new agents.
+    Agent(Input),
     Picker(Picker),
 }
 
@@ -183,10 +185,17 @@ pub const FLASH: Duration = Duration::from_millis(1500);
 /// so moving through the list must not start one for every row passed.
 const CLAUDE_DWELL: Duration = Duration::from_millis(700);
 
-const WINDOW_KINDS: [(&str, Option<&str>); 3] = [("claude", Some("claude")), ("shell", None), ("nvim", Some("nvim"))];
+/// The window kind `claude` stands for the agent set in the config, Claude Code or another.
+pub fn window_command(kind: &str) -> Option<String> {
+    match kind {
+        "claude" => Some(crate::agent::command()),
+        "nvim" => Some("nvim".into()),
+        _ => None,
+    }
+}
 
-pub fn window_command(kind: &str) -> Option<&'static str> {
-    WINDOW_KINDS.iter().find(|(k, _)| *k == kind).and_then(|(_, c)| *c)
+pub fn window_name(kind: &str) -> String {
+    if kind == "claude" { crate::agent::name() } else { kind.to_string() }
 }
 
 impl App {
@@ -439,7 +448,7 @@ impl App {
         let mut sections: Vec<(usize, Vec<usize>, Vec<usize>)> = vec![];
         for (wi, ws) in self.snap.workspaces.iter().enumerate() {
             let agents = self.agents_of(ws);
-            let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_claude()).collect();
+            let terminals: Vec<usize> = (0..ws.windows.len()).filter(|&i| !ws.windows[i].is_agent()).collect();
             let branch = ws.git.as_ref().and_then(|g| g.branch.as_deref());
             if self.matches(&[Some(&ws.name), Some(&ws.path), branch]) {
                 sections.push((wi, agents, terminals));
@@ -703,9 +712,23 @@ impl App {
     }
 
     pub fn current_terminal(&self) -> Option<(&Workspace, &crate::snapshot::Window)> {
-        let Some(Row::Terminal(wi, ti)) = self.current() else { return None };
+        let (wi, ti) = self.current_screen()?;
         let ws = self.snap.workspaces.get(wi)?;
         Some((ws, ws.windows.get(ti)?))
+    }
+
+    /// The (workspace, window) whose screen the side panel shows: a terminal, or an agent other than Claude.
+    pub fn current_screen(&self) -> Option<(usize, usize)> {
+        match self.current()? {
+            Row::Terminal(wi, ti) => Some((wi, ti)),
+            Row::Agent(i) => {
+                let a = self.snap.agents.get(i)?;
+                let wi = self.snap.workspaces.iter().position(|w| Some(&w.name) == a.workspace.as_ref())?;
+                let ti = self.snap.workspaces[wi].windows.iter().position(|w| Some(&w.window_id) == a.window_id.as_ref())?;
+                (!self.snap.workspaces[wi].windows[ti].is_claude()).then_some((wi, ti))
+            }
+            _ => None,
+        }
     }
 
     /// Approved by you and no workspace open: done, so it goes in the APPROVED group.
@@ -783,7 +806,7 @@ impl App {
         let mut v = vec![];
         if !side_visible && self.current_review().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
-            v.push(("c", "review with Claude", Action::NewWindow("claude")));
+            v.push(("c", "review with agent", Action::NewWindow("claude")));
         }
         if !side_visible && matches!(self.current(), Some(Row::Header(title, _)) if gitlab_section(title).is_some()) {
             v.push(("^R", "refresh", Action::Refresh));
@@ -793,7 +816,7 @@ impl App {
         }
         if !side_visible && self.current_issue().is_some() {
             v.push(("↵", "open in GitLab", Action::Open));
-            v.push(("c", "work on it with Claude", Action::NewWindow("claude")));
+            v.push(("c", "work on it with agent", Action::NewWindow("claude")));
         }
         if !side_visible && self.current_thread().is_some() {
             v.push(("r", "reply", Action::Reply));
@@ -946,7 +969,7 @@ impl App {
             Some(Row::Workspace(i)) => tmux::switch_client(&self.snap.workspaces[i].name),
             // A review is tried out in a shell; Claude has a row of its own.
             Some(Row::Review(i)) => match self.review_workspace(i) {
-                Some(ws) => match ws.windows.iter().find(|w| !w.is_claude() && is_shell(&w.command)) {
+                Some(ws) => match ws.windows.iter().find(|w| !w.is_agent() && is_shell(&w.command)) {
                     Some(w) => tmux::jump_to_window(&ws.name, &w.window_id),
                     None => tmux::new_window(&ws.name, &ws.path, "shell", None, tmux::spare_for(&ws.path, None).as_deref()),
                 },
@@ -1000,25 +1023,26 @@ impl App {
             return;
         };
         let command = window_command(kind);
-        let spare = tmux::spare_for(&ws.path, command);
-        let r = tmux::new_window(&ws.name, &ws.path, kind, command, spare.as_deref());
+        let spare = tmux::spare_for(&ws.path, command.as_deref());
+        let r = tmux::new_window(&ws.name, &ws.path, &window_name(kind), command.as_deref(), spare.as_deref());
         self.finish(r);
     }
 
-    /// Open Claude in the chats workspace, for questions that belong to no repo.
+    /// Open the agent in the chats workspace, for questions that belong to no repo.
     fn new_chat(&mut self) {
         let path = self.cfg.chat_dir.clone();
         if let Err(e) = std::fs::create_dir_all(&path) {
             return self.notify(format!("Could not create {}: {e}", shorten(&path)), true);
         }
-        let spare = tmux::spare_for(&path, Some("claude"));
+        let (command, window) = (crate::agent::command(), crate::agent::name());
+        let spare = tmux::spare_for(&path, Some(&command));
         let real = tmux::canonical(&path);
         let r = match self.snap.workspaces.iter().find(|w| tmux::canonical(&w.path) == real) {
-            Some(ws) => tmux::new_window(&ws.name, &path, "claude", Some("claude"), spare.as_deref()),
+            Some(ws) => tmux::new_window(&ws.name, &path, &window, Some(&command), spare.as_deref()),
             None => {
                 let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
                 let name = tmux::unique_session_name(&basename(&path), &taken);
-                tmux::create_workspace(&name, &path, "claude", Some("claude"), spare.as_deref())
+                tmux::create_workspace(&name, &path, &window, Some(&command), spare.as_deref())
             }
         };
         self.finish(r);
@@ -1316,10 +1340,10 @@ impl App {
             return self.finish(r);
         }
         let command = window_command(kind);
-        let spare = tmux::spare_for(&path, command);
+        let spare = tmux::spare_for(&path, command.as_deref());
         let taken: Vec<String> = self.snap.workspaces.iter().map(|w| w.name.clone()).collect();
         let name = tmux::unique_session_name(&basename(&path), &taken);
-        let r = tmux::create_workspace(&name, &path, kind, command, spare.as_deref());
+        let r = tmux::create_workspace(&name, &path, &window_name(kind), command.as_deref(), spare.as_deref());
         self.finish(r);
     }
 
@@ -1426,6 +1450,7 @@ impl App {
             KeyCode::Char('e') => self.act(Action::NewWindow("nvim")),
             KeyCode::Char('x') => self.act(Action::Close),
             KeyCode::Char('R') => self.act(Action::Rename),
+            KeyCode::Char('A') => self.modal = Some(Modal::Agent(Input::new(&crate::agent::command()))),
             KeyCode::Char('a') => self.act(Action::Adopt),
             KeyCode::Char('m') => self.act(Action::MarkDone),
             KeyCode::Char('w') => self.act(Action::NextWaiting),
@@ -1489,6 +1514,20 @@ impl App {
                         }
                         let r = tmux::rename_session(&from, &new);
                         self.finish(r);
+                    }
+                }
+                _ => {
+                    input.handle(k);
+                }
+            },
+            Modal::Agent(input) => match k.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Enter => {
+                    let command = input.text.trim().to_string();
+                    self.modal = None;
+                    match crate::agent::set(&command) {
+                        Ok(()) => self.notify(format!("New agents start with {command}"), false),
+                        Err(e) => self.notify(e, true),
                     }
                 }
                 _ => {

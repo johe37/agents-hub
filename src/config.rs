@@ -22,7 +22,7 @@ pub fn config_dir() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("jugglr")
 }
 
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     config_dir().join("config.toml")
 }
 

@@ -324,7 +324,7 @@ fn row_line(app: &App, i: usize, width: usize) -> Line<'static> {
                 l.push(Span::raw("  "));
                 l.extend(git_spans(ws.git.as_ref()));
             }
-            let terms = ws.windows.iter().filter(|w| !w.is_claude()).count();
+            let terms = ws.windows.iter().filter(|w| !w.is_agent()).count();
             let mut r = vec![];
             if !agents.is_empty() {
                 r.push(s(format!("◆{}", agents.len()), fg(colors().dim)));
@@ -937,7 +937,7 @@ fn review_side(app: &App, i: usize, t: u128) -> Side {
     ];
     let buttons = match ws {
         Some(_) => vec![("↵", "shell in the checkout", colors().accent, Action::Open), ("x", "close", colors().accent, Action::Close)],
-        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with Claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "review with agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
     let (tabs, body, body_links) = mr_tabs(app, m, t);
     Side {
@@ -966,8 +966,8 @@ fn mine_side(app: &App, m: &gitlab::Mr, t: u128) -> Side {
         },
     ];
     let buttons = match ws {
-        Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
-        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "check out with Claude", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        Some(_) => vec![("↵", "go to workspace", colors().accent, Action::Open), ("c", "agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
+        None => vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "check out with agent", colors().accent, Action::NewWindow("claude")), ("t", "shell", colors().accent, Action::NewWindow("shell"))],
     };
     let (tabs, body, body_links) = mr_tabs(app, m, t);
     Side {
@@ -1029,7 +1029,7 @@ fn issue_side(is: &gitlab::Issue) -> Side {
         meta: Line::from(s(format!(" {} ", is.project), fg(colors().dim))),
         color: colors().info,
         banner,
-        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "work on it with Claude", colors().accent, Action::NewWindow("claude"))],
+        buttons: vec![("↵", "open in GitLab", colors().accent, Action::Open), ("c", "work on it with agent", colors().accent, Action::NewWindow("claude"))],
         tabs: vec![("Description", 0)],
         body,
         link: Some((0, is.url.clone())),
@@ -1039,6 +1039,9 @@ fn issue_side(is: &gitlab::Issue) -> Side {
 
 fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let t = tick(app);
+    if let Some((wi, ti)) = app.current_screen() {
+        return draw_terminal(f, app, area, wi, ti);
+    }
     let (wi, mut side) = match app.current() {
         Some(Row::Terminal(wi, ti)) => return draw_terminal(f, app, area, wi, ti),
         Some(Row::Thread(..)) => return draw_thread(f, app, area),
@@ -1079,14 +1082,14 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             let block = panel(Line::from(s(" jugglr ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
             f.render_widget(block, area);
-            let hint = if app.snap.claude_installed { "Press n to open one, then c to start Claude in it." } else { "Press n to open one." };
+            let hint = if app.snap.agent_installed { format!("Press n to open one, then c to start {} in it.", crate::agent::label()) } else { "Press n to open one.".into() };
             let text = vec![Line::from(s("No workspaces yet.", fg(colors().bright).bold())), Line::from(s(hint, fg(colors().muted)))];
             f.render_widget(Paragraph::new(text), inner);
             app.hits.detail = Rect::default();
             return;
         }
     };
-    side.buttons.retain(|b| app.snap.claude_installed || b.3 != Action::NewWindow("claude"));
+    side.buttons.retain(|b| app.snap.agent_installed || b.3 != Action::NewWindow("claude"));
     let block = panel(Line::from(s(format!(" {} ", side.title), fg(colors().bright).bold())), false).title_bottom(side.meta);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
@@ -1181,7 +1184,7 @@ fn draw_windows(f: &mut Frame, app: &mut App, area: Rect, wi: usize, own: Option
         if y >= area.bottom() {
             break;
         }
-        let kind = if w.is_claude() { s("◆ ", fg(colors().info)) } else { s("❯ ", fg(colors().muted)) };
+        let kind = if w.is_agent() { s("◆ ", fg(colors().info)) } else { s("❯ ", fg(colors().muted)) };
         let mut spans = vec![s(format!("{} ", w.index), fg(colors().dim)), kind, s(w.name.clone(), fg(colors().info).underlined())];
         if w.command != w.name && w.command != "claude" {
             spans.push(s(format!("  {}", w.command), fg(colors().dim)));
@@ -1534,7 +1537,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     let right = area.right().saturating_sub(uw);
     let mut x = area.x + 1;
     let actions = app.actions(side_visible(f.area()));
-    for (key, label, action) in actions.into_iter().filter(|a| app.snap.claude_installed || a.2 != Action::NewWindow("claude")) {
+    for (key, label, action) in actions.into_iter().filter(|a| app.snap.agent_installed || a.2 != Action::NewWindow("claude")) {
         let key_w = key.chars().count() as u16 + 2;
         let w = key_w + label.chars().count() as u16 + 3;
         if x + w > right {
@@ -1604,8 +1607,9 @@ const HELP: &[(&str, &str)] = &[
     ("", "Workspaces and agents"),
     ("Enter", "go to the agent, terminal or workspace"),
     ("n", "open a workspace (fuzzy search or type a path)"),
-    ("c / t / e", "new Claude / terminal / nvim in the workspace"),
-    ("C", "new chat: Claude in the chats workspace (chat_dir), outside any repo"),
+    ("c / t / e", "new agent / terminal / nvim in the workspace"),
+    ("C", "new chat: the agent in the chats workspace (chat_dir), outside any repo"),
+    ("A", "choose the agent: Claude Code (default), codex, gemini, aider, …"),
     ("x", "close the agent, terminal or workspace"),
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),
@@ -1634,7 +1638,7 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "Reviews (merge requests where you are a reviewer)"),
     ("Enter", "open the merge request in GitLab (over SSH: Ctrl+click its link in the panel)"),
-    ("c", "check it out in its own worktree and open Claude with a review prompt (not sent)"),
+    ("c", "check it out in its own worktree and open the agent with a review prompt (not sent)"),
     ("x", "on a review workspace: close it and delete its checkout"),
     ("Ctrl+R", "refresh the workspace's merge request, pipeline and threads now"),
     ("", ""),
@@ -1646,7 +1650,7 @@ const HELP: &[(&str, &str)] = &[
     ("", ""),
     ("", "Issues (open issues assigned to you)"),
     ("Enter", "open the issue in GitLab"),
-    ("c", "open Claude in the repo's workspace with the issue in its prompt (not sent)"),
+    ("c", "open the agent in the repo's workspace with the issue in its prompt (not sent)"),
     ("", ""),
     ("", "From any terminal"),
     ("HUBKEY", "back to the hub, or click ◀ jugglr in the top bar"),
@@ -1702,6 +1706,21 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let field = Rect { y: inner.y + 1, height: 1, ..inner };
             f.render_widget(Paragraph::new(s(input.text.clone(), fg(colors().bright))).style(Style::new().bg(colors().input)), field);
             set_cursor(f, input, field.x, field.y);
+        }
+        Modal::Agent(input) => {
+            let rect = centered(area, 72, 8);
+            f.render_widget(Clear, rect);
+            let block = modal_block("Agent command");
+            let inner = block.inner(rect).inner(Margin::new(1, 0));
+            f.render_widget(block, rect);
+            let field = Rect { y: inner.y + 1, height: 1, ..inner };
+            f.render_widget(Paragraph::new(s(input.text.clone(), fg(colors().bright))).style(Style::new().bg(colors().input)), field);
+            set_cursor(f, input, field.x, field.y);
+            let hint = vec![
+                Line::from(s(format!("For example {}. Enter saves it in config.toml.", crate::agent::KNOWN.join(", ")), fg(colors().muted))),
+                Line::from(s("Only Claude Code reports status through hooks; others show as working while their screen changes.", fg(colors().muted))),
+            ];
+            f.render_widget(Paragraph::new(hint).wrap(Wrap { trim: false }), Rect { y: inner.y + 3, height: inner.height.saturating_sub(3), ..inner });
         }
         Modal::Picker(p) => draw_picker(f, p, area, &mut app.hits.picker_list),
     }

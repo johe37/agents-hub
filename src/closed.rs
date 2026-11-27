@@ -118,7 +118,7 @@ fn command(w: &ClosedWindow) -> Option<String> {
     match w.kind.as_str() {
         "agent" => Some(match &w.session_id {
             Some(id) => format!("claude --resume {id}"),
-            None => "claude".into(),
+            None => crate::agent::command(),
         }),
         "editor" => w.command.clone().or_else(|| Some("nvim".into())),
         _ => None,

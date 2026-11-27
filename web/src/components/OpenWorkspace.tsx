@@ -1,19 +1,19 @@
 import { For, onCleanup, onMount, Show } from "solid-js";
-import { act, go, hasClaude, isBusy, setComposer, state } from "../store";
+import { act, agentLabel, go, hasAgent, isBusy, setComposer, state } from "../store";
 import { basename } from "../util";
 import { Bot, Folder, Sparkles, Terminal } from "./icons";
 import { Spinner } from "./ui";
 
 type Kind = "claude" | "shell";
 
-const ALL_CHOICES: { kind: Kind; title: string; body: string; key: string; icon: () => any }[] = [
-  { kind: "claude", title: "Claude", body: "Claude Code in this directory", key: "c", icon: () => <Bot size={20} /> },
-  { kind: "shell", title: "Terminal", body: "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
+const ALL_CHOICES: { kind: Kind; title: () => string; body: () => string; key: string; icon: () => any }[] = [
+  { kind: "claude", title: agentLabel, body: () => `${state.agent.claude ? "Claude Code" : agentLabel()} in this directory`, key: "c", icon: () => <Bot size={20} /> },
+  { kind: "shell", title: () => "Terminal", body: () => "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
 ];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
 export function OpenWorkspace(p: { path: string }) {
-  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "claude" || hasClaude());
+  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "claude" || hasAgent());
   const short = () => (state.home && p.path.startsWith(state.home) ? "~" + p.path.slice(state.home.length) : p.path);
   const busy = (k: Kind) => isBusy(`open:${p.path}:${k}`);
   const start = async (kind: Kind) => {
@@ -52,16 +52,16 @@ export function OpenWorkspace(p: { path: string }) {
               onClick={() => start(c.kind)}
             >
               <span class="text-fg-2 group-hover:text-accent">{busy(c.kind) ? <Spinner size={20} /> : c.icon()}</span>
-              <span class="font-medium text-fg">{c.title}</span>
-              <span class="text-sm text-fg-3">{c.body}</span>
+              <span class="font-medium text-fg">{c.title()}</span>
+              <span class="text-sm text-fg-3">{c.body()}</span>
               <span class="kbd absolute right-3 top-3">{c.key}</span>
             </button>
           )}
         </For>
       </div>
-      <Show when={hasClaude()}>
+      <Show when={hasAgent()}>
         <button class="mt-4 inline-flex items-center gap-1.5 self-start text-base text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
-          <Sparkles size={14} /> Or start Claude with a task <span class="kbd">n</span>
+          <Sparkles size={14} /> Or start {agentLabel()} with a task <span class="kbd">n</span>
         </button>
       </Show>
     </div>

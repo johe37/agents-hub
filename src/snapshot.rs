@@ -28,20 +28,28 @@ pub struct Window {
     pub command: String,
     pub pid: u32,
     pub claude: Option<Session>,
+    /// Unix time of the last output, for the status of agents without hooks.
+    pub activity: u64,
     pub width: u16,
     pub height: u16,
     pub screen: Option<Vec<Line<'static>>>,
 }
 
 impl Window {
-    pub fn is_claude(&self) -> bool {
+    /// Claude, or the agent set in the config, found by its window name as its process may be `node`.
+    pub fn is_agent(&self) -> bool {
         // An attach window shows a background agent that already has its own row.
-        (self.claude.is_some() || self.command == "claude") && !self.name.starts_with(ATTACH_PREFIX)
+        (self.claude.is_some() || self.command == "claude" || self.name == crate::agent::name()) && !self.name.starts_with(ATTACH_PREFIX)
+    }
+
+    /// Claude Code has a transcript to show; other agents show their screen, like a terminal.
+    pub fn is_claude(&self) -> bool {
+        self.claude.is_some() || self.command == "claude" || self.name == "claude"
     }
 
     /// agent, editor, shell or process: what the window is for, from what runs in it.
     pub fn kind(&self) -> &'static str {
-        if self.is_claude() {
+        if self.is_agent() {
             return "agent";
         }
         match self.command.as_str() {
@@ -102,8 +110,10 @@ impl Agent {
             }
         }
         match &self.window_name {
-            Some(n) if n != "claude" => n.clone(),
-            _ => "Claude".into(),
+            Some(n) if n == "claude" => "Claude".into(),
+            Some(n) if *n == crate::agent::name() => crate::agent::label(),
+            Some(n) => n.clone(),
+            None => "Claude".into(),
         }
     }
 
@@ -123,6 +133,15 @@ impl Agent {
         self.status == Status::Waiting
             && self.session.as_ref().is_some_and(|s| s.notification_type.as_deref() == Some("permission_prompt"))
     }
+}
+
+/// Agents without hooks work while their screen changes. Claude windows without hooks stay unknown:
+/// its spinner would read as working, and a missing hook is worth noticing.
+fn output_status(w: &Window) -> Status {
+    if w.command == "claude" || w.activity == 0 {
+        return Status::Unknown;
+    }
+    if crate::state::now().saturating_sub(w.activity) <= 2 { Status::Working } else { Status::Idle }
 }
 
 pub fn basename(path: &str) -> String {
@@ -154,7 +173,8 @@ pub struct Snapshot {
     pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub inbox_busy: Vec<crate::config::Section>,
     pub usage: Option<crate::usage::Usage>,
-    pub claude_installed: bool,
+    /// The configured agent is in PATH.
+    pub agent_installed: bool,
     /// The last RefreshFor number this snapshot answers: it shows everything done before that request.
     pub served: u64,
 }
@@ -340,7 +360,7 @@ impl Collector {
                     std::thread::spawn(move || {
                         let name = format!("review-{}-{}", mr.repo(), mr.iid);
                         let r = crate::gitlab::ensure_clone(&dirs, &mr.project, &mr.url)
-                            .and_then(|repo| crate::gitlab::checkout(&repo, &mr)).and_then(|dir| tmux::open_checkout(&dir, &name, kind, crate::app::window_command(kind), Some(&mr.review_prompt())));
+                            .and_then(|repo| crate::gitlab::checkout(&repo, &mr)).and_then(|dir| tmux::open_checkout(&dir, &name, &crate::app::window_name(kind), crate::app::window_command(kind).as_deref(), Some(&mr.review_prompt())));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Review of !{} failed: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }
@@ -348,7 +368,7 @@ impl Collector {
                     let (notices, dirs) = (Arc::clone(&self.notices), Arc::clone(&self.dirs));
                     std::thread::spawn(move || {
                         let r = crate::gitlab::ensure_clone(&dirs, &mr.project, &mr.url)
-                            .and_then(|repo| crate::gitlab::checkout_branch(&repo, &mr, &mr.branch_dir())).and_then(|dir| tmux::open_checkout(&dir, &basename(&dir), kind, crate::app::window_command(kind), None));
+                            .and_then(|repo| crate::gitlab::checkout_branch(&repo, &mr, &mr.branch_dir())).and_then(|dir| tmux::open_checkout(&dir, &basename(&dir), &crate::app::window_name(kind), crate::app::window_command(kind).as_deref(), None));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not check out !{}: {e}", mr.iid), true), |m| (m, false)));
                     });
                 }
@@ -448,14 +468,14 @@ impl Collector {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
-        let claude_installed = tmux::claude_installed();
+        let agent_installed = crate::agent::agent_installed();
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
         if !self.cfg.passive {
             if !self.adopted {
                 self.adopted = true;
                 self.adopt_claudes(&all_panes, &workspaces);
             }
-            self.fill_claude(&all_panes, &started, claude_installed);
+            self.fill_claude(&all_panes, &started, agent_installed && crate::agent::is_claude());
         }
         let inbox = if self.cfg.gitlab() {
             let sections: Vec<Section> = self.cfg.sections.iter().copied().chain([Section::GitlabTodos]).collect();
@@ -476,7 +496,7 @@ impl Collector {
             inbox_errors: inbox.errors,
             inbox_busy: inbox.busy,
             usage: crate::usage::load(),
-            claude_installed,
+            agent_installed,
             served: self.asked,
         }
     }
@@ -507,6 +527,7 @@ impl Collector {
                 command: main.command.clone(),
                 pid: main.pid,
                 claude,
+                activity: main.activity,
                 width: main.width,
                 height: main.height,
                 screen: None,
@@ -544,9 +565,9 @@ impl Collector {
         let in_pane = |l: &Live, socket: &str, pane: &str| l.tmux.as_ref().is_some_and(|(s, p)| p == pane && tmux::canonical(s) == tmux::canonical(socket));
         let mut agents = vec![];
         for ws in workspaces {
-            for w in ws.windows.iter().filter(|w| w.is_claude()) {
+            for w in ws.windows.iter().filter(|w| w.is_agent()) {
                 let l = live.iter().position(|l| in_pane(l, &hub, &w.pane_id)).map(|i| live.swap_remove(i));
-                let status = w.claude.as_ref().map(|s| s.status).or(l.as_ref().map(|l| l.status)).unwrap_or(Status::Unknown);
+                let status = w.claude.as_ref().map(|s| s.status).or(l.as_ref().map(|l| l.status)).unwrap_or_else(|| output_status(w));
                 agents.push(Agent {
                     pid: l.as_ref().map(|l| l.pid),
                     transcript_path: l.as_ref().and_then(|l| transcript_for(&l.cwd, &l.session_id)),
@@ -671,8 +692,8 @@ impl Collector {
     /// as Claude reads the git state and CLAUDE.md files when it starts.
     /// A workspace dropped from the targets keeps its Claude for a while, so moving back to it finds one ready.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
-    fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>, installed: bool) {
-        let active = installed && self.cfg.prewarm_claude && self.hub_seen.elapsed() < UNSEEN;
+    fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>, claude: bool) {
+        let active = claude && self.cfg.prewarm_claude && self.hub_seen.elapsed() < UNSEEN;
         let wanted: Vec<String> = self
             .claude_targets
             .iter()
@@ -803,7 +824,7 @@ mod tests {
 
     #[test]
     fn only_a_foreground_command_makes_a_terminal_busy() {
-        let win = |command: &str| Window { index: 1, name: "w".into(), window_id: "@1".into(), pane_id: "%1".into(), command: command.into(), pid: 1, claude: None, width: 80, height: 24, screen: None };
+        let win = |command: &str| Window { index: 1, name: "w".into(), window_id: "@1".into(), pane_id: "%1".into(), command: command.into(), pid: 1, claude: None, activity: 0, width: 80, height: 24, screen: None };
         assert!(win("cargo").busy());
         assert!(!win("zsh").busy(), "an idle shell");
         assert!(!win("nvim").busy(), "editors have their own kind");

@@ -23,6 +23,7 @@ pub enum Action {
     CloseAgent { agent: String },
     Adopt { agent: String },
     NewWindow { workspace: String, kind: String },
+    SetAgent { command: String },
     NewAgent { path: String, prompt: Option<String> },
     /// Without kind, only finds the open workspace for path; with it, opens one with a window of that kind.
     OpenWorkspace { path: String, kind: Option<String> },
@@ -130,6 +131,21 @@ fn window(session: &str, path: &str, name: &str, command: Option<&str>) -> Resul
         }
     }
     tmux::open_window(session, path, name, command)
+}
+
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Type prompt into the agent in window and send it, once the agent is ready to read it.
+fn send_when_ready(window: &str, prompt: &str) {
+    let Ok(pane) = tmux::call(&["display-message", "-p", "-t", window, "#{pane_id}"]) else { return };
+    let text = one_line(prompt);
+    std::thread::spawn(move || {
+        if tmux::wait_for_agent(&pane) {
+            let _ = tmux::send_text(&tmux::socket_path(), &pane, &text);
+        }
+    });
 }
 
 /// The MR with key, preferring a workspace's copy: it refreshes more often.
@@ -261,37 +277,55 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             if !matches!(kind.as_str(), "claude" | "shell" | "nvim") {
                 return Err(format!("Unknown window kind {kind}"));
             }
-            let w = window(&ws.name, &ws.path, &kind, crate::app::window_command(&kind))?;
+            let w = window(&ws.name, &ws.path, &crate::app::window_name(&kind), crate::app::window_command(&kind).as_deref())?;
             Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
         }
         Action::NewAgent { path, prompt } => {
-            tmux::require_claude(Some("claude"))?;
+            let (command, name, label) = (crate::agent::command(), crate::agent::name(), crate::agent::label());
+            crate::agent::require(Some(&command))?;
             let path = crate::config::expand(path.trim());
             std::fs::create_dir_all(&path).map_err(|e| format!("Could not create {}: {e}", shorten(&path)))?;
             let path = tmux::canonical(&path);
             let prompt = prompt.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+            // Claude takes the prompt as an argument; other agents get it typed in once they are ready.
+            let claude = crate::agent::is_claude();
+            let start = match &prompt {
+                Some(p) if claude => format!("{command} {}", tmux::shell_quote(p)),
+                _ => command.clone(),
+            };
+            let message = |session: &str| if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened {label} in {session}") };
             let Some(session) = open_for(hub, &path) else {
-                let command = prompt.as_ref().map_or_else(|| "claude".to_string(), |p| format!("claude {}", tmux::shell_quote(p)));
-                let (session, w) = new_workspace(&path, "claude", Some(&command))?;
-                let message = if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened Claude in {session}") };
-                return Ok(Done { message: Some(message), workspace: Some(session), window: w, path: Some(path) });
+                let (session, w) = new_workspace(&path, &name, Some(&start))?;
+                if let (Some(p), Some(w), false) = (&prompt, &w, claude) {
+                    send_when_ready(w, p);
+                }
+                return Ok(Done { message: Some(message(&session)), workspace: Some(session), window: w, path: Some(path) });
             };
             let w = match &prompt {
                 // A pre-started Claude is ready to read input, so the prompt can be typed in at once.
-                Some(p) => match tmux::spare_for(&path, Some("claude")) {
+                Some(p) => match tmux::spare_for(&path, Some(&command)) {
                     Some(spare) => {
                         tmux::call(&["move-window", "-d", "-s", &spare, "-t", &format!("={session}:")])?;
-                        tmux::call(&["rename-window", "-t", &spare, "claude"])?;
+                        tmux::call(&["rename-window", "-t", &spare, &name])?;
                         let pane = tmux::call(&["display-message", "-p", "-t", &spare, "#{pane_id}"])?;
-                        tmux::send_text(&tmux::socket_path(), &pane, &p.split_whitespace().collect::<Vec<_>>().join(" "))?;
+                        tmux::send_text(&tmux::socket_path(), &pane, &one_line(p))?;
                         spare
                     }
-                    None => tmux::open_window(&session, &path, "claude", Some(&format!("claude {}", tmux::shell_quote(p))))?,
+                    None => {
+                        let w = tmux::open_window(&session, &path, &name, Some(&start))?;
+                        if !claude {
+                            send_when_ready(&w, p);
+                        }
+                        w
+                    }
                 },
-                None => window(&session, &path, "claude", Some("claude"))?,
+                None => window(&session, &path, &name, Some(&command))?,
             };
-            let message = if prompt.is_some() { format!("Started an agent in {session}") } else { format!("Opened Claude in {session}") };
-            Ok(Done { message: Some(message), workspace: Some(session), window: Some(w), path: None })
+            Ok(Done { message: Some(message(&session)), workspace: Some(session), window: Some(w), path: None })
+        }
+        Action::SetAgent { command } => {
+            crate::agent::set(&command)?;
+            Ok(said(format!("New agents start with {}", command.trim())))
         }
         Action::OpenWorkspace { path, kind } => {
             let path = crate::config::expand(path.trim());
@@ -304,12 +338,12 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 return Ok(Done { workspace: open, path: Some(path), ..Done::default() });
             };
             check_kind(&kind)?;
-            let command = crate::app::window_command(&kind);
+            let (name, command) = (crate::app::window_name(&kind), crate::app::window_command(&kind));
             if let Some(session) = open {
-                let w = window(&session, &path, &kind, command)?;
+                let w = window(&session, &path, &name, command.as_deref())?;
                 return Ok(Done { workspace: Some(session), window: Some(w), path: Some(path), ..Done::default() });
             }
-            let (session, w) = new_workspace(&path, &kind, command)?;
+            let (session, w) = new_workspace(&path, &name, command.as_deref())?;
             Ok(Done { message: Some(format!("Opened {session}")), workspace: Some(session), window: w, path: Some(path) })
         }
         Action::CloseWorkspace { workspace } => {
@@ -372,7 +406,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             };
             if let Some((name, path)) = open {
                 let w = match &kind {
-                    Some(k) => Some(window(&name, &path, k, crate::app::window_command(k))?),
+                    Some(k) => Some(window(&name, &path, &crate::app::window_name(k), crate::app::window_command(k).as_deref())?),
                     None => None,
                 };
                 return Ok(Done { workspace: Some(name), window: w, path: Some(path), ..Done::default() });
@@ -382,7 +416,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let Some(k) = kind else {
                 return Ok(Done { message: Some(format!("Checked out !{}", m.iid)), path: Some(dir), ..Done::default() });
             };
-            let (session, w) = new_workspace(&dir, &k, crate::app::window_command(&k))?;
+            let (session, w) = new_workspace(&dir, &crate::app::window_name(&k), crate::app::window_command(&k).as_deref())?;
             Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), window: w, path: Some(dir) })
         }
         Action::IssueCheckout { issue: key } => {

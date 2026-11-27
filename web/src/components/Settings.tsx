@@ -1,9 +1,11 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createSignal, type JSX } from "solid-js";
 import {
+  act,
   ask,
   configTheme,
   connection,
   enableNotifications,
+  isBusy,
   notifyPermission,
   openPalette,
   pickTheme,
@@ -83,6 +85,49 @@ function Segmented<T extends string | number>(p: { value: T; options: [T, string
   );
 }
 
+/** The agent lives in config.toml, not in the browser: the hub starts it, for every browser. */
+function AgentSetting() {
+  const [draft, setDraft] = createSignal<string | null>(null);
+  const value = () => draft() ?? state.agent.command;
+  const save = async () => {
+    const command = value().trim();
+    if (!command || command === state.agent.command) return setDraft(null);
+    const r = await act({ type: "set_agent", command }, { key: "set-agent" });
+    if (r.ok) setDraft(null);
+  };
+  return (
+    <Section title="Agent">
+      <Row
+        label="Command"
+        hint={
+          <Show when={state.agent.installed} fallback={<span class="text-danger">{state.agent.name} is not in PATH</span>}>
+            Saved in config.toml, for the hub and every browser
+          </Show>
+        }
+      >
+        <input
+          list="jugglr-agents"
+          value={value()}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && void save()}
+          aria-label="Agent command"
+          spellcheck={false}
+          class="w-44 rounded-lg border border-line-strong bg-bg px-2.5 py-1 font-mono text-sm text-fg outline-none focus:border-accent/60"
+        />
+        <datalist id="jugglr-agents">
+          <For each={state.agent.known}>{(k) => <option value={k} />}</For>
+        </datalist>
+        <Button size="sm" onClick={save} loading={isBusy("set-agent")} disabled={draft() === null}>
+          Save
+        </Button>
+      </Row>
+      <p class="text-sm text-fg-3">
+        Claude Code reports its status through hooks and has a chat view. Other agents run in a terminal window and show as working while their screen changes.
+      </p>
+    </Section>
+  );
+}
+
 function Switch(p: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <button
@@ -124,6 +169,8 @@ export function Settings() {
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
             <p class="mb-4 text-sm text-fg-3">These settings apply to this browser. Where config.toml has the same setting, this browser's choice wins.</p>
+
+            <AgentSetting />
 
             <Section title="Appearance">
               <Row

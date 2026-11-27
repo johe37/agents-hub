@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, o
 import type { JSX } from "solid-js";
 import type { Issue, Mr, Thread, Todo } from "../api";
 import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Kind, type Tab } from "../gitlab";
-import { act, go, isBusy, route, state } from "../store";
+import { act, agentLabel, go, isBusy, route, state } from "../store";
 import { cls, fuzzyWords } from "../util";
 import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
 import { Markdown } from "./Markdown";
@@ -237,8 +237,8 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
           <Button size="sm" loading={isBusy(key("resolve"))} onClick={() => send(true)} title="Post the reply, if any, and resolve the thread">
             <Check size={13} /> {text().trim() ? "Reply and resolve" : "Resolve"}
           </Button>
-          <Button size="sm" variant="ghost" class="ml-auto" loading={isBusy(`checkout:${p.mr.key}`)} onClick={() => openMr(p.mr, "claude", p.thread.prompt)} title="Put the thread in a Claude prompt in the MR's workspace, to edit before sending">
-            <Sparkles size={13} /> Ask Claude to fix
+          <Button size="sm" variant="ghost" class="ml-auto" loading={isBusy(`checkout:${p.mr.key}`)} onClick={() => openMr(p.mr, "claude", p.thread.prompt)} title={`Put the thread in a ${agentLabel()} prompt in the MR's workspace, to edit before sending`}>
+            <Sparkles size={13} /> Ask {agentLabel()} to fix
           </Button>
         </div>
       </div>
@@ -257,8 +257,8 @@ function OpenButtons(p: { mr: Mr }) {
           <Layers size={13} /> Go to {p.mr.workspace}
         </Button>
       </Show>
-      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("claude")} kbd="c" title={review() ? "Check out the code and start Claude with a review prompt to edit first" : "Open Claude on the MR's branch"}>
-        <Sparkles size={13} /> {review() ? "Review with Claude" : "Claude"}
+      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("claude")} kbd="c" title={review() ? `Check out the code and start ${agentLabel()} with a review prompt to edit first` : `Open ${agentLabel()} on the MR's branch`}>
+        <Sparkles size={13} /> {review() ? `Review with ${agentLabel()}` : agentLabel()}
       </Button>
       <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="t">
         <Terminal size={13} /> Shell
@@ -420,8 +420,8 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
         <For each={i().labels}>{(l) => <Badge>{l}</Badge>}</For>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="c" title="Start Claude on a branch for the issue, with a prompt about it to edit first">
-          <Sparkles size={13} /> Work on it with Claude
+        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="c" title={`Start ${agentLabel()} on a branch for the issue, with a prompt about it to edit first`}>
+          <Sparkles size={13} /> Work on it with {agentLabel()}
         </Button>
         <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
           Open in GitLab <External size={12} />

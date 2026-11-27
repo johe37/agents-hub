@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { getJSON, type Job, type Mr, type PipelineRun } from "../api";
 import { ansiToHtml } from "../ansi";
-import { act, isBusy } from "../store";
+import { act, agentLabel, isBusy } from "../store";
 import { cls } from "../util";
 import { Check, External, Play, Refresh, Sparkles, Stop, X } from "./icons";
 import { askClaude } from "./MrReview";
@@ -94,8 +94,8 @@ function JobPill(p: { mr: Mr; job: Job; selected: boolean; onPick: () => void })
           <button class={small} disabled={isBusy(retryKey(p.mr, j()))} onClick={() => retryJob(p.mr, j())}>
             <Refresh size={11} /> Retry
           </button>
-          <button class={small} onClick={() => askClaude(p.mr, failurePrompt(p.mr, j()))} title="Ask Claude in the MR's checkout about the failure">
-            <Sparkles size={11} /> Ask Claude
+          <button class={small} onClick={() => askClaude(p.mr, failurePrompt(p.mr, j()))} title={`Ask ${agentLabel()} in the MR's checkout about the failure`}>
+            <Sparkles size={11} /> Ask {agentLabel()}
           </button>
         </div>
       </Show>
@@ -218,8 +218,8 @@ function Log(p: { mr: Mr; job: Job; onClose: () => void }) {
         </Show>
         <span class="ml-auto flex flex-wrap items-center gap-2">
           <Show when={p.job.status === "failed" || p.job.status === "warning"}>
-            <Button size="sm" variant="ghost" onClick={() => askClaude(p.mr, failurePrompt(p.mr, p.job))} title="Ask Claude in the MR's checkout about the failure">
-              <Sparkles size={13} /> Ask Claude
+            <Button size="sm" variant="ghost" onClick={() => askClaude(p.mr, failurePrompt(p.mr, p.job))} title={`Ask ${agentLabel()} in the MR's checkout about the failure`}>
+              <Sparkles size={13} /> Ask {agentLabel()}
             </Button>
           </Show>
           <Show when={!live(p.job.status) && p.job.status !== "manual" && p.job.status !== "skipped"}>

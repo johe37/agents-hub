@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
 import { getJSON } from "../api";
-import { act, composer, go, isBusy, route, setComposer, state, toast } from "../store";
+import { act, agentLabel, composer, go, isBusy, route, setComposer, state, toast } from "../store";
 import { basename, cls, fuzzyWords } from "../util";
 import { Chat, Folder, Git, Sparkles } from "./icons";
 import { Button, Kbd } from "./ui";
@@ -9,7 +9,7 @@ type Dirs = { dirs: [string, boolean][]; recent: string[]; home: string };
 
 const LAST = "new-agent-path";
 
-/** Start Claude on a task: pick where, say what. The prompt goes in as the first message. */
+/** Start the agent on a task: pick where, say what. The prompt goes in as the first message. */
 export function NewAgent() {
   const [path, setPath] = createSignal("");
   const [prompt, setPrompt] = createSignal("");
@@ -186,7 +186,7 @@ export function NewAgent() {
               onFocus={() => setPicking(false)}
               onInput={(e) => setPrompt(e.currentTarget.value)}
               rows={6}
-              placeholder={chat() ? "Ask Claude anything. Leave it empty to start Claude without a prompt." : "Describe what Claude should do. Leave it empty to start Claude without a prompt."}
+              placeholder={chat() ? `Ask ${agentLabel()} anything. Leave it empty to start ${agentLabel()} without a prompt.` : `Describe what ${agentLabel()} should do. Leave it empty to start ${agentLabel()} without a prompt.`}
               class="w-full resize-y rounded-xl border border-line-strong bg-bg px-3.5 py-3 text-base leading-relaxed text-fg outline-none placeholder:text-fg-3 focus:border-accent/60"
             />
           </div>
@@ -200,7 +200,7 @@ export function NewAgent() {
                 Cancel
               </Button>
               <Button variant="primary" onClick={start} loading={isBusy("new-agent")}>
-                <Sparkles size={14} /> {prompt().trim() ? (chat() ? "Start chat" : "Start agent") : "Open Claude"}
+                <Sparkles size={14} /> {prompt().trim() ? (chat() ? "Start chat" : "Start agent") : `Open ${agentLabel()}`}
               </Button>
             </div>
           </div>

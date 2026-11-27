@@ -20,7 +20,7 @@ pub fn request_file() -> PathBuf {
     state_dir().join("request")
 }
 
-const FIELDS: [&str; 15] = [
+const FIELDS: [&str; 16] = [
     "session_name",
     "@workspace_path",
     "session_path",
@@ -36,6 +36,7 @@ const FIELDS: [&str; 15] = [
     "pane_height",
     "@spare",
     "pane_pid",
+    "window_activity",
 ];
 
 #[derive(Clone, Debug)]
@@ -56,6 +57,8 @@ pub struct Pane {
     pub spare: String,
     /// The process tmux started in the pane, usually a shell.
     pub pid: u32,
+    /// Unix time of the window's last output.
+    pub activity: u64,
 }
 
 /// Why a tmux action did not complete in place.
@@ -253,6 +256,7 @@ pub fn list_all_panes() -> Vec<Pane> {
                 height: p[12].parse().unwrap_or(24),
                 spare: p[13].into(),
                 pid: p[14].parse().unwrap_or(0),
+                activity: p[15].parse().unwrap_or(0),
             })
         })
         .collect()
@@ -342,7 +346,7 @@ pub fn promote_claude(window_id: &str, path: &str) {
 }
 
 fn spawn_in_pool(name: &str, path: &str, command: Option<&str>) -> Option<String> {
-    require_claude(command).ok()?;
+    crate::agent::require(command).ok()?;
     let target = format!("={POOL_SESSION}:");
     let tail: Vec<&str> = ["-P", "-F", "#{window_id}", "-c", path, "-n", name].into_iter().chain(command).collect();
     // The pool session goes away with its last window, so create it when it is missing.
@@ -467,7 +471,7 @@ fn create_commands(name: &str, path: &str, window: &str, command: Option<&str>, 
 }
 
 pub fn create_workspace(name: &str, path: &str, window: &str, command: Option<&str>, spare: Option<&str>) -> Res {
-    require_claude(command).map_err(Fail::Error)?;
+    crate::agent::require(command).map_err(Fail::Error)?;
     // Switch only after the spare is in, so a failing switch never makes a second session.
     if spare.is_some() && run_chain(&create_commands(name, path, window, command, spare)).is_ok() {
         return run_and_switch(name, vec![]);
@@ -488,7 +492,7 @@ pub fn ensure_workspace_named(path: &str, name: &str) -> Result<String, String> 
 
 /// The workspace for path, or a new one named name whose first window is window running command.
 pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Option<&str>) -> Result<String, String> {
-    require_claude(command)?;
+    crate::agent::require(command)?;
     let real = canonical(path);
     let panes: Vec<Pane> = list_all_panes().into_iter().filter(|p| !p.session.starts_with('_')).collect();
     if let Some(p) = panes.iter().find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real) {
@@ -505,7 +509,7 @@ pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Opti
 /// A checkout that already has a workspace is only switched to.
 /// Go to the workspace for dir, or open one named name with a window of this kind; Claude gets prompt typed in, if any.
 pub fn open_checkout(dir: &str, name: &str, window: &str, command: Option<&str>, prompt: Option<&str>) -> Result<String, String> {
-    require_claude(command)?;
+    crate::agent::require(command)?;
     let real = canonical(dir);
     let open = list_all_panes()
         .into_iter()
@@ -520,32 +524,57 @@ pub fn open_checkout(dir: &str, name: &str, window: &str, command: Option<&str>,
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     check(run(&refs))?;
     let _ = switch_client(&name);
-    let Some(prompt) = prompt.filter(|_| command == Some("claude")) else {
+    let Some(prompt) = prompt.filter(|_| command.is_some_and(|c| c == crate::agent::command())) else {
         return Ok(format!("Opened {name}"));
     };
-    let pane = list_all_panes().into_iter().find(|p| p.session == name).map(|p| p.pane_id).ok_or("Claude exited at once in the review")?;
-    if !wait_for_claude(&pane) {
-        return Ok(format!("Opened {name}, but Claude took too long to start, so the review prompt is not typed in"));
+    let label = crate::agent::label();
+    let pane = list_all_panes().into_iter().find(|p| p.session == name).map(|p| p.pane_id).ok_or(format!("{label} exited at once in the review"))?;
+    if !wait_for_agent(&pane) {
+        return Ok(format!("Opened {name}, but {label} took too long to start, so the review prompt is not typed in"));
     }
     type_text(&socket_path(), &pane, prompt)?;
     Ok(format!("Review ready in {name}: check the prompt, then Enter starts it"))
 }
 
-/// Open Claude in a new window of the workspace for path, with prompt typed but not sent, and switch to it.
+/// Open the agent in a new window of the workspace for path, with prompt typed but not sent, and switch to it.
 pub fn open_issue(path: &str, prompt: &str) -> Result<String, String> {
-    require_claude(Some("claude"))?;
+    let (command, name) = (crate::agent::command(), crate::agent::name());
+    crate::agent::require(Some(&command))?;
     let session = ensure_workspace(path)?;
-    let out = run(&["new-window", "-P", "-F", "#{pane_id}", "-t", &format!("={session}:"), "-c", path, "-n", "claude", "claude"]).ok_or("tmux not found")?;
+    let out = run(&["new-window", "-P", "-F", "#{pane_id}", "-t", &format!("={session}:"), "-c", path, "-n", &name, &command]).ok_or("tmux not found")?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let _ = switch_client(&session);
-    if !wait_for_claude(&pane) {
-        return Ok(format!("Opened Claude in {session}, but it took too long to start, so the issue is not typed in"));
+    if !wait_for_agent(&pane) {
+        return Ok(format!("Opened {} in {session}, but it took too long to start, so the issue is not typed in", crate::agent::label()));
     }
     type_text(&socket_path(), &pane, prompt)?;
     Ok(format!("Issue ready in {session}: check the prompt, then Enter starts it"))
+}
+
+/// Wait until the agent in pane is ready to read typed input.
+pub fn wait_for_agent(pane: &str) -> bool {
+    if crate::agent::is_claude() { wait_for_claude(pane) } else { wait_for_quiet(pane) }
+}
+
+/// Other agents send no hook event, so wait until their screen is drawn and then stays still for a moment.
+fn wait_for_quiet(pane: &str) -> bool {
+    let activity = || run(&["display-message", "-p", "-t", pane, "#{window_activity}"]).filter(|o| o.status.success()).and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok());
+    let Some(first) = activity() else { return false };
+    let start = std::time::Instant::now();
+    let mut last = (first, start);
+    for _ in 0..100 {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let Some(now) = activity() else { return false };
+        if now != last.0 {
+            last = (now, std::time::Instant::now());
+        } else if last.1.elapsed() > std::time::Duration::from_millis(1500) && start.elapsed() > std::time::Duration::from_secs(3) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Wait until Claude in pane reports its first hook event: before that it drops typed input.
@@ -571,7 +600,7 @@ pub fn canonical(path: &str) -> String {
 
 /// Open a window, taken from the pool when spare is a pre-started window that runs command.
 pub fn new_window(session: &str, cwd: &str, name: &str, command: Option<&str>, spare: Option<&str>) -> Res {
-    require_claude(command).map_err(Fail::Error)?;
+    crate::agent::require(command).map_err(Fail::Error)?;
     if let Some(spare) = spare {
         // Switch only after the spare is in, so a failing switch never starts a second window.
         let moved = run_chain(&[
@@ -630,26 +659,11 @@ pub fn call(args: &[&str]) -> Result<String, String> {
 
 /// Open a window in session without switching to it, and return its window id.
 pub fn open_window(session: &str, cwd: &str, name: &str, command: Option<&str>) -> Result<String, String> {
-    require_claude(command)?;
+    crate::agent::require(command)?;
     let target = format!("={session}:");
     let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", cwd, "-n", name];
     args.extend(command);
     call(&args)
-}
-
-pub const NO_CLAUDE: &str = "Claude Code is not installed: there is no claude in PATH";
-
-/// Whether claude is in PATH. Windows get the hub's PATH, as the hub runs on the tmux server.
-pub fn claude_installed() -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let Some(path) = std::env::var_os("PATH") else { return false };
-    std::env::split_paths(&path).any(|dir| dir.join("claude").metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
-}
-
-/// Without this check, a window for a missing claude closes at once and shows no error.
-pub fn require_claude(command: Option<&str>) -> Result<(), String> {
-    let runs_claude = command.is_some_and(|c| c.split_whitespace().next() == Some("claude"));
-    if runs_claude && !claude_installed() { Err(NO_CLAUDE.into()) } else { Ok(()) }
 }
 
 pub fn shell_quote(s: &str) -> String {
@@ -828,6 +842,7 @@ mod tests {
             height: 24,
             spare: spare.into(),
             pid: 0,
+            activity: 0,
         };
         let pool = claude_pool(&[pane("claude:/r", "100 main abc"), pane("claude-next:/r", "200  abc"), pane("claude:/old", "")]);
         assert_eq!((pool[0].started, pool[0].checkout.clone(), pool[0].next), (Some(100), (Some("main".into()), Some("abc".into())), false));
