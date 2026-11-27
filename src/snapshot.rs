@@ -217,6 +217,8 @@ pub enum Cmd {
     ForgetGit(String),
     /// Push the branch checked out at path to the remote.
     Push { path: String, remote: String },
+    /// Merge the branch checked out at path back into its base, see `git::merge_back`.
+    MergeBack(String),
     /// Open a draft merge request for the branch checked out at path.
     OpenMr(String),
     /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
@@ -416,6 +418,17 @@ impl Collector {
                         }
                         mrs.forget(&path);
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Push failed: {e}"), true), |m| (m, false)));
+                    });
+                }
+                // Its own thread: a rebase can take a while.
+                Ok(Cmd::MergeBack(path)) => {
+                    let (git, notices) = (Arc::clone(&self.git), Arc::clone(&self.notices));
+                    std::thread::spawn(move || {
+                        let r = crate::git::merge_back(&path);
+                        if let Some(root) = git.repo_root(&path) {
+                            git.forget(&root);
+                        }
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Merge failed: {e}"), true), |m| (format!("{m}. x removes the worktree."), false)));
                     });
                 }
                 Ok(Cmd::OpenMr(path)) => {

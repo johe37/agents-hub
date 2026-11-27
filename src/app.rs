@@ -1063,11 +1063,10 @@ impl App {
         let path = ws.path.clone();
         let cmd = self.cmd.clone();
         let then = move || {
-            let r = crate::git::merge_back(&path);
-            let _ = cmd.send(Cmd::ForgetGit(path.clone()));
-            r.map(|_| ()).map_err(Fail::Error)
+            let _ = cmd.send(Cmd::MergeBack(path.clone()));
+            Ok(())
         };
-        let done = format!("Merged {branch} into {base}. x removes the worktree.");
+        let done = format!("Merging {branch} into {base}…");
         self.modal = Some(Modal::Confirm { question, then: Box::new(then), yes: false, done: Some(done) });
     }
 
