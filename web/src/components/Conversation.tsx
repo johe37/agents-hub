@@ -1,7 +1,7 @@
 import { Index, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { getJSON, type Agent, type ConversationItem } from "../api";
 import { act, isBusy, tilde } from "../store";
-import { cls, toolLine } from "../util";
+import { basename, cls, toolLine } from "../util";
 import { EditView, TurnChanges, change, isEdit, keep, type Change, type Tool } from "./ChatEdits";
 import { Check, ChevronDown, Stop, Wrench, X } from "./icons";
 import { Markdown } from "./Markdown";
@@ -10,6 +10,17 @@ import { ToolDetail } from "./ToolCall";
 import { Button, Spinner, StatusDot } from "./ui";
 
 type Conv = { items: ConversationItem[]; queued?: string[]; truncated?: boolean; missing?: boolean };
+
+const GREETINGS = ["Let's get ready to juggle!!!", "Toss me the first ball.", "Hands warm. Balls ready. What's the trick?", "Juggle time. What are we building?"];
+
+/** Stable per agent, so the greeting does not change while you look at it. */
+function greeting(key: string) {
+  let h = 0;
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return GREETINGS[Math.abs(h) % GREETINGS.length];
+}
+
+const typing = (el: Element | null) => !!el && (el.matches("input, textarea, select") || (el as HTMLElement).isContentEditable);
 
 type Entry = { kind: "msg"; item: ConversationItem } | { kind: "tools"; items: Tool[] } | { kind: "changes"; changes: Change[] };
 
@@ -169,6 +180,16 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
   );
   createEffect(on(() => a().key, () => setStuck(true)));
 
+  let replyEl: HTMLTextAreaElement | undefined;
+  let focusedFor: string | null = null;
+  // Focus the reply box once per agent, when it shows. Not on phones: the keyboard would cover the page.
+  createEffect(() => {
+    if (conv.state !== "ready" || focusedFor === a().key) return;
+    focusedFor = a().key;
+    if (typing(document.activeElement) || !matchMedia("(min-width: 640px)").matches) return;
+    requestAnimationFrame(() => replyEl?.focus());
+  });
+
   return (
     <div class="relative flex h-full min-h-0 flex-col">
       <div ref={scroller} onScroll={onScroll} class="relative min-h-0 flex-1 overflow-y-auto">
@@ -178,7 +199,15 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
               <div class="text-center text-sm text-fg-3">Earlier messages are in the full transcript</div>
             </Show>
             <Show when={!conv.latest!.items.length}>
-              <div class="py-16 text-center text-fg-3">No messages yet. Write the first prompt below.</div>
+              <div class="flex flex-col items-center gap-2 py-16 text-center animate-fade-in">
+                <img src="/logo-juggling.webp" alt="" class="mb-2 size-24" />
+                <div class="text-xl font-semibold text-fg">{greeting(a().key)}</div>
+                <div class="font-mono text-sm text-fg-3">
+                  {basename(a().path)}
+                  <Show when={a().branch}> · {a().branch}</Show>
+                </div>
+                <div class="text-sm text-fg-3">Write the first prompt below.</div>
+              </div>
             </Show>
             <Index each={group(conv.latest!.items, a().status !== "working")}>
               {(g) => (
@@ -232,12 +261,12 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
           ↓ Latest
         </button>
       </Show>
-      <Composer agent={a()} />
+      <Composer agent={a()} ref={(el) => (replyEl = el)} />
     </div>
   );
 }
 
-export function Composer(p: { agent: Agent }) {
+export function Composer(p: { agent: Agent; ref?: (el: HTMLTextAreaElement) => void }) {
   const a = () => p.agent;
   return (
     <div class="border-t border-line bg-panel/80 backdrop-blur">
@@ -265,7 +294,7 @@ export function Composer(p: { agent: Agent }) {
           </div>
         </Show>
         <div class="flex items-end gap-2">
-          <Reply agent={a()} class="flex-1" placeholder={a().status === "working" ? "Queue a message for Claude…" : undefined} />
+          <Reply agent={a()} ref={p.ref} class="flex-1" placeholder={a().status === "working" ? "Queue a message for Claude…" : undefined} />
           <Show when={a().status === "working" && a().reachable}>
             <Button variant="secondary" class="h-[38px]" title="Interrupt (Escape in Claude)" onClick={() => act({ type: "interrupt", agent: a().key })}>
               <Stop size={13} /> Stop
