@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
+import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
 import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, setDiffView, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
@@ -184,76 +184,149 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
 
   // Drag a tab to move its window. A mouse drags once it moves a little.
   // A finger must hold the tab still first, because a finger that moves scrolls the tab row.
-  const [drag, setDrag] = createSignal<{ id: string; before: string | null } | null>(null);
+  // The tab follows the pointer and the others slide aside; positions are measured once, at the start.
+  type Drag = { id: string; from: number; ids: string[]; lefts: number[]; widths: number[]; gap: number; x: number; scroll: number; slot?: number };
+  const [drag, setDrag] = createSignal<Drag | null>(null);
+  const [dx, setDx] = createSignal(0);
+  const [settling, setSettling] = createSignal(false);
   let press: { id: string; x: number; pointer: number; touch: boolean; timer?: number } | null = null;
   let dragged = false;
+  // Pointer moves only store the position; one frame loop scrolls the row and moves the tab.
+  let pointerX = 0;
+  let frame = 0;
 
-  const dropBefore = (x: number): string | null => {
-    for (const el of tabs?.querySelectorAll<HTMLElement>("[data-win]") ?? []) {
-      const r = el.getBoundingClientRect();
-      if (x < r.left + r.width / 2) return el.dataset.win!;
-    }
-    return null;
-  };
-  /** Dropping here leaves the window where it is. */
-  const inPlace = (d: { id: string; before: string | null }) => {
-    const wins = ws()?.windows ?? [];
-    const i = wins.findIndex((x) => x.id === d.id);
-    return d.before === d.id || d.before === (wins[i + 1]?.id ?? null);
+  /** Where the dragged tab lands, as an index among the other tabs. */
+  const slot = createMemo(() => {
+    const d = drag();
+    if (!d) return -1;
+    if (d.slot !== undefined) return d.slot;
+    // A neighbour gives way once the dragged tab's leading edge passes its middle.
+    const left = d.lefts[d.from] + dx();
+    const right = left + d.widths[d.from];
+    let t = d.from;
+    d.ids.forEach((_, k) => {
+      const mid = d.lefts[k] + d.widths[k] / 2;
+      if (k < d.from && left < mid) t--;
+      if (k > d.from && right > mid) t++;
+    });
+    return t;
+  });
+  const shiftOf = (id: string) => {
+    const d = drag();
+    if (!d) return 0;
+    const k = d.ids.indexOf(id);
+    if (k === d.from) return dx();
+    const t = slot();
+    const s = d.widths[d.from] + d.gap;
+    if (k > d.from && k <= t) return -s;
+    if (k < d.from && k >= t) return s;
+    return 0;
   };
 
+  const unlisten = () => {
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", onDragUp);
+    window.removeEventListener("pointercancel", onDragCancel);
+    window.removeEventListener("touchmove", stopScroll);
+    window.removeEventListener("keydown", onDragKey, true);
+  };
   const endPress = () => {
     if (press?.timer) clearTimeout(press.timer);
     press = null;
+    cancelAnimationFrame(frame);
+    unlisten();
     setDrag(null);
-    window.removeEventListener("pointermove", onDragMove);
-    window.removeEventListener("pointerup", onDragUp);
-    window.removeEventListener("pointercancel", endPress);
-    window.removeEventListener("touchmove", stopScroll);
-    window.removeEventListener("keydown", onDragKey, true);
+    setSettling(false);
+    setDx(0);
     // The click that follows the drop must not select the tab.
     setTimeout(() => (dragged = false));
   };
   const begin = () => {
-    if (!press) return;
+    if (!press || !tabs) return;
+    const row = tabs.getBoundingClientRect();
+    const els = [...tabs.querySelectorAll<HTMLElement>("[data-win]")];
+    const rects = els.map((el) => el.getBoundingClientRect());
+    const lefts = rects.map((r) => r.left - row.left + tabs!.scrollLeft);
+    const widths = rects.map((r) => r.width);
+    const ids = els.map((el) => el.dataset.win!);
+    const from = ids.indexOf(press.id);
+    if (from < 0) return;
     dragged = true;
-    setDrag({ id: press.id, before: press.id });
+    const gap = ids.length > 1 ? lefts[1] - lefts[0] - widths[0] : 0;
+    setDx(0);
+    setDrag({ id: press.id, from, ids, lefts, widths, gap, x: press.x, scroll: tabs.scrollLeft });
+    pointerX = press.x;
+    frame = requestAnimationFrame(tick);
+  };
+  const EDGE = 48;
+  const tick = () => {
+    if (!drag() || settling() || !tabs) return;
+    const r = tabs.getBoundingClientRect();
+    // Faster the closer the pointer is to the edge, up to 16px a frame.
+    const into = (d: number) => 16 * Math.min(1, Math.max(0, (EDGE - d) / EDGE));
+    tabs.scrollLeft += into(r.right - pointerX) - into(pointerX - r.left);
+    follow(pointerX);
+    frame = requestAnimationFrame(tick);
+  };
+  const follow = (x: number) => {
+    const d = drag()!;
+    const end = d.lefts[d.lefts.length - 1] + d.widths[d.widths.length - 1];
+    const raw = x - d.x + tabs!.scrollLeft - d.scroll;
+    setDx(Math.min(Math.max(raw, -d.lefts[d.from]), end - d.widths[d.from] - d.lefts[d.from]));
+  };
+  /** Slide the tab into its place, then move the window there. */
+  const drop = (keep: boolean) => {
+    const d = drag();
+    if (!d || settling()) return endPress();
+    cancelAnimationFrame(frame);
+    unlisten();
+    const t = keep ? slot() : d.from;
+    const left = t > d.from ? d.lefts[t] + d.widths[t] - d.widths[d.from] : t < d.from ? d.lefts[t] : d.lefts[d.from];
+    const before = d.ids.filter((id) => id !== d.id)[t] ?? null;
+    batch(() => {
+      setDrag({ ...d, slot: t });
+      setSettling(true);
+      setDx(left - d.lefts[d.from]);
+    });
+    setTimeout(() => {
+      if (drag()?.id !== d.id) return;
+      batch(() => {
+        if (t !== d.from) moveWindow(p.name, d.id, before);
+        endPress();
+      });
+    }, 160);
   };
   const onDragMove = (e: PointerEvent) => {
-    if (!press || e.pointerId !== press.pointer) return;
+    if (!press || e.pointerId !== press.pointer || settling()) return;
+    pointerX = e.clientX;
     if (!drag()) {
       const moved = Math.abs(e.clientX - press.x);
       if (press.touch && moved > 8) endPress();
       else if (!press.touch && moved > 5) begin();
-      if (!drag()) return;
     }
-    setDrag({ id: press.id, before: dropBefore(e.clientX) });
-    const r = tabs!.getBoundingClientRect();
-    if (e.clientX < r.left + 24) tabs!.scrollLeft -= 8;
-    else if (e.clientX > r.right - 24) tabs!.scrollLeft += 8;
   };
   const onDragUp = (e: PointerEvent) => {
     if (!press || e.pointerId !== press.pointer) return;
-    const d = drag();
-    endPress();
-    if (d && !inPlace(d)) moveWindow(p.name, d.id, d.before);
+    if (drag()) drop(true);
+    else endPress();
   };
+  const onDragCancel = () => (drag() ? drop(false) : endPress());
   const stopScroll = (e: TouchEvent) => drag() && e.preventDefault();
   const onDragKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape" || !drag()) return;
     e.preventDefault();
     e.stopPropagation();
-    endPress();
+    drop(false);
   };
   const onTabDown = (e: PointerEvent, id: string) => {
-    if (e.button !== 0 || (e.target as Element).closest("button")) return;
+    if (e.button !== 0 || (e.target as Element).closest("button") || settling()) return;
     endPress();
     const touch = e.pointerType === "touch";
     press = { id, x: e.clientX, pointer: e.pointerId, touch };
     if (touch) press.timer = window.setTimeout(begin, 400);
     window.addEventListener("pointermove", onDragMove);
     window.addEventListener("pointerup", onDragUp);
-    window.addEventListener("pointercancel", endPress);
+    window.addEventListener("pointercancel", onDragCancel);
     window.addEventListener("touchmove", stopScroll, { passive: false });
     window.addEventListener("keydown", onDragKey, true);
   };
@@ -458,10 +531,10 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
             </div>
           </header>
 
-          <nav class={cls("flex items-center gap-1.5 border-b border-line bg-panel/60 px-2 py-1.5 sm:px-3", tabsHidden() && "md:hidden")}>
+          <nav class={cls("flex items-center gap-1.5 border-b border-line bg-panel/60 px-2 py-0.5 sm:px-3", tabsHidden() && "md:hidden")}>
             <div
               ref={tabs}
-              class="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              class="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               role="tablist"
               onWheel={wheelTabs}
             >
@@ -469,21 +542,21 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 {(win, i) => {
                   const a = () => agentOf(win);
                   const active = () => win.id === p.window;
-                  const d = () => drag();
-                  const markerBefore = () => d() && !inPlace(d()!) && d()!.before === win.id;
-                  const markerAfter = () => d() && !inPlace(d()!) && d()!.before === null && i() === w().windows.length - 1;
+                  const lifted = () => drag()?.id === win.id;
                   return (
                     <div
                       role="tab"
                       aria-selected={active()}
                       data-win={win.id}
                       class={cls(
-                        "group relative flex h-8 shrink-0 cursor-pointer select-none items-center gap-2 rounded-lg border pl-2.5 pr-1.5 text-base transition-colors",
-                        active()
-                          ? "border-line-strong bg-raised text-fg shadow-soft"
+                        "group relative flex h-8 shrink-0 cursor-pointer select-none items-center gap-2 rounded-lg border pl-2.5 pr-1.5 text-base",
+                        active() || lifted()
+                          ? cls("border-line-strong bg-raised text-fg", lifted() ? "z-10 cursor-grabbing shadow-lg" : "shadow-soft")
                           : "border-line bg-raised/40 text-fg-2 hover:border-line-strong hover:bg-raised/80 hover:text-fg",
-                        d()?.id === win.id && "cursor-grabbing opacity-50",
+                        !drag() ? "transition-colors" : cls("will-change-transform", !lifted() && "transition-transform duration-150 ease-out"),
+                        lifted() && settling() && "transition-transform duration-150 ease-out",
                       )}
+                      style={{ transform: drag() ? `translateX(${shiftOf(win.id)}px)` : undefined }}
                       onPointerDown={(e) => onTabDown(e, win.id)}
                       onContextMenu={(e) => drag() && e.preventDefault()}
                       onClick={() => dragged || go({ view: "workspace", name: p.name, window: win.id })}
@@ -510,9 +583,6 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       </button>
                       <Show when={active()}>
                         <span class="absolute inset-x-3 -bottom-px h-[2px] rounded-full bg-accent" />
-                      </Show>
-                      <Show when={markerBefore() || markerAfter()}>
-                        <span class={cls("absolute inset-y-1 w-[2px] rounded-full bg-accent", markerBefore() ? "-left-[5px]" : "-right-[5px]")} />
                       </Show>
                     </div>
                   );
