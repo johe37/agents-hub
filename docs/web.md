@@ -68,11 +68,12 @@ Safari cut them to a rounded square.
   what above its MR or issue; `x` or **Done** marks it done in GitLab, and **Mark all done**
   (click twice) empties the list. Each item has a detail pane: the
   description, the open review threads and the MR's pipelines. Reply in a thread or resolve
-  it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the thread in the reply box of a Claude in the MR's workspace,
-  to edit before you send it. `c` checks out a review and opens a new agent with the review
-  prompt filled in; on your own MR it opens Claude on the MR's branch, and on an issue it
-  starts Claude in your clone with a prompt about the issue. `t` opens a shell
-  on the MR's code. A workspace on a branch shows its MR in the side panel, and a button to
+  it. See [Reviewing a merge request](#reviewing-a-merge-request). "Ask Claude to fix" puts the
+  thread in the reply box of the Claude in the side panel, to edit before you send it.
+  **Open** checks out the MR's code in a workspace and starts Claude (`c`) or a terminal (`t`)
+  there. When the workspace is open, the button goes to it, and its arrow adds a window. While
+  the hub clones the project and checks out the code, the button shows the step and how far it
+  has come. On an issue, `c` starts Claude in your clone with a prompt about the issue. A workspace on a branch shows its MR in the side panel, and a button to
   push (and open a draft MR when it has none). Checkouts work as in the terminal hub; see
   [gitlab.md](gitlab.md).
 - **Command palette** (`Ctrl+K`). Go to any workspace or agent, open any repo, run any action.
@@ -112,7 +113,17 @@ An MR's detail pane has four tabs: **Overview**, **Commits** (`l`), **Changes** 
 - **Ask Claude** (`a`). The side panel opens with the Claude in the MR's checkout, and its
   reply box names the file, the lines and a git command that shows them. Write your question
   and press `Enter`. If no Claude runs there, the hub checks the code out and starts one.
-  **Chat** in the MR's header opens the panel too.
+- **Pair review** (`\`) in the MR's header shows or hides the side panel. The first time, it
+  starts Claude in the MR's checkout with the review prompt, to edit before you send it. On
+  your own MR, the button opens Claude without a prompt.
+- **Claude's findings.** The review prompt asks Claude to end with its findings as a
+  `review-findings` block. The chat shows one line for the block, and the findings show in the
+  diff under their lines, with dashed borders. **Keep** adds a finding to your review as a
+  draft comment, **Edit** opens it in the comment form first, **Ask** puts it in the side panel
+  and **Dismiss** throws it away. The file list and the **Changes** tab count the findings that
+  wait for you. A finding on a file the MR does not change goes in the review's summary when
+  you keep it. This browser keeps the findings and what you did with them, also after Claude
+  stops.
 - **Comment** (`c`). **Add to review** keeps the comment as a draft in GitLab, like "Start a
   review" there. **Comment now** posts it at once. The comment shows in its place right away,
   marked "Sending…"; if GitLab refuses it, the form comes back with your text. Under an answer from Claude, **Comment with

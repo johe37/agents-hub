@@ -61,6 +61,11 @@ impl Hub {
         let _ = tokio::time::timeout(Duration::from_secs(1), served.wait_for(|s| *s >= n)).await;
     }
 
+    /// Tell the pages where a long action is; key is the one the page waits on, such as `checkout:<mr>`.
+    fn progress(&self, key: &str, step: &str, pct: Option<u8>) {
+        let _ = self.events.send(Arc::from(json!({"type": "progress", "key": key, "step": step, "pct": pct}).to_string()));
+    }
+
     fn snapshot(&self) -> std::sync::RwLockReadGuard<'_, Snapshot> {
         self.snap.read().unwrap()
     }

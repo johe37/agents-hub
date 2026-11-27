@@ -120,8 +120,7 @@ const KEYS: [string, [string, string][]][] = [
       ["x", "Mark the to-do done"],
       ["j / k", "Next / previous"],
       ["/", "Filter"],
-      ["c", "Claude: review, branch or issue"],
-      ["t", "Terminal on the MR's code"],
+      ["c / t", "Open the MR in a workspace with Claude / a terminal"],
       ["d / l / p", "Changes / commits / pipeline"],
       ["[ / ]", "Previous / next file"],
       ["Click, ⇧ click", "Select lines in a diff"],
@@ -131,7 +130,7 @@ const KEYS: [string, [string, string][]][] = [
       ["o", "Open in GitLab"],
       ["⇧ r", "Fetch again"],
       ["b", "Hide or show the list"],
-      ["\\", "Claude chat on the MR"],
+      ["\\", "Pair review: Claude next to the MR"],
     ],
   ],
 ];

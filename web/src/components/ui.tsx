@@ -212,7 +212,18 @@ export interface MenuItem {
 }
 
 /** A button that opens a small menu. The menu is fixed to the screen, so a scrolling parent never cuts it off. */
-export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuItem[]; align?: "left" | "right"; class?: string; size?: "sm" | "md" }) {
+/** With text, the button shows it next to the icon, styled like a Button of that variant. */
+export function MenuButton(p: {
+  label: string;
+  icon: JSX.Element;
+  items: MenuItem[];
+  align?: "left" | "right";
+  class?: string;
+  size?: "sm" | "md";
+  text?: JSX.Element;
+  variant?: "primary" | "secondary";
+  disabled?: boolean;
+}) {
   const [pos, setPos] = createSignal<{ top: number; left?: number; right?: number } | null>(null);
   let btn!: HTMLButtonElement;
   let menu: HTMLDivElement | undefined;
@@ -257,15 +268,23 @@ export function MenuButton(p: { label: string; icon: JSX.Element; items: MenuIte
         title={p.label}
         aria-haspopup="menu"
         aria-expanded={!!pos()}
+        disabled={p.disabled}
         onClick={() => (pos() ? close() : open())}
         class={cls(
-          "inline-grid shrink-0 place-items-center rounded-lg text-fg-2 transition-colors hover:bg-hover hover:text-fg",
-          (p.size ?? "md") === "md" ? "size-8" : "size-7",
-          pos() && "bg-hover text-fg",
+          "shrink-0 rounded-lg transition-[background,color,filter] disabled:pointer-events-none disabled:opacity-50",
+          p.text !== undefined
+            ? cls("inline-flex items-center gap-1.5 whitespace-nowrap font-medium", (p.size ?? "md") === "md" ? "h-8 px-3 text-base" : "h-7 px-2.5 text-sm")
+            : cls("inline-grid place-items-center", (p.size ?? "md") === "md" ? "size-8" : "size-7"),
+          p.variant === "primary"
+            ? "bg-accent text-accent-fg shadow-soft hover:brightness-110"
+            : p.variant === "secondary"
+              ? "border border-line-strong bg-raised text-fg hover:bg-hover"
+              : cls("text-fg-2 hover:bg-hover hover:text-fg", pos() && "bg-hover text-fg"),
           p.class,
         )}
       >
         {p.icon}
+        {p.text}
       </button>
       <Show when={pos()}>
         {(at) => (

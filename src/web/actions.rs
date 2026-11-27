@@ -166,9 +166,10 @@ pub(super) fn find_mr(hub: &Hub, key: &str) -> Result<Mr, String> {
         .ok_or_else(|| "This merge request is gone".to_string())
 }
 
-fn clone_of(hub: &Hub, project: &str, url: &str) -> Result<String, String> {
+/// key is what the page waits on: it hears the clone's progress.
+fn clone_of(hub: &Hub, project: &str, url: &str, key: &str) -> Result<String, String> {
     let dirs = hub.snapshot().dirs.clone();
-    crate::gitlab::ensure_clone(&dirs, project, url)
+    crate::gitlab::ensure_clone_with(&dirs, project, url, &|pct| hub.progress(key, "clone", Some(pct)))
 }
 
 /// Fetch the MR again soon, also in the workspace that has it.
@@ -412,17 +413,22 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
                 };
                 return Ok(Done { workspace: Some(name), window: w, path: Some(path), ..Done::default() });
             }
-            let repo = clone_of(hub, &m.project, &m.url)?;
+            let busy = format!("checkout:{key}");
+            let repo = clone_of(hub, &m.project, &m.url, &busy)?;
+            hub.progress(&busy, "checkout", None);
             let dir = if review { crate::gitlab::checkout(&repo, &m)? } else { crate::gitlab::checkout_branch(&repo, &m, &m.branch_dir())? };
             let Some(k) = kind else {
                 return Ok(Done { message: Some(format!("Checked out !{}", m.iid)), path: Some(dir), ..Done::default() });
             };
+            hub.progress(&busy, "start", None);
             let (session, w) = new_workspace(&dir, &crate::app::window_name(&k), crate::app::window_command(&k).as_deref())?;
             Ok(Done { message: Some(format!("Checked out !{} in {session}", m.iid)), workspace: Some(session), window: w, path: Some(dir) })
         }
         Action::IssueCheckout { issue: key } => {
             let issue = hub.snapshot().issues.iter().find(|i| issue_key(i) == key).cloned().ok_or("This issue is gone")?;
-            let repo = clone_of(hub, &issue.project, &issue.url)?;
+            let busy = format!("issue:{key}");
+            let repo = clone_of(hub, &issue.project, &issue.url, &busy)?;
+            hub.progress(&busy, "checkout", None);
             let dir = crate::gitlab::issue_worktree(&repo, &issue, &issue.dir())?;
             Ok(Done { path: Some(dir), ..Done::default() })
         }

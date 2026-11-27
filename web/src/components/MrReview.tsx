@@ -1,12 +1,15 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { getJSON, type Agent, type Commit, type DraftNote, type FileChange, type Mr, type MrChanges, type Thread } from "../api";
 import { highlightLines, language } from "../highlight";
-import { act, isBusy, setDraft, state } from "../store";
+import { createFindings, worst, type Finding, type Findings, type Severity } from "../findings";
+import { isReview } from "../gitlab";
+import { act, agentLabel, isBusy, setDraft, state } from "../store";
 import { alive, cls } from "../util";
 import { Conversation } from "./Conversation";
 import { parseHunks, type DiffLine } from "./Diff";
 import { Chat, Check, ChevronDown, Rename, Sparkles, Trash, X } from "./icons";
 import { Markdown } from "./Markdown";
+import { Steps } from "./OpenButton";
 import { ReviewDiff } from "./ReviewDiff";
 import { Badge, Button, IconButton, Spinner, Ago } from "./ui";
 
@@ -92,7 +95,8 @@ export function createReview(mr: () => Mr) {
     const d = drafts.latest;
     return d && d.key === mr().key ? d.drafts : [];
   };
-  return { data, files, error, mode, setMode, drafts: draftList, reloadDrafts: () => setDraftTick((t) => t + 1) };
+  const findings = createFindings(mr, () => reviewAgent(mr()), () => data()?.version?.head);
+  return { data, files, error, mode, setMode, drafts: draftList, reloadDrafts: () => setDraftTick((t) => t + 1), findings };
 }
 
 export type Review = ReturnType<typeof createReview>;
@@ -120,6 +124,13 @@ export async function askClaude(m: Mr, text: string) {
   if (!r.ok) setPendingAsk(null);
 }
 
+/** Show or hide Claude next to the MR. The first time, Claude starts in the MR's checkout, with the review prompt for a review. */
+export function pairReview(m: Mr) {
+  if (chatMr() === m.key) return setChatMr(null);
+  if (reviewAgent(m) || pendingAsk()?.mr === m.key) return setChatMr(m.key);
+  void askClaude(m, isReview(m) ? m.review_prompt : "");
+}
+
 function commentFrom(m: Mr, text: string) {
   const la = lastAsk();
   setDetailTab("changes");
@@ -143,7 +154,7 @@ export function ReviewChat(p: { mr: Mr }) {
     <aside class="fixed inset-0 z-40 flex min-h-0 flex-col bg-panel lg:static lg:z-auto lg:w-[30rem] lg:shrink-0 lg:border-l lg:border-line xl:w-[34rem]">
       <header class="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <Sparkles size={14} class="text-accent" />
-        <span class="truncate text-base font-medium text-fg">Claude on !{p.mr.iid}</span>
+        <span class="truncate text-base font-medium text-fg">{isReview(p.mr) ? "Pair review" : agentLabel()} on !{p.mr.iid}</span>
         <Show when={agent()}>{(a) => <span class="truncate text-sm text-fg-3">{a().workspace}</span>}</Show>
         <IconButton label="Close" class="ml-auto" onClick={() => setChatMr(null)}>
           <X size={15} />
@@ -157,16 +168,14 @@ export function ReviewChat(p: { mr: Mr }) {
               when={starting()}
               fallback={
                 <div class="flex flex-col items-center gap-3">
-                  No Claude runs in the MR's checkout.
-                  <Button size="sm" variant="primary" onClick={() => askClaude(p.mr, "")}>
-                    <Sparkles size={13} /> Start Claude
+                  No {agentLabel()} runs in the MR's checkout.
+                  <Button size="sm" variant="primary" onClick={() => askClaude(p.mr, isReview(p.mr) ? p.mr.review_prompt : "")}>
+                    <Sparkles size={13} /> Start {agentLabel()}
                   </Button>
                 </div>
               }
             >
-              <span class="flex items-center gap-2">
-                <Spinner size={14} /> Starting Claude in the MR's checkout…
-              </span>
+              <Steps busyKey={`checkout:${p.mr.key}`} fallback={`Starting ${agentLabel()} in the MR's checkout…`} class="w-64 text-base" />
             </Show>
           </div>
         }
@@ -487,7 +496,7 @@ interface FileCtx {
   pick: (f: ParsedFile, i: number, extend: boolean) => void;
   select: (f: ParsedFile, a: number, b: number) => void;
   clearSel: () => void;
-  form: () => { file: string; a: number; b: number; text: string } | null;
+  form: () => Form | null;
   setFormText: (t: string) => void;
   openForm: (f: ParsedFile) => void;
   openFileForm: (f: ParsedFile) => void;
@@ -495,13 +504,78 @@ interface FileCtx {
   submit: (f: ParsedFile, draft: boolean) => void;
   ask: (f: ParsedFile) => void;
   askFile: (f: ParsedFile) => void;
+  findings: Findings;
+  keep: (f: ParsedFile, x: Finding) => void;
+  edit: (f: ParsedFile, x: Finding) => void;
 }
 
-type Group = { threads: Thread[]; drafts: DraftNote[]; pending: Pending[] };
+/** A comment being written; finding is the one it came from, kept once the comment is sent. */
+type Form = { file: string; a: number; b: number; text: string; finding?: string };
+
+type Group = { threads: Thread[]; drafts: DraftNote[]; pending: Pending[]; findings: Finding[] };
+
+const SEVERITY: Record<Severity, { tone: "danger" | "waiting" | "neutral"; dot: string; label: string }> = {
+  high: { tone: "danger", dot: "bg-danger", label: "High" },
+  medium: { tone: "waiting", dot: "bg-waiting", label: "Medium" },
+  low: { tone: "neutral", dot: "bg-fg-3", label: "Low" },
+};
+
+const findingPlace = (x: Finding) => (x.line == null ? x.file : `${x.file}:${x.old ? "old " : ""}${x.line}`);
+
+/** Where the finding's line is in the file's diff, or -1 when the diff does not show it. */
+function findingIndex(f: ParsedFile, x: Finding): number {
+  if (x.line == null) return -1;
+  return f.lines.findIndex((l) => (x.old ? l.type !== "add" && l.old === x.line : l.type !== "del" && l.new === x.line));
+}
+
+const askFinding = (m: Mr, x: Finding) => askClaude(m, `About your finding at ${findingPlace(x)}:\n\n> ${x.body.replace(/\n/g, "\n> ")}\n\n`);
+
+/** One of Claude's findings, not yet yours: keep it as a draft comment, edit it first, throw it away, or ask about it. */
+function FindingBox(p: { mr: Mr; finding: Finding; onKeep: () => void; onEdit?: () => void; onDismiss: () => void }) {
+  const sev = () => SEVERITY[p.finding.severity];
+  return (
+    <article class="max-w-3xl overflow-hidden rounded-xl border border-dashed border-accent/50 bg-accent/[0.04] animate-pop-in">
+      <header class="flex flex-wrap items-center gap-2 px-3 pt-2 text-sm">
+        <Sparkles size={13} class="text-accent" />
+        <span class="font-medium text-fg-2">{agentLabel()} suggests</span>
+        <Badge tone={sev().tone}>{sev().label}</Badge>
+      </header>
+      <Markdown text={p.finding.body} class="px-3.5 py-2 text-base text-fg-2" />
+      <div class="flex flex-wrap items-center gap-1.5 px-2.5 pb-2.5">
+        <Button size="sm" variant="primary" onClick={p.onKeep} title="Add it to your review as a draft comment">
+          <Check size={13} /> Keep
+        </Button>
+        <Show when={p.onEdit}>
+          <Button size="sm" onClick={p.onEdit} title="Edit it before it goes in your review">
+            <Rename size={13} /> Edit
+          </Button>
+        </Show>
+        <Button size="sm" variant="ghost" onClick={() => void askFinding(p.mr, p.finding)} title={`Talk about it with ${agentLabel()} in the side panel`}>
+          <Chat size={13} /> Ask
+        </Button>
+        <Button size="sm" variant="ghost" class="ml-auto" onClick={p.onDismiss} title="Throw it away">
+          <Trash size={13} /> Dismiss
+        </Button>
+      </div>
+    </article>
+  );
+}
 
 const lineKeys = (l: DiffLine) => (l.type === "del" ? [`o${l.old}`] : l.type === "add" ? [`n${l.new}`] : l.type === "ctx" ? [`n${l.new}`, `o${l.old}`] : []);
 
-function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: () => void; threads: Thread[]; drafts: DraftNote[]; pending: Pending[]; open: boolean; onOpen: (o: boolean) => void; ctx: FileCtx }) {
+function FileBox(p: {
+  f: ParsedFile;
+  index: number;
+  viewed: boolean;
+  onViewed: () => void;
+  threads: Thread[];
+  drafts: DraftNote[];
+  pending: Pending[];
+  findings: Finding[];
+  open: boolean;
+  onOpen: (o: boolean) => void;
+  ctx: FileCtx;
+}) {
   const [full, setFull] = createSignal(false);
   // An MR can change hundreds of files: draw a diff only when it comes near the screen.
   const [near, setNear] = createSignal(false);
@@ -518,17 +592,18 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
   const placed = createMemo(() => {
     const shown = new Set(p.f.lines.flatMap(lineKeys));
     const map = new Map<string, Group>();
-    const loose: Group = { threads: [], drafts: [], pending: [] };
+    const loose: Group = { threads: [], drafts: [], pending: [], findings: [] };
     const put = (line: number | null, old: boolean, add: (g: typeof loose) => void) => {
       const k = line == null ? null : `${old ? "o" : "n"}${line}`;
       if (k && shown.has(k)) {
-        if (!map.has(k)) map.set(k, { threads: [], drafts: [], pending: [] });
+        if (!map.has(k)) map.set(k, { threads: [], drafts: [], pending: [], findings: [] });
         add(map.get(k)!);
       } else add(loose);
     };
     for (const t of p.threads) put(t.line, t.old_line, (g) => g.threads.push(t));
     for (const d of p.drafts) put(d.line, d.old_line, (g) => g.drafts.push(d));
     for (const n of p.pending) put(n.line, n.old_line, (g) => g.pending.push(n));
+    for (const x of p.findings) put(x.line, x.old, (g) => g.findings.push(x));
     return { map, loose };
   });
 
@@ -548,6 +623,17 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
         <DraftBox mr={p.ctx.mr} draft={d} onChange={p.ctx.review.reloadDrafts} />
       ))}
       <For each={q.g.pending}>{(n) => <PendingBox note={n} />}</For>
+      <For each={q.g.findings}>
+        {(x) => (
+          <FindingBox
+            mr={p.ctx.mr}
+            finding={x}
+            onKeep={() => p.ctx.keep(p.f, x)}
+            onEdit={() => (p.onOpen(true), p.ctx.edit(p.f, x))}
+            onDismiss={() => p.ctx.findings.decide(x.id, "dismissed")}
+          />
+        )}
+      </For>
     </div>
   );
 
@@ -587,7 +673,7 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
     </div>
   );
 
-  const looseCount = () => placed().loose.threads.length + placed().loose.drafts.length + placed().loose.pending.length;
+  const looseCount = () => placed().loose.threads.length + placed().loose.drafts.length + placed().loose.pending.length + placed().loose.findings.length;
   const fileForm = () => form()?.a === FILE;
   return (
     <section ref={el} id={`mr-file-${p.index}`} class="scroll-mt-2 rounded-xl border border-line bg-panel">
@@ -607,6 +693,11 @@ function FileBox(p: { f: ParsedFile; index: number; viewed: boolean; onViewed: (
         </Show>
         <Show when={p.drafts.length}>
           <span class="shrink-0 text-xs text-fg-3">{p.drafts.length} draft</span>
+        </Show>
+        <Show when={p.findings.length}>
+          <span class="inline-flex shrink-0 items-center gap-1 text-xs text-accent" title={`${agentLabel()}'s findings you have not kept or dismissed`}>
+            <Sparkles size={11} /> {p.findings.length}
+          </span>
         </Show>
         <span class="ml-auto" />
         <button class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-accent" onClick={() => p.ctx.askFile(p.f)} title="Ask Claude about this file">
@@ -720,7 +811,8 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
   const viewed = viewedStore(() => p.mr.key);
   const [open, setOpen] = createSignal<Record<string, boolean>>({});
   const [sel, setSel] = createSignal<{ file: string; a: number; b: number } | null>(null);
-  const [form, setForm] = createSignal<{ file: string; a: number; b: number; text: string } | null>(null);
+  const [form, setForm] = createSignal<Form | null>(null);
+  const findings = p.review.findings;
   const [pending, setPending] = createSignal<Pending[]>([]);
   // A sent comment goes when GitLab's copy of it shows: a draft once the drafts reload, a comment
   // once the MR's threads refresh.
@@ -753,6 +845,17 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
   const total = createMemo(() => (files() ?? []).reduce((a, f) => ({ added: a.added + f.added, removed: a.removed + f.removed }), { added: 0, removed: 0 }));
   // Positions of threads and drafts are in the MR's latest version, not in one commit's diff.
   const onFile = <T extends { path: string | null }>(list: T[], f: ParsedFile) => (p.review.mode() ? [] : list.filter((t) => t.path && (t.path === f.new_path || t.path === f.old_path)));
+  const findingsOn = (f: ParsedFile) => (p.review.mode() ? [] : findings.open().filter((x) => x.file === f.new_path || x.file === f.old_path));
+  // A finding on a file the MR does not change can only go in the review's summary.
+  const outside = createMemo(() => {
+    const l = files();
+    return l ? findings.open().filter((x) => !l.some((f) => x.file === f.new_path || x.file === f.old_path)) : [];
+  });
+  const toSummary = (x: Finding) => {
+    findings.decide(x.id, "kept");
+    setSummary((s) => `${s.trim() ? `${s.trim()}\n\n` : ""}**${findingPlace(x)}**: ${x.body}`);
+    setFinishing(true);
+  };
 
   const goTo = (i: number) => {
     const l = files();
@@ -807,6 +910,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       const fm = form();
       const v = p.review.data()?.version;
       if (!fm || !v || !fm.text.trim()) return;
+      if (fm.finding) findings.decide(fm.finding, "kept");
       const a = Math.min(fm.a, fm.b);
       const b = Math.max(fm.a, fm.b);
       const last = a === FILE ? null : f.lines[b];
@@ -825,6 +929,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
       const pos = a === FILE ? filePosition(v, f) : await position(v, f, f.lines[a], f.lines[b]);
       const r = await act({ type: "mr_note", mr: p.mr.key, body: fm.text, position: pos, draft }, { key: `note:${p.mr.key}:${note.id}`, quiet: true });
       if (!r.ok) {
+        if (fm.finding) findings.decide(fm.finding, null);
         setPending((x) => x.filter((n) => n.id !== note.id));
         if (!form()) (setSel(a === FILE ? null : { file: fm.file, a: fm.a, b: fm.b }), setForm(fm));
         return;
@@ -843,6 +948,20 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
     askFile: (f) => {
       setLastAsk({ mr: p.mr.key, mode: p.review.mode(), file: f.name, a: FILE, b: FILE });
       void askClaude(p.mr, askPrompt(p.mr, f, [], p.review.mode(), p.review.data()?.version));
+    },
+    findings,
+    // A line the diff does not show has no GitLab position: the comment goes on the file, naming the line.
+    keep: (f, x) => {
+      const i = findingIndex(f, x);
+      setSel(null);
+      setForm(i < 0 ? { file: f.name, a: FILE, b: FILE, text: x.line == null ? x.body : `Line ${x.line}: ${x.body}`, finding: x.id } : { file: f.name, a: i, b: i, text: x.body, finding: x.id });
+      void ctx.submit(f, true);
+    },
+    edit: (f, x) => {
+      const i = findingIndex(f, x);
+      if (i < 0) setSel(null);
+      else setSel({ file: f.name, a: i, b: i });
+      setForm(i < 0 ? { file: f.name, a: FILE, b: FILE, text: x.line == null ? x.body : `Line ${x.line}: ${x.body}`, finding: x.id } : { file: f.name, a: i, b: i, text: x.body, finding: x.id });
     },
   };
 
@@ -940,6 +1059,35 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
           </Button>
         </span>
       </div>
+      <Show when={findings.all().length && !p.review.mode()}>
+        <div class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent/30 bg-accent/[0.06] px-3 py-2 text-sm">
+          <Sparkles size={13} class="text-accent" />
+          <span class="text-fg">
+            {findings.open().length
+              ? `${findings.open().length} of ${findings.all().length} findings from ${agentLabel()} wait for you`
+              : `You went through all ${findings.all().length} findings from ${agentLabel()}`}
+          </span>
+          <Show when={findings.stale()}>
+            <Badge tone="waiting" title="Line numbers can be off">The MR changed since</Badge>
+          </Show>
+          <Button size="sm" variant="ghost" class="ml-auto" onClick={findings.clear} title="Forget these findings">
+            <X size={13} /> Clear
+          </Button>
+        </div>
+      </Show>
+      <Show when={outside().length && !p.review.mode()}>
+        <div class="mb-3 flex flex-col gap-2">
+          <div class="text-sm text-fg-3">On files the MR does not change: keep one and it goes in the review's summary.</div>
+          <For each={outside()}>
+            {(x) => (
+              <div>
+                <div class="mb-1 font-mono text-sm text-fg-2">{findingPlace(x)}</div>
+                <FindingBox mr={p.mr} finding={x} onKeep={() => toSummary(x)} onDismiss={() => findings.decide(x.id, "dismissed")} />
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
       <Show when={finishing()}>
         <FinishPanel mr={p.mr} review={p.review} summary={summary()} onSummary={setSummary} onClose={() => setFinishing(false)} />
       </Show>
@@ -961,6 +1109,9 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
                         {f.name.split("/").pop()}
                         <span class="ml-1 text-fg-3">{f.name.includes("/") ? f.name.slice(0, f.name.lastIndexOf("/")) : ""}</span>
                       </span>
+                      <Show when={worst(findingsOn(f))}>
+                        {(w) => <span class={cls("size-1.5 shrink-0 rounded-full", SEVERITY[w()].dot)} title={`${findingsOn(f).length} from ${agentLabel()}`} />}
+                      </Show>
                       <Show when={viewed.is(f)} fallback={<Counts added={f.added} removed={f.removed} />}>
                         <Check size={12} class="shrink-0 text-idle" />
                       </Show>
@@ -979,6 +1130,7 @@ export function Changes(p: { mr: Mr; review: Review; thread: (t: Thread) => JSX.
                       threads={onFile(p.mr.threads, f)}
                       drafts={onFile(drafts(), f)}
                       pending={onFile(pending(), f)}
+                      findings={findingsOn(f)}
                       open={isOpen(f)}
                       onOpen={(o) => setOpen((x) => ({ ...x, [f.name]: o }))}
                       ctx={ctx}

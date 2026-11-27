@@ -137,6 +137,9 @@ export function dismiss(id: number) {
 
 /** Run an action and report the result; keyed so the same button cannot fire twice at once. */
 export const [busy, setBusy] = createSignal<Set<string>>(new Set());
+/** The step a long action is at, such as a checkout that clones first, by its busy key. pct is null when unknown. */
+export const [progress, setProgress] = createSignal<Record<string, { step: string; pct: number | null; seen: string[] }>>({});
+
 export function isBusy(key: string) {
   return busy().has(key);
 }
@@ -156,6 +159,7 @@ export async function act(action: Action, opts: { key?: string; quiet?: boolean 
       n.delete(key);
       return n;
     });
+    if (key in progress()) setProgress(({ [key]: _, ...rest }) => rest);
   }
 }
 
@@ -274,6 +278,11 @@ function connect() {
       setLoaded(true);
     } else if (msg.type === "notice") {
       toast(msg.text, msg.error);
+    } else if (msg.type === "progress" && busy().has(msg.key)) {
+      setProgress((p) => {
+        const seen = p[msg.key]?.seen ?? [];
+        return { ...p, [msg.key]: { step: msg.step, pct: msg.pct ?? null, seen: seen.includes(msg.step) ? seen : [...seen, msg.step] } };
+      });
     }
   };
   ws.onclose = () => {

@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import type { Issue, Mr, Todo } from "./api";
-import { act, go, setComposer, setDraft, state } from "./store";
+import { act, go, setComposer, state } from "./store";
 
 export type Kind = "agent" | "shell";
 
@@ -19,26 +19,10 @@ export function pipelineTone(p: string | null): "add" | "danger" | "waiting" | "
   return "waiting";
 }
 
-/** Give prompt to a free Claude in the workspace, to edit before sending; else start a new one with it. */
-function toClaude(workspace: string | null, path: string, prompt: string) {
-  const agents = state.agents.filter((a) => workspace && a.workspace === workspace && a.window && a.reachable && (a.status === "idle" || a.status === "waiting"));
-  const a = agents.find((x) => x.status === "idle") ?? agents[0];
-  if (workspace && a?.window) {
-    go({ view: "workspace", name: workspace, window: a.window });
-    setDraft({ agent: a.key, text: prompt });
-  } else {
-    setComposer({ path, prompt });
-  }
-}
-
-/** Open the MR's code with a window of kind; Claude gets the review prompt (for a review) to edit first. */
-export async function openMr(m: Mr, kind: Kind, prompt?: string) {
-  const p = kind === "agent" ? (prompt ?? (isReview(m) ? m.review_prompt : "")) : "";
-  // With a prompt to edit, only check the code out: the workspace opens with the agent you start.
-  const r = await act({ type: "checkout", mr: m.key, kind: p ? undefined : kind }, { key: `checkout:${m.key}` });
-  if (!r.ok || !r.path) return;
-  if (p) return toClaude(r.workspace ?? null, r.path, p);
-  if (r.workspace) go({ view: "workspace", name: r.workspace, window: r.window ?? null });
+/** Open the MR's code in its workspace with a new window of kind, checking it out (and cloning the project) first when needed. */
+export async function openMr(m: Mr, kind: Kind) {
+  const r = await act({ type: "checkout", mr: m.key, kind }, { key: `checkout:${m.key}` });
+  if (r.ok && r.workspace) go({ view: "workspace", name: r.workspace, window: r.window ?? null });
 }
 
 /** Check out a worktree for the issue, cloning the project into the cache when missing; Where in the composer can still change it. */

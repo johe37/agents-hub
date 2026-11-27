@@ -1,14 +1,15 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Issue, Mr, Thread, Todo } from "../api";
-import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Kind, type Tab } from "../gitlab";
+import { allMrs, entries, goWorkspace, isMention, isReview, markDone, openMr, pipelineTone, startIssue, todos, type Entry, type Tab } from "../gitlab";
 import { act, agentLabel, go, isBusy, route, state } from "../store";
 import { cls, fuzzyWords } from "../util";
-import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles, Terminal } from "./icons";
+import { Bell, Branch, Chat, Check, Chevron, Code, Done, External, Git, Layers, PanelLeft, Pipeline, Refresh, Search, Sparkles } from "./icons";
 import { Markdown } from "./Markdown";
 import { JobMark, Pipeline as PipelineTab } from "./MrPipeline";
-import { Changes, Commits, ReviewChat, chatMr, createReview, detailTab, setChatMr, setDetailTab, type DetailTab } from "./MrReview";
-import { Badge, Button, Edge, Empty, IconButton, SectionTitle, Ago, Resizer } from "./ui";
+import { Changes, Commits, ReviewChat, askClaude, chatMr, createReview, detailTab, pairReview, setDetailTab, type DetailTab } from "./MrReview";
+import { OpenButton, stepText } from "./OpenButton";
+import { Badge, Button, Edge, Empty, IconButton, SectionTitle, Spinner, Ago, Resizer } from "./ui";
 import { focus, resizable, showList, toggleList } from "../layout";
 
 function Lead(p: { mr: Mr }) {
@@ -237,33 +238,12 @@ function ThreadBox(p: { mr: Mr; thread: Thread }) {
           <Button size="sm" loading={isBusy(key("resolve"))} onClick={() => send(true)} title="Post the reply, if any, and resolve the thread">
             <Check size={13} /> {text().trim() ? "Reply and resolve" : "Resolve"}
           </Button>
-          <Button size="sm" variant="ghost" class="ml-auto" loading={isBusy(`checkout:${p.mr.key}`)} onClick={() => openMr(p.mr, "agent", p.thread.prompt)} title={`Put the thread in a ${agentLabel()} prompt in the MR's workspace, to edit before sending`}>
+          <Button size="sm" variant="ghost" class="ml-auto" onClick={() => askClaude(p.mr, p.thread.prompt)} title={`Put the thread in a prompt for ${agentLabel()} in the side panel, to edit before sending`}>
             <Sparkles size={13} /> Ask {agentLabel()} to fix
           </Button>
         </div>
       </div>
     </article>
-  );
-}
-
-function OpenButtons(p: { mr: Mr }) {
-  const busy = () => isBusy(`checkout:${p.mr.key}`);
-  const review = () => isReview(p.mr);
-  const open = (k: Kind) => openMr(p.mr, k);
-  return (
-    <>
-      <Show when={p.mr.workspace}>
-        <Button size="sm" variant="primary" onClick={() => goWorkspace(p.mr)}>
-          <Layers size={13} /> Go to {p.mr.workspace}
-        </Button>
-      </Show>
-      <Button size="sm" variant={p.mr.workspace ? "secondary" : "primary"} loading={busy()} onClick={() => open("agent")} kbd="c" title={review() ? `Check out the code and start ${agentLabel()} with a review prompt to edit first` : `Open ${agentLabel()} on the MR's branch`}>
-        <Sparkles size={13} /> {review() ? `Review with ${agentLabel()}` : agentLabel()}
-      </Button>
-      <Button size="sm" disabled={busy()} onClick={() => open("shell")} kbd="t">
-        <Terminal size={13} /> Shell
-      </Button>
-    </>
   );
 }
 
@@ -278,6 +258,7 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
   const m = () => p.mr;
   const review = createReview(m);
   const count = (t: DetailTab) => (t === "commits" ? review.data()?.commits?.length : t === "changes" ? review.data()?.files.length : undefined);
+  const found = () => review.findings.open().length;
   return (
     <div class={cls("mx-auto w-full px-4 pb-24 pt-5 sm:px-8", focus() ? "max-w-none" : "max-w-[110rem]")}>
       {p.top}
@@ -313,10 +294,18 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
         </Show>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <OpenButtons mr={m()} />
-        <Button size="sm" variant={chatMr() === m().key ? "secondary" : "ghost"} onClick={() => setChatMr(chatMr() === m().key ? null : m().key)} title="Claude in the MR's checkout, next to the diff">
-          <Chat size={13} /> Chat
+        <OpenButton workspace={m().workspace} busyKey={`checkout:${m().key}`} open={(k) => openMr(m(), k)} go={() => goWorkspace(m())} />
+        <Button
+          size="sm"
+          variant={chatMr() === m().key ? "secondary" : "ghost"}
+          aria-pressed={chatMr() === m().key}
+          onClick={() => pairReview(m())}
+          kbd={"\\"}
+          title={isReview(m()) ? `Review with ${agentLabel()} next to the diff: it starts with the review prompt` : `${agentLabel()} in the MR's checkout, next to the diff`}
+        >
+          <Sparkles size={13} class={cls(chatMr() === m().key && "text-accent")} /> {isReview(m()) ? "Pair review" : agentLabel()}
         </Button>
+        <span class="flex-1" />
         <Show when={isReview(m())}>
           <Button
             size="sm"
@@ -327,8 +316,8 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
             <Check size={13} /> {m().approved ? "Revoke approval" : "Approve"}
           </Button>
         </Show>
-        <a href={m().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
-          Open in GitLab <External size={12} />
+        <a href={m().url} target="_blank" rel="noopener" class="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg" title="Open in GitLab (o)">
+          GitLab <External size={12} />
         </a>
       </div>
 
@@ -350,6 +339,11 @@ function MrDetail(p: { mr: Mr; top?: JSX.Element }) {
               {t.label}
               <Show when={count(t.id) != null}>
                 <span class="rounded-full bg-hover px-1.5 text-xs tabular-nums text-fg-3">{count(t.id)}</span>
+              </Show>
+              <Show when={t.id === "changes" && found()}>
+                <span class="inline-flex items-center gap-0.5 rounded-full bg-accent/15 px-1.5 text-xs tabular-nums text-accent" title={`${found()} findings from ${agentLabel()} wait for you`}>
+                  <Sparkles size={10} /> {found()}
+                </span>
               </Show>
             </button>
           )}
@@ -420,9 +414,18 @@ function IssueDetail(p: { issue: Issue; top?: JSX.Element }) {
         <For each={i().labels}>{(l) => <Badge>{l}</Badge>}</For>
       </div>
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" loading={isBusy(`issue:${i().key}`)} onClick={() => startIssue(i())} kbd="c" title={`Start ${agentLabel()} on a branch for the issue, with a prompt about it to edit first`}>
-          <Sparkles size={13} /> Work on it with {agentLabel()}
-        </Button>
+        <Show
+          when={isBusy(`issue:${i().key}`)}
+          fallback={
+            <Button size="sm" variant="primary" onClick={() => startIssue(i())} kbd="c" title={`Start ${agentLabel()} on a branch for the issue, with a prompt about it to edit first`}>
+              <Sparkles size={13} /> Work on it with {agentLabel()}
+            </Button>
+          }
+        >
+          <Button size="sm" variant="secondary" disabled class="!opacity-100">
+            <Spinner size={13} /> {stepText(`issue:${i().key}`) ?? "Preparing a branch…"}
+          </Button>
+        </Show>
         <a href={i().url} target="_blank" rel="noopener" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg">
           Open in GitLab <External size={12} />
         </a>
@@ -624,7 +627,7 @@ export function Gitlab() {
         break;
       case "\\":
         if (!cur?.mr) return;
-        setChatMr(chatMr() === cur.mr.key ? null : cur.mr.key);
+        pairReview(cur.mr);
         break;
       case "d":
       case "l":

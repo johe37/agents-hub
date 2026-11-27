@@ -1,19 +1,12 @@
 import { For, onCleanup, onMount, Show } from "solid-js";
 import { act, agentLabel, go, hasAgent, isBusy, setComposer, state } from "../store";
 import { basename } from "../util";
-import { Bot, Folder, Sparkles, Terminal } from "./icons";
+import { Folder, Sparkles } from "./icons";
+import { openChoices as choices, type Kind } from "./OpenButton";
 import { Spinner } from "./ui";
-
-type Kind = "agent" | "shell";
-
-const ALL_CHOICES: { kind: Kind; title: () => string; body: () => string; key: string; icon: () => any }[] = [
-  { kind: "agent", title: agentLabel, body: () => `${state.agent.claude ? "Claude Code" : agentLabel()} in this directory`, key: "c", icon: () => <Bot size={20} /> },
-  { kind: "shell", title: () => "Terminal", body: () => "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
-];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
 export function OpenWorkspace(p: { path: string }) {
-  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "agent" || hasAgent());
   const short = () => (state.home && p.path.startsWith(state.home) ? "~" + p.path.slice(state.home.length) : p.path);
   const busy = (k: Kind) => isBusy(`open:${p.path}:${k}`);
   const start = async (kind: Kind) => {
@@ -51,7 +44,7 @@ export function OpenWorkspace(p: { path: string }) {
               disabled={choices().some((x) => busy(x.kind))}
               onClick={() => start(c.kind)}
             >
-              <span class="text-fg-2 group-hover:text-accent">{busy(c.kind) ? <Spinner size={20} /> : c.icon()}</span>
+              <span class="text-fg-2 group-hover:text-accent">{busy(c.kind) ? <Spinner size={20} /> : c.icon(20)}</span>
               <span class="font-medium text-fg">{c.title()}</span>
               <span class="text-sm text-fg-3">{c.body()}</span>
               <span class="kbd absolute right-3 top-3">{c.key}</span>

@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,9 @@ const TTL: Duration = Duration::from_secs(60);
 const RUNNING_TTL: Duration = Duration::from_secs(10);
 /// MRs waiting for your review and your issues: one call per MR, so not too often.
 const INBOX_TTL: Duration = Duration::from_secs(120);
+
+/// The language of the fenced block a review prompt asks for; the web page reads the same name.
+const FINDINGS_LANG: &str = "review-findings";
 
 #[derive(Clone, Debug, Default)]
 pub struct Mr {
@@ -153,10 +157,11 @@ impl Mr {
     }
 
     /// The prompt that starts a review; one line, so typing it does not send it.
+    /// Ends with a fenced block of findings as JSON: the web page shows them in the diff.
     pub fn review_prompt(&self) -> String {
         format!(
-            "Review merge request !{} in {}: \"{}\" by {}. Its code is checked out in this directory; see the change with `glab mr diff {} -R {}`. Look for bugs, risky changes and missing tests, and list each finding with its file and line. Don't post anything on GitLab.",
-            self.iid, self.project, self.title, self.author, self.iid, self.project
+            "Review merge request !{} in {}: \"{}\" by {}. Its code is checked out in this directory; see the change with `glab mr diff {} -R {}`. Look for bugs, risky changes and missing tests. Don't post anything on GitLab.\n\nEnd your answer with your findings in a fenced code block with the language `{}`: a JSON array of objects like {{\"file\": \"src/a.rs\", \"line\": 42, \"severity\": \"high\", \"body\": \"…\"}}. file is the path from the repo root. line is the line in the new version; for a removed line, give its line in the old version and add \"old\": true; null for the whole file. severity is high, medium or low. body is the comment to the author, in Markdown. Give an empty array when you find nothing.",
+            self.iid, self.project, self.title, self.author, self.iid, self.project, FINDINGS_LANG
         )
     }
 
@@ -889,14 +894,31 @@ static CLONING: Mutex<()> = Mutex::new(());
 /// A clone of project: one under the repo roots, else the hub's own in the cache, cloned with glab when missing.
 /// url is a web URL in the project, such as an issue's: glab clones from its host.
 pub fn ensure_clone(dirs: &[(String, bool)], project: &str, url: &str) -> Result<String, String> {
+    ensure_clone_with(dirs, project, url, &|_| {})
+}
+
+/// Like `ensure_clone`; on_pct hears how far a clone has come, from 0 when it starts.
+pub fn ensure_clone_with(dirs: &[(String, bool)], project: &str, url: &str, on_pct: &dyn Fn(u8)) -> Result<String, String> {
     if let Some(repo) = find_clone(dirs, project) {
         return Ok(repo);
     }
     let _lock = CLONING.lock().unwrap_or_else(|e| e.into_inner());
-    clone_into(&clones_dir().join(project), project, url)
+    clone_into(&clones_dir().join(project), project, url, on_pct)
 }
 
-fn clone_into(dir: &Path, project: &str, url: &str) -> Result<String, String> {
+/// How far a clone has come, from a line of git's progress: receiving the objects is most of the work.
+fn clone_pct(line: &str) -> Option<u8> {
+    let (phase, rest) = line.trim().split_once(':')?;
+    let pct: u32 = rest.trim_start().split('%').next()?.trim().parse().ok()?;
+    let pct = pct.min(100);
+    match phase {
+        "Receiving objects" => Some((pct * 85 / 100) as u8),
+        "Resolving deltas" => Some((85 + pct * 15 / 100) as u8),
+        _ => None,
+    }
+}
+
+fn clone_into(dir: &Path, project: &str, url: &str, on_pct: &dyn Fn(u8)) -> Result<String, String> {
     let d = dir.display().to_string();
     if dir.join(".git").exists() {
         return Ok(d);
@@ -908,17 +930,52 @@ fn clone_into(dir: &Path, project: &str, url: &str) -> Result<String, String> {
     let _ = std::fs::remove_dir_all(&partial);
     let host = url.split_once("://").and_then(|(_, rest)| rest.split('/').next()).filter(|h| !h.is_empty());
     let mut cmd = Command::new("timeout");
-    cmd.args(["600", "glab", "repo", "clone", project]).arg(&partial).current_dir(parent).env("GIT_TERMINAL_PROMPT", "0").stdin(std::process::Stdio::null());
+    // git shows progress only on a terminal unless asked.
+    cmd.args(["600", "glab", "repo", "clone", project])
+        .arg(&partial)
+        .args(["--", "--progress"])
+        .current_dir(parent)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
     if let Some(h) = host {
         cmd.env("GITLAB_HOST", h);
     }
-    let out = cmd.output().map_err(|e| format!("glab: {e}"))?;
-    if !out.status.success() {
+    on_pct(0);
+    let mut child = cmd.spawn().map_err(|e| format!("glab: {e}"))?;
+    let mut stderr = String::new();
+    if let Some(mut err) = child.stderr.take() {
+        let (mut buf, mut line, mut last) = ([0u8; 4096], Vec::new(), 0u8);
+        while let Ok(n) = err.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            for &b in &buf[..n] {
+                if b != b'\r' && b != b'\n' {
+                    line.push(b);
+                    continue;
+                }
+                let l = String::from_utf8_lossy(&line);
+                if let Some(p) = clone_pct(&l).filter(|p| *p > last) {
+                    last = p;
+                    on_pct(p);
+                }
+                if b == b'\n' {
+                    stderr.push_str(&l);
+                    stderr.push('\n');
+                }
+                line.clear();
+            }
+        }
+    }
+    let status = child.wait().map_err(|e| format!("glab: {e}"))?;
+    if !status.success() {
         let _ = std::fs::remove_dir_all(&partial);
-        return Err(match out.status.code() {
+        return Err(match status.code() {
             Some(124) => "The clone timed out".to_string(),
             Some(127) => "glab is not installed".to_string(),
-            _ => format!("Could not clone {project}: {}", failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or("glab failed".into())),
+            _ => format!("Could not clone {project}: {}", failure(&stderr).unwrap_or("glab failed".into())),
         });
     }
     std::fs::rename(&partial, dir).map_err(|e| e.to_string())?;
@@ -1288,6 +1345,14 @@ mod tests {
         assert!(mr.running());
         mr.pipeline = Some("success".into());
         assert!(!mr.running());
+    }
+
+    #[test]
+    fn reads_clone_progress() {
+        assert_eq!(clone_pct("Receiving objects:  40% (400/1000), 1.2 MiB | 2 MiB/s"), Some(34));
+        assert_eq!(clone_pct("Resolving deltas: 100% (20/20), done."), Some(100));
+        assert_eq!(clone_pct("remote: Counting objects: 50% (5/10)"), None);
+        assert_eq!(clone_pct("Cloning into 'x.partial'..."), None);
     }
 
     #[test]
