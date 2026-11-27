@@ -397,7 +397,7 @@ async fn commits(State(hub): State<Arc<Hub>>, Query(q): Query<HashMap<String, St
     let num = |k: &str, d: usize| q.get(k).and_then(|v| v.parse().ok()).unwrap_or(d);
     let (skip, limit) = (num("skip", 0), num("limit", 50).clamp(1, 500));
     let r = tokio::task::spawn_blocking(move || {
-        let lq = model::LogQuery { rev: q.get("rev").map(String::as_str), mode: q.get("mode").map(String::as_str), search: q.get("q").map(String::as_str), skip, limit };
+        let lq = model::LogQuery { rev: q.get("rev").map(String::as_str), behind: q.get("behind").is_some_and(|v| v == "1"), search: q.get("q").map(String::as_str), skip, limit };
         model::commits(&path, &lq)
     });
     Json(r.await.unwrap_or_default()).into_response()

@@ -3,19 +3,20 @@ import { Portal } from "solid-js/web";
 import { getJSON, type Commit, type Workspace } from "../api";
 import { act, agentLabel, go, hasAgent, openDiff, toast } from "../store";
 import { cls } from "../util";
-import { ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Search, Sparkles, X } from "./icons";
+import { ArrowDown, ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Search, Sparkles, X } from "./icons";
 import { Ago, SectionTitle, Spinner } from "./ui";
 
 const PAGE = 50;
 
-type Mode = "own" | "all";
 type Ref = [kind: string, name: string];
 
 interface Page {
   commits: Commit[];
   more: boolean;
-  mode?: Mode;
   base?: string | null;
+  /** First-parent commits on the branch that base lacks, and the other way round. */
+  ahead?: number;
+  behind?: number;
   error?: string;
 }
 
@@ -172,7 +173,8 @@ function BranchPicker(p: { path: string; at: { x: number; y: number; width: numb
 
 export function Commits(p: { ws: Workspace }) {
   const [rev, setRev] = createSignal<string | null>(null);
-  const [mode, setMode] = createSignal<Mode | null>(null);
+  const [showBehind, setShowBehind] = createSignal(false);
+  const [behind, setBehind] = createSignal<Page | null>(null);
   const [search, setSearch] = createSignal("");
   const [query, setQuery] = createSignal("");
   const [searching, setSearching] = createSignal(false);
@@ -193,7 +195,6 @@ export function Commits(p: { ws: Workspace }) {
       () => p.ws.path,
       () => {
         setRev(null);
-        setMode(null);
         setSearch("");
         setSearching(false);
         setOpen(new Set<string>());
@@ -204,17 +205,15 @@ export function Commits(p: { ws: Workspace }) {
   );
 
   // Strings, so a state update that leaves them the same does not refetch.
-  const view = createMemo(() => JSON.stringify([p.ws.path, rev(), mode(), query()]));
+  const view = createMemo(() => JSON.stringify([p.ws.path, rev(), query()]));
   const head = createMemo(() => p.ws.git?.commit ?? "");
 
   let seq = 0;
   async function load(skip: number, limit: number) {
     const id = ++seq;
     setLoading(true);
-    const m = skip ? page().mode : mode();
     const q = new URLSearchParams({ path: p.ws.path, skip: String(skip), limit: String(limit) });
     if (rev()) q.set("rev", rev()!);
-    if (m) q.set("mode", m);
     if (query()) q.set("q", query());
     try {
       const r = await getJSON<Page>(`/api/commits?${q}`);
@@ -245,8 +244,20 @@ export function Commits(p: { ws: Workspace }) {
   );
   const more = () => !loading() && page().more && void load(items().length, PAGE);
 
-  const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && more(), { rootMargin: "200px" });
-  onCleanup(() => io.disconnect());
+  // The commits the branch lacks, fetched while they are shown.
+  createEffect(
+    on([view, head, showBehind], ([, , shown]) => {
+      if (!shown) return setBehind(null);
+      const q = new URLSearchParams({ path: p.ws.path, behind: "1", limit: String(PAGE) });
+      if (rev()) q.set("rev", rev()!);
+      const v = view();
+      getJSON<Page>(`/api/commits?${q}`).then(
+        (r) => v === view() && showBehind() && setBehind(r),
+        (e) => toast(`Could not list commits: ${(e as Error).message}`, true),
+      );
+    }),
+  );
+  createEffect(on(view, () => setShowBehind(false), { defer: true }));
   let pickerBtn!: HTMLButtonElement;
 
   const toggle = (sha: string) => {
@@ -271,8 +282,9 @@ export function Commits(p: { ws: Workspace }) {
   };
   const browse = ([kind, name]: Ref) => {
     setRev(kind === "tag" ? `refs/tags/${name}` : kind === "remote" ? `refs/remotes/${name}` : name === "HEAD" ? null : `refs/heads/${name}`);
-    setMode("all");
   };
+  // Own commits come first on the first-parent line, so the branch starts after the last of them.
+  const forkAt = (i: number) => !query() && i > 0 && items()[i - 1].own && !items()[i].own;
 
   const revLabel = () => {
     const r = rev();
@@ -282,7 +294,6 @@ export function Commits(p: { ws: Workspace }) {
   const empty = () => {
     if (page().error) return page().error;
     if (query()) return "No commit matches";
-    if (page().mode === "own") return `No commits that ${page().base ?? "the default branch"} lacks`;
     return "No commits";
   };
 
@@ -290,22 +301,6 @@ export function Commits(p: { ws: Workspace }) {
     <section class="shrink-0 border-t border-line p-3">
       <div class="mb-2 flex items-center gap-1 px-1">
         <SectionTitle class="flex-1">Commits</SectionTitle>
-        <Show when={page().base}>
-          <div class="flex rounded-md bg-hover p-0.5 text-xs" role="group" aria-label="Which commits">
-            <For each={["own", "all"] as Mode[]}>
-              {(m) => (
-                <button
-                  class={cls("rounded px-1.5 py-0.5", page().mode === m ? "bg-raised text-fg shadow-sm" : "text-fg-3 hover:text-fg")}
-                  aria-pressed={page().mode === m}
-                  title={m === "own" ? `Commits that ${page().base} lacks` : "The whole history"}
-                  onClick={() => setMode(m)}
-                >
-                  {m === "own" ? "Own" : "All"}
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
         <button
           class={cls("grid size-6 place-items-center rounded-md hover:bg-hover hover:text-fg", searching() ? "text-fg" : "text-fg-3")}
           aria-label="Search commits"
@@ -338,13 +333,62 @@ export function Commits(p: { ws: Workspace }) {
             role="button"
             class="grid size-4 shrink-0 place-items-center rounded text-fg-3 hover:text-fg"
             title="Back to the checked-out branch"
-            onClick={(e) => (e.stopPropagation(), setRev(null), setMode(null))}
+            onClick={(e) => (e.stopPropagation(), setRev(null))}
           >
             <X size={12} />
           </span>
         </Show>
         <ChevronDown size={12} class="shrink-0 text-fg-3" />
       </button>
+
+      <Show when={page().base && (page().ahead || page().behind)}>
+        <div class="mb-1.5 flex items-center gap-2 px-1 text-xs text-fg-3">
+          <span class="flex items-center gap-0.5" classList={{ "text-accent": !!page().ahead }} title={`Commits that ${page().base} lacks`}>
+            <ArrowUp size={11} />
+            {page().ahead}
+          </span>
+          <button
+            class={cls("flex items-center gap-0.5 rounded px-0.5 hover:bg-hover hover:text-fg", page().behind ? "text-waiting" : "", showBehind() && "bg-hover")}
+            title={showBehind() ? "Hide them" : `Show the commits on ${page().base} that this branch lacks`}
+            aria-expanded={showBehind()}
+            disabled={!page().behind}
+            onClick={() => setShowBehind(!showBehind())}
+          >
+            <ArrowDown size={11} />
+            {page().behind}
+          </button>
+          <span class="min-w-0 truncate">
+            vs <span class="font-mono">{page().base}</span>
+          </span>
+        </div>
+      </Show>
+
+      <Show when={showBehind()}>
+        <div class="mb-2 rounded-md border border-dashed border-line px-1 py-1">
+          <div class="px-1 pb-0.5 text-xs text-fg-3">
+            On <span class="font-mono">{page().base}</span>, not here
+          </div>
+          <Show when={behind()} fallback={<div class="px-1 py-1"><Spinner size={12} /></div>}>
+            {(b) => (
+              <>
+                <For each={b().commits}>
+                  {(c) => (
+                    <button class="flex w-full min-w-0 flex-col rounded-md px-1 py-0.5 text-left opacity-70 hover:bg-hover hover:opacity-100" title={c.title} onClick={() => show(c, null)}>
+                      <span class="w-full truncate text-sm text-fg">{c.title}</span>
+                      <span class="w-full truncate text-xs text-fg-3">
+                        <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
+                      </span>
+                    </button>
+                  )}
+                </For>
+                <Show when={b().more}>
+                  <div class="px-1 pt-0.5 text-xs text-fg-3">and {(page().behind ?? 0) - b().commits.length} more</div>
+                </Show>
+              </>
+            )}
+          </Show>
+        </div>
+      </Show>
 
       <Show when={searching()}>
         <input
@@ -360,10 +404,24 @@ export function Commits(p: { ws: Workspace }) {
 
       <div class="flex flex-col">
         <For each={items()} fallback={<div class="px-2 py-3 text-sm text-fg-3">{loading() ? <Spinner size={14} /> : empty()}</div>}>
-          {(c) => (
+          {(c, i) => (
             <div>
+              <Show when={forkAt(i())}>
+                <div class="my-1 flex items-center gap-2 px-1 text-xs text-fg-3">
+                  <span class="h-px flex-1 bg-line" />
+                  <span class="min-w-0 truncate">
+                    branched from <span class="font-mono">{page().base}</span>
+                  </span>
+                  <span class="h-px flex-1 bg-line" />
+                </div>
+              </Show>
               <div
-                class={cls("group flex min-w-0 items-start gap-1 rounded-md px-1 py-1 hover:bg-hover", menu()?.c.sha === c.sha && "bg-hover")}
+                class={cls(
+                  "group flex min-w-0 items-start gap-1 rounded-md border-l-2 px-1 py-1 hover:bg-hover",
+                  c.own ? "border-accent" : "border-transparent",
+                  menu()?.c.sha === c.sha && "bg-hover",
+                )}
+                title={c.own ? `Not on ${page().base}` : undefined}
                 onContextMenu={(e) => (e.preventDefault(), setMenu({ x: e.clientX, y: e.clientY, c }))}
               >
                 <button
@@ -445,7 +503,7 @@ export function Commits(p: { ws: Workspace }) {
           )}
         </For>
         <Show when={items().length && page().more}>
-          <div ref={(el) => (io.observe(el), onCleanup(() => io.unobserve(el)))}>
+          <div>
             <button class="flex w-full items-center justify-center gap-2 rounded-md py-1.5 text-sm text-fg-3 hover:bg-hover hover:text-fg" disabled={loading()} onClick={more}>
               {loading() ? <Spinner size={13} /> : "Load more"}
             </button>
@@ -454,7 +512,7 @@ export function Commits(p: { ws: Workspace }) {
       </div>
 
       <Show when={picker()}>
-        {(at) => <BranchPicker path={p.ws.path} at={at()} anchor={pickerBtn} current={rev()} onPick={(r) => (setRev(r), setMode(r ? "all" : null))} onClose={() => setPicker(null)} />}
+        {(at) => <BranchPicker path={p.ws.path} at={at()} anchor={pickerBtn} current={rev()} onPick={setRev} onClose={() => setPicker(null)} />}
       </Show>
       <Show when={menu()}>
         {(m) => {

@@ -98,6 +98,8 @@ export interface Commit {
   refs?: [string, string][];
   /** On a branch with an upstream: the upstream lacks it. */
   unpushed?: boolean;
+  /** The default branch lacks it. */
+  own?: boolean;
 }
 
 export interface MrChanges {

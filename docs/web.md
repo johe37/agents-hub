@@ -44,6 +44,8 @@ Safari cut them to a rounded square.
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the merge request and the
   changed files; click a file or a commit to see its diff in a diff tab after the windows.
+  The commit list marks the commits that the default branch lacks and shows how far the
+  branch is ahead of and behind it; click the ↓ count to see what the branch lacks.
   Each diff gets its own tab; opening one again shows its tab. `Esc` goes back to the window
   you came from.
   Select lines and press **Ask Claude** (`a`) for the Claude already here or **New Claude**

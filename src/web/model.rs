@@ -1,5 +1,6 @@
 //! The JSON the page renders, built from a Snapshot.
 
+use std::collections::HashSet;
 use std::process::Command;
 
 use serde_json::{Value, json};
@@ -289,8 +290,8 @@ fn toplevel(path: &str) -> Option<String> {
 
 pub struct LogQuery<'a> {
     pub rev: Option<&'a str>,
-    /// "own" or "all". Without it, the branch's own commits, or its history when it has none.
-    pub mode: Option<&'a str>,
+    /// The default branch's commits that the branch lacks, instead of the branch's history.
+    pub behind: bool,
     pub search: Option<&'a str>,
     pub skip: usize,
     pub limit: usize,
@@ -366,23 +367,27 @@ pub fn commits(path: &str, q: &LogQuery) -> Value {
         list.truncate(q.limit);
         (list, more)
     };
+    // Counted on the first-parent line, as the list is: on the default branch, a merged MR is one commit.
     let base = base_branch(&root);
-    let own = base.map(|b| format!("{b}..{rev}"));
-    let (mode, (mut list, more)) = match (q.mode, &own) {
-        (Some("all"), _) | (_, None) => ("all", log(rev)),
-        (Some(_), Some(r)) => ("own", log(r)),
-        // The default branch has nothing of its own: show its history.
-        (None, Some(r)) => match log(r) {
-            (l, _) if l.is_empty() && q.skip == 0 => ("all", log(rev)),
-            page => ("own", page),
-        },
-    };
-    let upstream = format!("{rev}@{{upstream}}..{rev}");
-    let unpushed = git_out(&root, &["rev-list", "-n", "1000", &upstream]).unwrap_or_default();
-    for c in &mut list {
-        c["unpushed"] = json!(c["sha"].as_str().is_some_and(|s| unpushed.lines().any(|l| l == s)));
+    let shas = |range: &str| git_out(&root, &["rev-list", "--first-parent", "-n", "1000", "--end-of-options", range]).unwrap_or_default();
+    let count = |range: &str| git_out(&root, &["rev-list", "--first-parent", "--count", "--end-of-options", range]).and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
+    if q.behind {
+        let Some(b) = base else { return json!({"commits": [], "more": false}) };
+        let (list, more) = log(&format!("{rev}..{b}"));
+        return json!({"commits": list, "more": more, "base": b});
     }
-    json!({"commits": list, "more": more, "mode": mode, "base": base})
+    let (mut list, more) = log(rev);
+    let own = base.map(|b| shas(&format!("{b}..{rev}"))).unwrap_or_default();
+    let own: HashSet<&str> = own.lines().collect();
+    let unpushed = shas(&format!("{rev}@{{upstream}}..{rev}"));
+    let unpushed: HashSet<&str> = unpushed.lines().collect();
+    for c in &mut list {
+        let sha = c["sha"].as_str().unwrap_or_default().to_string();
+        c["own"] = json!(own.contains(sha.as_str()));
+        c["unpushed"] = json!(unpushed.contains(sha.as_str()));
+    }
+    let (ahead, behind) = base.map_or((0, 0), |b| (count(&format!("{b}..{rev}")), count(&format!("{rev}..{b}"))));
+    json!({"commits": list, "more": more, "base": base, "ahead": ahead, "behind": behind})
 }
 
 /// The files one commit changes, as [status letter, path], against its first parent.
@@ -464,35 +469,41 @@ mod tests {
         let sh = |args: &[&str]| assert!(Command::new("git").current_dir(&dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success());
         sh(&["init", "-q", "-b", "main"]);
         sh(&["commit", "-q", "--allow-empty", "-m", "base"]);
-        let q = |mode, skip, limit| LogQuery { rev: None, mode, search: None, skip, limit };
-        let page = |q: &LogQuery| {
-            let v = commits(p, q);
-            (v["commits"].as_array().unwrap().iter().map(|c| c["title"].as_str().unwrap().to_string()).collect::<Vec<_>>(), v["mode"].clone(), v["more"].as_bool().unwrap())
-        };
-        assert_eq!(page(&q(None, 0, 50)), (vec!["base".into()], json!("all"), false), "on the default branch: its history");
+        let q = |skip, limit| LogQuery { rev: None, behind: false, search: None, skip, limit };
+        let titles = |v: &Value| v["commits"].as_array().unwrap().iter().map(|c| c["title"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let v = commits(p, &q(0, 50));
+        assert_eq!((titles(&v), &v["ahead"], &v["behind"], &v["commits"][0]["own"]), (vec!["base".into()], &json!(0), &json!(0), &json!(false)), "on the default branch");
         sh(&["checkout", "-q", "-b", "feature"]);
         std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
         sh(&["add", "a.txt"]);
         sh(&["commit", "-q", "-m", "add a", "-m", "why"]);
         sh(&["commit", "-q", "--allow-empty", "-m", "second"]);
-        let v = commits(p, &q(None, 0, 1));
+        let v = commits(p, &q(0, 1));
         let c = &v["commits"][0];
-        assert_eq!((c["title"].as_str(), v["mode"].as_str(), v["more"].as_bool()), (Some("second"), Some("own"), Some(true)));
+        assert_eq!((c["title"].as_str(), v["more"].as_bool()), (Some("second"), Some(true)));
         assert_eq!(c["refs"], json!([["head", "feature"]]));
-        assert_eq!(page(&q(Some("own"), 1, 1)), (vec!["add a".into()], json!("own"), false));
-        assert_eq!(page(&q(Some("all"), 0, 50)).0, ["second", "add a", "base"]);
-        let found = commits(p, &LogQuery { search: Some("ADD"), ..q(Some("all"), 0, 50) });
+        assert_eq!(titles(&commits(p, &q(1, 1))), ["add a"]);
+        let v = commits(p, &q(0, 50));
+        assert_eq!(titles(&v), ["second", "add a", "base"]);
+        let own: Vec<_> = v["commits"].as_array().unwrap().iter().map(|c| c["own"].as_bool().unwrap()).collect();
+        assert_eq!((own, &v["ahead"], &v["behind"], &v["base"]), (vec![true, true, false], &json!(2), &json!(0), &json!("main")));
+        sh(&["checkout", "-q", "main"]);
+        sh(&["commit", "-q", "--allow-empty", "-m", "on main"]);
+        sh(&["checkout", "-q", "feature"]);
+        assert_eq!(commits(p, &q(0, 50))["behind"], json!(1));
+        assert_eq!(titles(&commits(p, &LogQuery { behind: true, ..q(0, 50) })), ["on main"]);
+        let found = commits(p, &LogQuery { search: Some("ADD"), ..q(0, 50) });
         assert_eq!(found["commits"].as_array().unwrap().len(), 1, "search ignores case");
-        assert_eq!(commits(p, &LogQuery { search: Some("T"), ..q(Some("all"), 0, 50) })["commits"].as_array().unwrap().len(), 3, "the author matches");
-        let sha = commits(p, &q(Some("own"), 1, 1))["commits"][0]["sha"].as_str().unwrap().to_string();
+        assert_eq!(commits(p, &LogQuery { search: Some("T"), ..q(0, 50) })["commits"].as_array().unwrap().len(), 3, "the author matches");
+        let sha = commits(p, &q(1, 1))["commits"][0]["sha"].as_str().unwrap().to_string();
         assert_eq!(commit_files(p, &sha), json!([["A", "a.txt"]]));
         let d = diff(p, None, Some(&sha));
         assert!(d.contains("+hello") && d.starts_with("diff --git"), "{d}");
-        assert_eq!(commits(p, &LogQuery { rev: Some("main"), ..q(Some("all"), 0, 50) })["commits"].as_array().unwrap().len(), 1);
-        assert_eq!(commits(p, &LogQuery { rev: Some("--all"), ..q(None, 0, 50) })["error"], json!("Unknown branch"));
+        assert_eq!(commits(p, &LogQuery { rev: Some("main"), ..q(0, 50) })["commits"].as_array().unwrap().len(), 2);
+        assert_eq!(commits(p, &LogQuery { rev: Some("--all"), ..q(0, 50) })["error"], json!("Unknown branch"));
         assert_eq!(branches(p), json!({"current": "refs/heads/feature", "branches": [["local", "feature", "refs/heads/feature"], ["local", "main", "refs/heads/main"]]}));
         sh(&["update-ref", "refs/remotes/upstream/master", "HEAD"]);
-        assert_eq!(page(&q(None, 0, 50)).1, json!("all"), "upstream/master wins over main: nothing on top, so history");
+        assert_eq!(commits(p, &q(0, 50))["base"], json!("upstream/master"), "upstream wins over main");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
