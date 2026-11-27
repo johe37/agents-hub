@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on } from "solid-js";
 import { getJSON } from "../api";
-import { act, composer, go, isBusy, setComposer, state } from "../store";
+import { act, composer, go, isBusy, route, setComposer, state, toast } from "../store";
 import { basename, cls, fuzzyWords } from "../util";
 import { Chat, Folder, Git, Sparkles } from "./icons";
 import { Button, Kbd } from "./ui";
@@ -67,7 +67,10 @@ export function NewAgent() {
   const start = async () => {
     const p = path().trim();
     if (!p) return pathEl?.focus();
-    const r = await act({ type: "new_agent", path: p, prompt: prompt().trim() || undefined }, { key: "new-agent" });
+    const task = prompt().trim() || undefined;
+    // A task started from the overview runs on its own; staying lets you start the next one.
+    const stay = !!task && route().view === "agents";
+    const r = await act({ type: "new_agent", path: p, prompt: task }, { key: "new-agent", quiet: stay });
     if (!r.ok) return;
     try {
       if (!chat()) localStorage.setItem(LAST, p);
@@ -75,7 +78,10 @@ export function NewAgent() {
       /* ignore */
     }
     close();
-    if (r.workspace && r.window) go({ view: "workspace", name: r.workspace, window: r.window });
+    if (!r.workspace || !r.window) return;
+    const there = { view: "workspace", name: r.workspace, window: r.window } as const;
+    if (stay) toast(r.message ?? `Started an agent in ${r.workspace}`, false, { label: "Open", run: () => go(there) });
+    else go(there);
   };
 
   const choose = (p: string) => {
