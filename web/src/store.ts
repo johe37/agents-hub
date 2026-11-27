@@ -546,7 +546,8 @@ export const [confirmBox, setConfirmBox] = createSignal<{
 export const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
 
 /** agent is the Claude to ask about the diff, when it came from one; else the workspace's Claude. */
-export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit; agent?: string };
+/** A preview tab is replaced by the next preview opened in its workspace, until you pin it. */
+export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit; agent?: string; preview?: boolean };
 /** A diff for an agent without a workspace: it opens over everything. */
 export const [diffView, setDiffView] = createSignal<DiffTarget | null>(null);
 
@@ -567,15 +568,26 @@ export const [diffTabs, setDiffTabs] = createSignal<Record<string, DiffTarget[]>
 );
 createRoot(() => createEffect(() => writeStored("diff-tabs", JSON.stringify(diffTabs()))));
 
-export function openDiff(d: DiffTarget) {
+export function openDiff(d: DiffTarget, preview = false) {
   if (!state.workspaces.some((w) => w.name === d.workspace)) return setDiffView(d);
   const id = diffId(d);
   setDiffTabs((t) => {
     const list = t[d.workspace] ?? [];
     const at = list.findIndex((x) => diffId(x) === id);
-    return { ...t, [d.workspace]: at < 0 ? [...list, d] : list.map((x, i) => (i === at ? d : x)) };
+    if (at >= 0) return { ...t, [d.workspace]: list.map((x, i) => (i === at ? { ...d, preview: (preview && x.preview) || undefined } : x)) };
+    const tab = { ...d, preview: preview || undefined };
+    const old = preview ? list.findIndex((x) => x.preview) : -1;
+    return { ...t, [d.workspace]: old < 0 ? [...list, tab] : list.map((x, i) => (i === old ? tab : x)) };
   });
   go({ view: "workspace", name: d.workspace, window: id });
+}
+
+export function pinDiff(workspace: string, id: string) {
+  setDiffTabs((t) => {
+    const list = t[workspace] ?? [];
+    if (!list.some((x) => x.preview && diffId(x) === id)) return t;
+    return { ...t, [workspace]: list.map((x) => (diffId(x) === id ? { ...x, preview: undefined } : x)) };
+  });
 }
 
 export function diffLabel(d: DiffTarget) {

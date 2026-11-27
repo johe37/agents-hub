@@ -274,7 +274,7 @@ export function Commits(p: { ws: Workspace }) {
     }
     setOpen(s);
   };
-  const show = (c: Commit, file: string | null) => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
+  const show = (c: Commit, file: string | null, preview = true) => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c }, preview);
   // One line, so an agent that gets it typed in does not send it early.
   const review = async (c: Commit) => {
     const prompt = `Review commit ${c.short} "${c.title}" by ${c.author}. See the change with \`git show ${c.sha}\`. Look for bugs, risky changes and missing tests. Do not change any files: the working tree may hold my own uncommitted work.`;
@@ -385,7 +385,7 @@ export function Commits(p: { ws: Workspace }) {
               <>
                 <For each={b().commits}>
                   {(c) => (
-                    <button class="flex w-full min-w-0 flex-col rounded-md px-1 py-0.5 text-left opacity-70 hover:bg-hover hover:opacity-100" title={c.title} onClick={() => show(c, null)}>
+                    <button class="flex w-full min-w-0 flex-col rounded-md px-1 py-0.5 text-left opacity-70 hover:bg-hover hover:opacity-100" title={c.title} onClick={() => show(c, null)} onDblClick={() => show(c, null, false)}>
                       <span class="w-full truncate text-sm text-fg">{c.title}</span>
                       <span class="w-full truncate text-xs text-fg-3">
                         <span class="font-mono">{c.short}</span> · {c.author} · <Ago ts={c.created} suffix />
@@ -444,7 +444,7 @@ export function Commits(p: { ws: Workspace }) {
                 >
                   <Chevron size={12} class={cls("transition-transform", open().has(c.sha) && "rotate-90")} />
                 </button>
-                <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(c, null)}>
+                <button class="min-w-0 flex-1 text-left" title={c.message ? `${c.title}\n\n${c.message}` : c.title} onClick={() => show(c, null)} onDblClick={() => show(c, null, false)}>
                   <div class="truncate text-sm text-fg">{c.title}</div>
                   <div class="flex min-w-0 items-center gap-1 text-xs text-fg-3">
                     <span class="font-mono">{c.short}</span>
@@ -495,7 +495,7 @@ export function Commits(p: { ws: Workspace }) {
                         {([code, file]) => {
                           const i = file.lastIndexOf("/");
                           return (
-                            <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(c, file)}>
+                            <button class="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-left hover:bg-hover" title={file} onClick={() => show(c, file)} onDblClick={() => show(c, file, false)}>
                               <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", FILE_TONE[code] ?? "text-fg-2")}>{code}</span>
                               <span class="min-w-0 truncate font-mono text-sm">
                                 <span class="text-fg">{file.slice(i + 1)}</span>

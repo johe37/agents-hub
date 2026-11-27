@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
+import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, pinDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { DiffPane } from "./ChangesReview";
@@ -605,11 +605,12 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                         active() ? "border-line-strong bg-raised text-fg shadow-soft" : "border-line bg-raised/40 text-fg-2 hover:border-line-strong hover:bg-raised/80 hover:text-fg",
                       )}
                       onClick={() => go({ view: "workspace", name: p.name, window: id })}
+                      onDblClick={() => pinDiff(p.name, id)}
                       onAuxClick={(e) => e.button === 1 && closeDiff(p.name, id)}
                       title={d.commit ? `${d.commit.short} ${d.commit.title}` : d.title}
                     >
                       <FileDiff size={14} class={active() ? "text-accent" : "text-fg-3"} />
-                      <span class="max-w-[16rem] truncate">{diffLabel(d)}</span>
+                      <span class={cls("max-w-[16rem] truncate", d.preview && "italic")}>{diffLabel(d)}</span>
                       <button
                         class={cls(
                           "grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg group-hover:opacity-100",

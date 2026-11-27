@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
-import { act, chatWorkspace, readStored, writeStored, closeChat, closeDiff, diffId, diffLabel, diffTabs, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { act, chatWorkspace, readStored, writeStored, closeChat, closeDiff, pinDiff, diffId, diffLabel, diffTabs, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, alive, cls, until, worst } from "../util";
 import { Bot, Chat, ChevronDown, Cog, FileDiff, Folder, Git, PanelLeft, Plus, Search, X } from "./icons";
@@ -353,6 +353,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                                   p.onNavigate?.();
                                   go({ view: "workspace", name: w.name, window: id });
                                 }}
+                                onDblClick={() => pinDiff(w.name, id)}
                                 onAuxClick={(e) => {
                                   if (e.button !== 1) return;
                                   e.preventDefault();
@@ -363,7 +364,7 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                                 class="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 pr-1"
                               >
                                 <FileDiff size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
-                                <span class="min-w-0 flex-1 truncate">{diffLabel(d)}</span>
+                                <span class={cls("min-w-0 flex-1 truncate", d.preview && "italic")}>{diffLabel(d)}</span>
                               </a>
                               <button
                                 class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover/win:grid group-focus-within/win:grid"
