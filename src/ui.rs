@@ -84,6 +84,9 @@ fn waiting_reason(kind: Option<&str>) -> Option<&'static str> {
 fn git_spans(g: Option<&GitStatus>) -> Vec<Span<'static>> {
     let Some(g) = g else { return vec![] };
     let mut v = vec![s(format!("⎇ {}", g.branch.as_deref().unwrap_or("-")), fg(colors().purple))];
+    if let Some(base) = &g.base {
+        v.push(s(format!(" ← {base}"), fg(colors().muted)));
+    }
     for (n, prefix, color) in [
         (g.dirty as u32, " ●", colors().modified),
         (g.added, " +", colors().success),
@@ -876,7 +879,16 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         banner.push(Line::from(vec![s(format!("!{} ", mr.iid), fg(colors().accent).bold()), s(mr.title.clone(), fg(colors().fg))]));
         banner.push(Line::from(vec![pipeline_symbol(mr.pipeline.as_deref()), s(format!(" {status}"), fg(colors().muted))]));
     }
-    if let Some(g) = &ws.git {
+    if let Some(g) = ws.git.as_ref().filter(|g| g.base.is_some()) {
+        let (branch, base) = (g.branch.as_deref().unwrap_or_default(), g.base.as_deref().unwrap_or_default());
+        let text = match (g.base_ahead, g.base_behind) {
+            (0, _) => format!("Started from {base}. Nothing to merge yet."),
+            (n, 0) => format!("{n} commit{} to merge into {base} · B merges", plural(n as usize)),
+            (n, m) => format!("{n} commit{} to merge into {base}, which has {m} new · B rebases and merges", plural(n as usize)),
+        };
+        banner.push(Line::from(vec![s(format!("⎇ {branch} ← {base}  "), fg(colors().purple)), s(text, fg(colors().fg))]));
+    }
+    if let Some(g) = ws.git.as_ref().filter(|g| g.base.is_none()) {
         let branch = g.branch.as_deref().unwrap_or_default();
         let pushed = g.upstream.as_deref().is_some_and(|u| u.ends_with(&format!("/{branch}")));
         if !branch.is_empty() && !pushed {
@@ -917,7 +929,11 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
         meta: meta_line(None, &ws.path, ws.git.as_ref()),
         color,
         banner,
-        buttons: vec![],
+        buttons: match ws.git.as_ref() {
+            Some(g) if g.base.is_some() && g.base_ahead > 0 => vec![("B", "merge back", colors().accent, Action::MergeBack), ("b", "new branch", colors().accent, Action::NewBranch)],
+            Some(g) if g.branch.is_some() => vec![("b", "new branch", colors().accent, Action::NewBranch)],
+            _ => vec![],
+        },
         tabs: vec![("Agents", agents.len()), ("Changes", ws.git.as_ref().map_or(0, |g| g.files.len())), ("Windows", ws.windows.len()), ("Pipeline", ws.mr.as_ref().map_or(0, |m| m.jobs.len()))],
         body,
         link,
@@ -1610,10 +1626,12 @@ const HELP: &[(&str, &str)] = &[
     ("", "Workspaces and agents"),
     ("Enter", "go to the agent, terminal or workspace"),
     ("n", "open a workspace (fuzzy search or type a path)"),
+    ("b", "new branch from the workspace's branch, in its own worktree, with an agent"),
+    ("B", "merge that branch back into the branch it came from (rebases first if needed)"),
     ("c / t / e", "new agent / terminal / nvim in the workspace"),
     ("C", "new chat: the agent in the chats workspace (chat_dir), outside any repo"),
     ("A", "choose the agent: Claude Code (default), codex, gemini, aider, …"),
-    ("x", "close the agent, terminal or workspace"),
+    ("x", "close the agent, terminal or workspace; a b branch's worktree goes too"),
     ("R", "rename the workspace"),
     ("a", "adopt an agent running outside the hub into a workspace"),
     ("m", "mark done: clear waiting on the agent or workspace"),
@@ -1712,6 +1730,23 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect) {
             let field = Rect { y: inner.y + 1, height: 1, ..inner };
             f.render_widget(Paragraph::new(s(input.text.clone(), fg(colors().bright))).style(Style::new().bg(colors().input)), field);
             set_cursor(f, input, field.x, field.y);
+        }
+        Modal::Branch { path, base, input } => {
+            let rect = centered(area, 72, 8);
+            f.render_widget(Clear, rect);
+            let block = modal_block(&format!("New branch from {base}"));
+            let inner = block.inner(rect).inner(Margin::new(1, 0));
+            f.render_widget(block, rect);
+            let field = Rect { y: inner.y + 1, height: 1, ..inner };
+            f.render_widget(Paragraph::new(s(input.text.clone(), fg(colors().bright))).style(Style::new().bg(colors().input)), field);
+            set_cursor(f, input, field.x, field.y);
+            let name = input.text.trim();
+            let dir = crate::git::branch_dir(path, if name.is_empty() { "<name>" } else { name });
+            let hint = vec![
+                Line::from(s(format!("Worktree: {}", shorten(&dir.display().to_string())), fg(colors().muted))),
+                Line::from(s(format!("The agent starts there. B merges it back into {base}."), fg(colors().muted))),
+            ];
+            f.render_widget(Paragraph::new(hint).wrap(Wrap { trim: false }), Rect { y: inner.y + 3, height: inner.height.saturating_sub(3), ..inner });
         }
         Modal::Agent(input) => {
             let rect = centered(area, 72, 8);

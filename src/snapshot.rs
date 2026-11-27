@@ -229,6 +229,8 @@ pub enum Cmd {
     StartMine { mr: Box<crate::gitlab::Mr>, kind: &'static str },
     /// Open Claude in a worktree for the issue, with the issue in its prompt.
     StartIssue { issue: Box<crate::gitlab::Issue> },
+    /// Make branch from the one checked out at path, in its own worktree, and open the agent there.
+    StartBranch { path: String, branch: String },
 }
 
 fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
@@ -392,6 +394,16 @@ impl Collector {
                             .and_then(|repo| crate::gitlab::issue_worktree(&repo, &issue, &issue.dir()))
                             .and_then(|dir| tmux::open_issue(&dir, &issue.prompt()));
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not open #{}: {e}", issue.iid), true), |m| (m, false)));
+                    });
+                }
+                Ok(Cmd::StartBranch { path, branch }) => {
+                    let notices = Arc::clone(&self.notices);
+                    std::thread::spawn(move || {
+                        let (window, command) = (crate::app::window_name("agent"), crate::app::window_command("agent"));
+                        let r = crate::git::start_branch(&path, &branch).and_then(|(dir, base)| {
+                            tmux::open_checkout(&dir, &basename(&dir), &window, command.as_deref(), None).map(|_| format!("Started {branch} from {base} in {}", crate::config::shorten(&dir)))
+                        });
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not start {branch}: {e}"), true), |m| (m, false)));
                     });
                 }
                 // Its own thread: a push can take a while, and status updates must keep flowing meanwhile.

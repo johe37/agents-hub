@@ -73,6 +73,8 @@ pub enum Action {
     FoldAll,
     Type,
     Refresh,
+    NewBranch,
+    MergeBack,
 }
 
 pub enum Modal {
@@ -80,6 +82,8 @@ pub enum Modal {
     /// `done` is shown when `then` succeeds.
     Confirm { question: String, then: Box<dyn Fn() -> Res>, yes: bool, done: Option<String> },
     Rename { from: String, input: Input },
+    /// The name of a new branch made from the one checked out at path.
+    Branch { path: String, base: String, input: Input },
     /// The command that starts new agents.
     Agent(Input),
     Picker(Picker),
@@ -881,6 +885,8 @@ impl App {
             }
             Action::Push => self.push(),
             Action::OpenMr => self.open_mr(),
+            Action::NewBranch => self.new_branch(),
+            Action::MergeBack => self.merge_back(),
             Action::Reply => {
                 if self.current_agent().is_some_and(|a| a.target.is_some()) || self.current_thread().is_some() {
                     self.focus = Focus::Reply;
@@ -1028,6 +1034,41 @@ impl App {
         let spare = tmux::spare_for(&ws.path, command.as_deref());
         let r = tmux::new_window(&ws.name, &ws.path, &window_name(kind), command.as_deref(), spare.as_deref());
         self.finish(r);
+    }
+
+    fn new_branch(&mut self) {
+        let Some(ws) = self.current_workspace() else {
+            return self.notify("Select a workspace first: the new branch starts from its branch", true);
+        };
+        let Some(base) = ws.git.as_ref().and_then(|g| g.branch.clone()) else {
+            return self.notify(format!("{} is not on a git branch", ws.name), true);
+        };
+        self.modal = Some(Modal::Branch { path: ws.path.clone(), base, input: Input::default() });
+    }
+
+    fn merge_back(&mut self) {
+        let Some(ws) = self.current_workspace() else { return };
+        let Some(g) = ws.git.as_ref() else { return };
+        let (Some(branch), Some(base)) = (g.branch.clone(), g.base.clone()) else {
+            return self.notify("B merges a branch started with b back into its base. This one has no base.", true);
+        };
+        if self.agents_of(ws).iter().any(|&i| self.snap.agents[i].status == Status::Working) {
+            return self.notify(format!("An agent is working in {}. Merge when it is done.", ws.name), true);
+        }
+        if g.base_ahead == 0 {
+            return self.notify(format!("{branch} has no commits that {base} lacks"), true);
+        }
+        let rebase = if g.base_behind > 0 { format!(" {base} has moved on, so {branch} is rebased on it first.") } else { String::new() };
+        let question = format!("Merge {} commit{} from {branch} into {base}?{rebase}", g.base_ahead, if g.base_ahead == 1 { "" } else { "s" });
+        let path = ws.path.clone();
+        let cmd = self.cmd.clone();
+        let then = move || {
+            let r = crate::git::merge_back(&path);
+            let _ = cmd.send(Cmd::ForgetGit(path.clone()));
+            r.map(|_| ()).map_err(Fail::Error)
+        };
+        let done = format!("Merged {branch} into {base}. x removes the worktree.");
+        self.modal = Some(Modal::Confirm { question, then: Box::new(then), yes: false, done: Some(done) });
     }
 
     /// Open the agent in the chats workspace, for questions that belong to no repo.
@@ -1198,6 +1239,14 @@ impl App {
                         tmux::kill_session(&name)
                     };
                     (format!("Close workspace '{}' and remove its worktree? Commits stay on the branch; uncommitted changes stop it.", ws.name), Box::new(close))
+                } else if let Some(g) = ws.git.as_ref().filter(|g| g.base.is_some()) {
+                    let (branch, base) = (g.branch.clone().unwrap_or_default(), g.base.clone().unwrap_or_default());
+                    let fate = if g.base_ahead == 0 { format!("{branch} is merged into {base}, so the branch goes too.") } else { format!("{branch} keeps its {} unmerged commit(s).", g.base_ahead) };
+                    let close = move || {
+                        crate::git::remove_branch(&path).map_err(Fail::Error)?;
+                        tmux::kill_session(&name)
+                    };
+                    (format!("Close workspace '{}' and remove its worktree? {fate} Uncommitted changes stop it.", ws.name), Box::new(close))
                 } else {
                     (format!("Close workspace '{name}' and all its {} window(s)?", ws.windows.len()), Box::new(move || tmux::kill_session(&name)))
                 }
@@ -1471,6 +1520,8 @@ impl App {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.act(Action::Tab((self.tab + 1) % 4)),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.act(Action::Tab((self.tab + 3) % 4)),
             KeyCode::Char('n') => self.act(Action::NewWorkspace),
+            KeyCode::Char('b') => self.act(Action::NewBranch),
+            KeyCode::Char('B') => self.act(Action::MergeBack),
             KeyCode::Char('c') => self.act(Action::NewWindow("agent")),
             KeyCode::Char('C') => self.act(Action::NewChat),
             KeyCode::Char('t') => self.act(Action::NewWindow("shell")),
@@ -1542,6 +1593,20 @@ impl App {
                         }
                         let r = tmux::rename_session(&from, &new);
                         self.finish(r);
+                    }
+                }
+                _ => {
+                    input.handle(k);
+                }
+            },
+            Modal::Branch { path, input, .. } => match k.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Enter => {
+                    let (path, branch) = (path.clone(), input.text.trim().to_string());
+                    self.modal = None;
+                    if !branch.is_empty() {
+                        self.notify(format!("Starting {branch}…"), false);
+                        let _ = self.cmd.send(Cmd::StartBranch { path, branch });
                     }
                 }
                 _ => {

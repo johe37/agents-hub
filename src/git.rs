@@ -22,6 +22,11 @@ pub struct GitStatus {
     pub removed: u32,
     /// (XY status code or ??, path)
     pub files: Vec<(String, String)>,
+    /// The branch this one was made from with `start_branch`, and where `merge_back` puts it.
+    pub base: Option<String>,
+    /// Commits on this branch that the base lacks, and commits on the base since this branch was made.
+    pub base_ahead: u32,
+    pub base_behind: u32,
 }
 
 fn git(cwd: &str, args: &[&str]) -> Option<String> {
@@ -177,6 +182,13 @@ impl GitCache {
                 st.removed += r;
             }
         }
+        if let Some(base) = st.branch.as_deref().and_then(|b| base_of(repo, b)) {
+            let counts = git(repo, &["rev-list", "--left-right", "--count", &format!("HEAD...{base}")]).unwrap_or_default();
+            let mut it = counts.split_whitespace().map(|n| n.parse().unwrap_or(0));
+            st.base_ahead = it.next().unwrap_or(0);
+            st.base_behind = it.next().unwrap_or(0);
+            st.base = Some(base);
+        }
         if self.gens.lock().unwrap().get(repo).copied() == generation {
             self.status.lock().unwrap().insert(repo.to_string(), (Instant::now(), st.clone()));
         }
@@ -239,6 +251,103 @@ pub fn commit(cwd: &str, message: &str) -> Result<String, String> {
 /// The short id of the commit checked out in cwd.
 pub fn head(cwd: &str) -> Option<String> {
     run(cwd, 5, "git", &["rev-parse", "--short", "HEAD"]).ok().map(|s| s.trim().to_string())
+}
+
+fn base_key(branch: &str) -> String {
+    format!("branch.{branch}.jugglr-base")
+}
+
+/// The branch that branch was made from with `start_branch`, while it still exists.
+fn base_of(cwd: &str, branch: &str) -> Option<String> {
+    let base = git(cwd, &["config", "--get", &base_key(branch)])?.trim().to_string();
+    git(cwd, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{base}")]).map(|_| base)
+}
+
+/// Where the worktree for a new branch goes: next to the checkout at root, named after it and the branch.
+pub fn branch_dir(root: &str, branch: &str) -> std::path::PathBuf {
+    let root = Path::new(root);
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    root.with_file_name(format!("{name}-{}", branch.replace('/', "-")))
+}
+
+/// Make branch from the branch checked out at cwd, in a new worktree next to it, and remember that base.
+/// Returns the worktree's directory and the base.
+pub fn start_branch(cwd: &str, branch: &str) -> Result<(String, String), String> {
+    run(cwd, 5, "git", &["check-ref-format", "--branch", branch]).map_err(|_| format!("'{branch}' is not a valid branch name"))?;
+    let base = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
+    if base.is_empty() {
+        return Err("This checkout is not on a branch".into());
+    }
+    if run(cwd, 5, "git", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
+        return Err(format!("Branch {branch} exists already"));
+    }
+    let root = run(cwd, 5, "git", &["rev-parse", "--show-toplevel"])?.trim().to_string();
+    let dir = branch_dir(&root, branch);
+    if dir.exists() {
+        return Err(format!("{} is in the way", crate::config::shorten(&dir.display().to_string())));
+    }
+    let d = dir.display().to_string();
+    run(cwd, 60, "git", &["worktree", "add", "-q", "-b", branch, &d, &base])?;
+    run(cwd, 5, "git", &["config", &base_key(branch), &base])?;
+    Ok((d, base))
+}
+
+/// The worktree that has branch checked out.
+fn checked_out(cwd: &str, branch: &str) -> Option<String> {
+    let want = format!("branch refs/heads/{branch}");
+    let list = run(cwd, 5, "git", &["worktree", "list", "--porcelain"]).ok()?;
+    list.split("\n\n").find(|w| w.lines().any(|l| l == want))?.lines().find_map(|l| l.strip_prefix("worktree ")).map(String::from)
+}
+
+/// Put the branch checked out at cwd on top of its base and move the base to it, so history stays linear.
+/// It rebases first when the base moved on; on a conflict it leaves everything as it was.
+pub fn merge_back(cwd: &str) -> Result<String, String> {
+    let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
+    let base = base_of(cwd, &branch).ok_or("This branch was not started from jugglr, so it has no base to merge into")?;
+    if !run(cwd, 5, "git", &["status", "--porcelain"])?.trim().is_empty() {
+        return Err(format!("{branch} has uncommitted changes. Commit them first."));
+    }
+    let ahead = run(cwd, 5, "git", &["rev-list", "--count", &format!("{base}..HEAD")])?.trim().to_string();
+    if ahead == "0" {
+        return Err(format!("{branch} has no commits that {base} lacks"));
+    }
+    let base_dir = checked_out(cwd, &base);
+    if let Some(dir) = &base_dir
+        && !run(dir, 5, "git", &["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty()
+    {
+        return Err(format!("{base} has uncommitted changes in {}. Commit or stash them first.", crate::config::shorten(dir)));
+    }
+    if run(cwd, 5, "git", &["merge-base", "--is-ancestor", &base, "HEAD"]).is_err() {
+        if let Err(e) = run(cwd, 120, "git", &["rebase", "-q", &base]) {
+            let _ = run(cwd, 30, "git", &["rebase", "--abort"]);
+            return Err(format!("{branch} conflicts with {base} ({e}). Ask the agent to rebase it on {base}."));
+        }
+    }
+    match &base_dir {
+        Some(dir) => run(dir, 60, "git", &["merge", "-q", "--ff-only", &branch])?,
+        None => {
+            let (old, new) = (run(cwd, 5, "git", &["rev-parse", &base])?, run(cwd, 5, "git", &["rev-parse", "HEAD"])?);
+            run(cwd, 5, "git", &["update-ref", &format!("refs/heads/{base}"), new.trim(), old.trim()])?
+        }
+    };
+    let n: u32 = ahead.parse().unwrap_or(0);
+    Ok(format!("Merged {n} commit{} from {branch} into {base}", if n == 1 { "" } else { "s" }))
+}
+
+/// Remove the worktree at dir of a branch from `start_branch`, and the branch too once its base has it.
+/// Git refuses while the worktree has uncommitted changes.
+pub fn remove_branch(dir: &str) -> Result<String, String> {
+    let branch = run(dir, 5, "git", &["branch", "--show-current"])?.trim().to_string();
+    let base = base_of(dir, &branch);
+    let merged = base.as_deref().is_some_and(|b| run(dir, 5, "git", &["merge-base", "--is-ancestor", "HEAD", b]).is_ok());
+    let common = run(dir, 5, "git", &["rev-parse", "--path-format=absolute", "--git-common-dir"])?.trim().to_string();
+    run(dir, 30, "git", &["worktree", "remove", dir])?;
+    if !merged {
+        return Ok(format!("Removed the worktree. Branch {branch} stays: it is not merged."));
+    }
+    // Merged into its base, checked above, so -D loses nothing.
+    run(&common, 5, "git", &["branch", "-q", "-D", &branch])?;
+    Ok(format!("Removed the worktree and branch {branch}"))
 }
 
 /// Run git in the repo for a change the user asked for; the error is git's own message.
@@ -352,6 +461,70 @@ mod tests {
         let root = cache.repo_root(wt.to_str().unwrap()).unwrap();
         assert_eq!(std::fs::canonicalize(&root).unwrap(), std::fs::canonicalize(&wt).unwrap());
         assert_eq!(cache.status(&root).branch.as_deref(), Some("feature"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn starts_a_branch_and_merges_it_back() {
+        let dir = std::env::temp_dir().join(format!("jugglr-branch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let main = dir.join("app");
+        std::fs::create_dir_all(&main).unwrap();
+        let m = main.to_str().unwrap();
+        let sh = |cwd: &str, args: &[&str]| run(cwd, 30, "git", args).unwrap();
+        sh(m, &["init", "-q", "-b", "master"]);
+        sh(m, &["config", "user.name", "t"]);
+        sh(m, &["config", "user.email", "t@t"]);
+        sh(m, &["commit", "-q", "--allow-empty", "-m", "init"]);
+
+        let (wt, base) = start_branch(m, "fix/x").unwrap();
+        assert_eq!(base, "master");
+        assert_eq!(std::path::PathBuf::from(&wt), dir.join("app-fix-x"));
+        std::fs::write(dir.join("app-fix-x/a"), "a").unwrap();
+        sh(&wt, &["add", "a"]);
+        sh(&wt, &["commit", "-q", "-m", "a"]);
+        // master moves on, so merging needs a rebase.
+        std::fs::write(main.join("b"), "b").unwrap();
+        sh(m, &["add", "b"]);
+        sh(m, &["commit", "-q", "-m", "b"]);
+
+        let st = Arc::new(GitCache::default()).status(&wt);
+        assert_eq!((st.base.as_deref(), st.base_ahead, st.base_behind), (Some("master"), 1, 1));
+        assert!(start_branch(m, "fix/x").is_err(), "the branch exists");
+
+        merge_back(&wt).unwrap();
+        assert!(main.join("a").exists(), "master's checkout has the branch's file");
+        assert_eq!(sh(m, &["rev-list", "--count", "HEAD"]).trim(), "3", "linear: no merge commit");
+        assert!(merge_back(&wt).is_err(), "nothing left to merge");
+
+        assert!(remove_branch(&wt).unwrap().contains("branch fix/x"));
+        assert!(!dir.join("app-fix-x").exists());
+        assert!(run(m, 5, "git", &["rev-parse", "--verify", "--quiet", "refs/heads/fix/x"]).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn merge_back_stops_on_a_conflict_and_leaves_the_branch_as_it_was() {
+        let dir = std::env::temp_dir().join(format!("jugglr-conflict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let main = dir.join("app");
+        std::fs::create_dir_all(&main).unwrap();
+        let m = main.to_str().unwrap();
+        let sh = |cwd: &str, args: &[&str]| run(cwd, 30, "git", args).unwrap();
+        sh(m, &["init", "-q", "-b", "master"]);
+        sh(m, &["config", "user.name", "t"]);
+        sh(m, &["config", "user.email", "t@t"]);
+        sh(m, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        let (wt, _) = start_branch(m, "x").unwrap();
+        for (cwd, text) in [(wt.as_str(), "mine"), (m, "theirs")] {
+            std::fs::write(std::path::Path::new(cwd).join("f"), text).unwrap();
+            sh(cwd, &["add", "f"]);
+            sh(cwd, &["commit", "-q", "-m", text]);
+        }
+        let head = sh(&wt, &["rev-parse", "HEAD"]);
+        assert!(merge_back(&wt).unwrap_err().contains("conflicts"));
+        assert_eq!(sh(&wt, &["rev-parse", "HEAD"]), head);
+        assert!(sh(&wt, &["status", "--porcelain"]).trim().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
