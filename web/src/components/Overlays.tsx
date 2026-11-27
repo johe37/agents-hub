@@ -214,8 +214,10 @@ const PREFIX_G: [string, PrefixItem[]][] = [
 /** Run a key typed after the prefix. "g" starts a chord, so the prefix stays armed for its second key. */
 export function pressPrefixed(key: string, shiftKey = false) {
   const chord = prefix();
-  setPrefix(key === "g" && chord === "" ? "g" : null);
-  if (key === "Escape") return;
+  const startsChord = key === "g" && chord === "";
+  setPrefix(startsChord ? "g" : null);
+  // The g goes out with the chord's second key: sent twice, the second g cancels the chord.
+  if (key === "Escape" || startsChord) return;
   if (chord === "g") forward({ key: "g" });
   forward({ key, shiftKey });
 }
