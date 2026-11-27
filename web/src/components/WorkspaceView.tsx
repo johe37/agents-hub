@@ -1,5 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
-import { type Win, type Workspace } from "../api";
+import { type GitFile, type Win, type Workspace } from "../api";
 import { act, ask, backTo, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, pinDiff, diffId, diffLabel, diffTabs, isDiff, modes, setModes, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
@@ -26,11 +26,11 @@ const isUnstaged = (code: string) => code === "??" || code[1] !== ".";
 const baseName = (file: string) => file.replace(/\/$/, "").split("/").pop()!;
 
 /** Stage, unstage or discard files, asking first before a discard. */
-function changeFiles(ws: Workspace, type: "stage" | "unstage" | "discard", files: [string, string][]) {
-  const names = files.map(([, f]) => f);
+function changeFiles(ws: Workspace, type: "stage" | "unstage" | "discard", files: GitFile[]) {
+  const names = files.map((f) => f.path);
   const run = () => void act({ type, workspace: ws.name, files: names }, { key: `git:${ws.name}` });
   if (type !== "discard") return run();
-  const untracked = files.filter(([c]) => c === "??").length;
+  const untracked = files.filter((f) => f.code === "??").length;
   const one = files.length === 1;
   ask({
     title: one ? (untracked ? `Delete ${baseName(names[0])}?` : `Discard the changes in ${baseName(names[0])}?`) : `Discard ${files.length} changes?`,
@@ -43,14 +43,14 @@ function changeFiles(ws: Workspace, type: "stage" | "unstage" | "discard", files
   });
 }
 
-function ChangeGroup(p: { ws: Workspace; side: "staged" | "unstaged"; files: [string, string][] }) {
+function ChangeGroup(p: { ws: Workspace; side: "staged" | "unstaged"; files: GitFile[] }) {
   const [open, setOpen] = createSignal(true);
   const staged = () => p.side === "staged";
   const busy = () => isBusy(`git:${p.ws.name}`);
   const tool = "grid size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg disabled:opacity-40";
   // Shown on hover with a mouse; a touch screen has no hover, so there they always show.
   const onHover = "md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100";
-  const actions = (files: [string, string][]) => (
+  const actions = (files: GitFile[]) => (
     <>
       <Show when={!staged()}>
         <button class={tool} disabled={busy()} title="Discard changes" aria-label="Discard changes" onClick={(e) => (e.stopPropagation(), changeFiles(p.ws, "discard", files))}>
@@ -78,28 +78,28 @@ function ChangeGroup(p: { ws: Workspace; side: "staged" | "unstaged"; files: [st
       </div>
       <Show when={open()}>
         <For each={p.files}>
-          {([code, file]) => {
-            const c = fileCode(code, p.side);
+          {(f) => {
+            const file = () => f.path;
+            const c = () => fileCode(f.code, p.side);
             // Git lists an untracked directory once, with a trailing slash.
-            const dir = file.endsWith("/");
-            const i = dir ? -1 : file.lastIndexOf("/");
+            const i = () => (file().endsWith("/") ? -1 : file().lastIndexOf("/"));
             return (
               <div
                 role="button"
                 tabIndex={0}
                 class="group flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
-                title={`${c.title}: ${file}`}
-                onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: file, stage: p.side })}
+                title={`${c().title}: ${file()}`}
+                onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file: file(), title: file(), stage: p.side })}
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.click()}
               >
-                <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
+                <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c().tone)}>{c().letter}</span>
                 <span class="min-w-0 flex-1 truncate font-mono text-sm">
-                  <span class="text-fg">{file.slice(i + 1)}</span>
-                  <Show when={i > 0}>
-                    <span class="ml-1.5 text-fg-3">{file.slice(0, i)}</span>
+                  <span class="text-fg">{file().slice(i() + 1)}</span>
+                  <Show when={i() > 0}>
+                    <span class="ml-1.5 text-fg-3">{file().slice(0, i())}</span>
                   </Show>
                 </span>
-                <div class={cls("flex shrink-0 items-center gap-0.5", onHover)}>{actions([[code, file]])}</div>
+                <div class={cls("flex shrink-0 items-center gap-0.5", onHover)}>{actions([f])}</div>
               </div>
             );
           }}
@@ -127,8 +127,8 @@ function SidePanel(p: { ws: Workspace }) {
     });
   };
   const [message, setMessage] = createSignal("");
-  const stagedFiles = () => g()?.files.filter(([code]) => isStaged(code)) ?? [];
-  const unstagedFiles = () => g()?.files.filter(([code]) => isUnstaged(code)) ?? [];
+  const stagedFiles = () => g()?.files.filter((f) => isStaged(f.code)) ?? [];
+  const unstagedFiles = () => g()?.files.filter((f) => isUnstaged(f.code)) ?? [];
   const staged = () => stagedFiles().length > 0;
   return (
     <aside class="relative flex h-full shrink-0 flex-col border-l border-line bg-panel" style={{ width: `${panelWidth.width()}px` }}>

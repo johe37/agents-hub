@@ -13,7 +13,14 @@ export interface Git {
   push_remote: string | null;
   added: number;
   removed: number;
-  files: [string, string][];
+  files: GitFile[];
+}
+
+export interface GitFile {
+  key: string;
+  /** XY status code, or ?? */
+  code: string;
+  path: string;
 }
 
 export interface Note {

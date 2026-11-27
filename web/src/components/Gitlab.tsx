@@ -698,7 +698,7 @@ export function Gitlab() {
           </label>
         </header>
         <div ref={listEl} class="min-h-0 flex-1 overflow-y-auto px-2 pb-8">
-          <For each={g().errors}>{([section, err]) => <div class="mx-2 mb-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{section}: {err}</div>}</For>
+          <For each={g().errors}>{(e) => <div class="mx-2 mb-2 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{e[0]}: {e[1]}</div>}</For>
           <Show when={g().loading && !all().length}>
             <div class="flex flex-col gap-2 px-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-14" />)}</div>
           </Show>

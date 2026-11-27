@@ -27,7 +27,8 @@ fn git(g: &GitStatus) -> Value {
         "push_remote": g.push_remote(),
         "added": g.added,
         "removed": g.removed,
-        "files": g.files.iter().map(|(code, path)| json!([code, path])).collect::<Vec<_>>(),
+        // An object with a key, so the page's reconcile matches each file to its own row.
+        "files": g.files.iter().map(|(code, path)| json!({"key": path, "code": code, "path": path})).collect::<Vec<_>>(),
     })
 }
 
