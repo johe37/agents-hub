@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::config::Section;
+use crate::git::{failure, run};
 
 const TTL: Duration = Duration::from_secs(60);
 /// While a pipeline runs, so its jobs move along on screen.
@@ -218,36 +219,6 @@ impl Thread {
 
 fn glab(cwd: &str, args: &[&str]) -> Result<String, String> {
     run(cwd, 20, "glab", args)
-}
-
-/// Run a program in cwd. On failure, the line of its error output that says what went wrong.
-fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, String> {
-    // coreutils timeout, so a slow GitLab or remote cannot hang the caller.
-    let out = Command::new("timeout")
-        .arg(secs.to_string())
-        .arg(program)
-        .args(args)
-        .current_dir(cwd)
-        // Never wait for a password prompt nobody can see.
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("{program}: {e}"))?;
-    match out.status.code() {
-        Some(0) => return Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
-        Some(124) => return Err(format!("{program} timed out")),
-        Some(127) => return Err(format!("{program} is not installed")),
-        _ => {}
-    }
-    Err(failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or(format!("{program} failed")))
-}
-
-/// The line of error output that says what went wrong.
-fn failure(stderr: &str) -> Option<String> {
-    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    // git push starts with "To <remote>"; the useful part is the error or rejection further down.
-    let line = lines.iter().find(|l| l.starts_with("error:") || l.starts_with("fatal:") || l.starts_with("! [")).or(lines.first());
-    line.map(|l| l.to_string())
 }
 
 fn parse_mr(v: &Value) -> Option<Mr> {
@@ -1208,42 +1179,13 @@ pub fn resolve(cwd: &str, mr: &Mr, thread: &str) -> Result<(), String> {
     glab(cwd, &["api", "-X", "PUT", &path, "-f", "resolved=true"]).map(|_| ())
 }
 
-/// The short id of the commit checked out in cwd.
-pub fn head(cwd: &str) -> Option<String> {
-    run(cwd, 5, "git", &["rev-parse", "--short", "HEAD"]).ok().map(|s| s.trim().to_string())
-}
-
 /// Push the checked-out branch, setting its upstream on the first push, then open a draft MR when asked.
-pub fn publish(cwd: &str, open_mr: bool) -> Result<String, String> {
-    let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
-    // Always push to a same-named branch: an upstream like origin/master (branch made from it) makes a plain push fail.
-    let remote = match run(cwd, 5, "git", &["config", &format!("branch.{branch}.remote")]) {
-        Ok(r) if !r.trim().is_empty() && r.trim() != "." => r.trim().to_string(),
-        _ => {
-            let remotes = run(cwd, 5, "git", &["remote"])?;
-            remotes.lines().find(|r| *r == "origin").or(remotes.lines().next()).ok_or("This repo has no remote to push to")?.to_string()
-        }
-    };
-    run(cwd, 120, "git", &["push", "-u", &remote, "HEAD"])?;
-    if !open_mr {
-        return Ok(format!("Pushed {branch}"));
-    }
+/// Open a draft merge request for the branch checked out at cwd, which must be pushed already.
+pub fn open_draft(cwd: &str) -> Result<String, String> {
     let out = glab(cwd, &["mr", "create", "--draft", "--fill", "--yes"])?;
     let url = out.lines().map(str::trim).find(|l| l.contains("/merge_requests/")).unwrap_or_default();
-    Ok(format!("Pushed {branch} and opened a draft merge request {url}"))
+    Ok(format!("Opened a draft merge request {url}"))
 }
-
-/// Commit what is staged, or every change when nothing is.
-pub fn commit(cwd: &str, message: &str) -> Result<String, String> {
-    // --quiet exits 1 when something is staged.
-    if run(cwd, 5, "git", &["diff", "--cached", "--quiet"]).is_ok() {
-        run(cwd, 30, "git", &["add", "-A"])?;
-    }
-    // Long: a pre-commit hook may lint or test.
-    run(cwd, 300, "git", &["commit", "-q", "-m", message])?;
-    Ok(format!("Committed {}", head(cwd).unwrap_or_default()))
-}
-
 
 /// MRs per (workspace path, branch). Lookups never wait for the network: a stale entry starts a fetch in the background.
 #[derive(Default)]
@@ -1299,11 +1241,11 @@ mod tests {
         std::fs::write(dir.join("a"), "a").unwrap();
         std::fs::write(dir.join("b"), "b").unwrap();
         git(&["add", "a"]);
-        super::commit(p, "staged").unwrap();
+        crate::git::commit(p, "staged").unwrap();
         assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "a");
-        super::commit(p, "rest").unwrap();
+        crate::git::commit(p, "rest").unwrap();
         assert_eq!(git(&["show", "--name-only", "--format="]).trim(), "b");
-        assert!(super::commit(p, "nothing").is_err());
+        assert!(crate::git::commit(p, "nothing").is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

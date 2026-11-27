@@ -878,10 +878,13 @@ fn workspace_side(app: &App, ws: &Workspace, t: u128) -> Side {
     }
     if let Some(g) = &ws.git {
         let branch = g.branch.as_deref().unwrap_or_default();
-        if ws.mr.is_none() && !branch.is_empty() && !matches!(branch, "main" | "master") {
-            banner.push(Line::from(s("No merge request yet · p pushes and opens a draft", fg(colors().dim))));
+        let pushed = g.upstream.as_deref().is_some_and(|u| u.ends_with(&format!("/{branch}")));
+        if !branch.is_empty() && !pushed {
+            banner.push(Line::from(s("Branch not pushed · p pushes", fg(colors().dim))));
         } else if g.ahead > 0 {
             banner.push(Line::from(s(format!("{} commit{} not pushed · p pushes", g.ahead, plural(g.ahead as usize)), fg(colors().dim))));
+        } else if app.cfg.gitlab() && ws.mr.is_none() && !matches!(branch, "main" | "master") {
+            banner.push(Line::from(s("No merge request yet · M opens a draft", fg(colors().dim))));
         }
     }
     let mut body_links = vec![];
@@ -1634,7 +1637,8 @@ const HELP: &[(&str, &str)] = &[
     ("r", "reply in the thread"),
     ("f", "put the thread in Claude's prompt and go there; Enter sends it"),
     ("v", "resolve the thread, with an optional reply (\"Fixed in <commit>\")"),
-    ("p", "push the workspace's branch; opens a draft merge request if it has none"),
+    ("p", "push the workspace's branch"),
+    ("M", "open a draft merge request for the workspace's branch"),
     ("", ""),
     ("", "Reviews (merge requests where you are a reviewer)"),
     ("Enter", "open the merge request in GitLab (over SSH: Ctrl+click its link in the panel)"),

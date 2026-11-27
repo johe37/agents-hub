@@ -66,7 +66,8 @@ pub enum Action {
     NextWaiting,
     Forward,
     Resolve,
-    Publish,
+    Push,
+    OpenMr,
     Confirm(bool),
     Fold,
     FoldAll,
@@ -873,12 +874,13 @@ impl App {
             Action::FoldAll => self.toggle_fold_all(),
             Action::Resolve => {
                 let Some((ws, _, _)) = self.current_thread() else { return };
-                let text = ws.and_then(|ws| crate::gitlab::head(&ws.path)).map_or(String::new(), |sha| format!("Fixed in {sha}."));
+                let text = ws.and_then(|ws| crate::git::head(&ws.path)).map_or(String::new(), |sha| format!("Fixed in {sha}."));
                 self.reply.set(&text);
                 self.resolving = true;
                 self.focus = Focus::Reply;
             }
-            Action::Publish => self.publish(),
+            Action::Push => self.push(),
+            Action::OpenMr => self.open_mr(),
             Action::Reply => {
                 if self.current_agent().is_some_and(|a| a.target.is_some()) || self.current_thread().is_some() {
                     self.focus = Focus::Reply;
@@ -1257,21 +1259,46 @@ impl App {
         self.notify(if resolve { "Resolving the thread…" } else { "Posting the reply…" }, false);
     }
 
-    /// Push the workspace's branch after asking, and open a draft merge request when it has none.
-    fn publish(&mut self) {
+    /// Push the workspace's branch to a same-named branch, after asking.
+    fn push(&mut self) {
         let Some(ws) = self.current_workspace() else { return };
-        let Some(branch) = ws.git.as_ref().and_then(|g| g.branch.clone()) else {
+        let Some((g, branch)) = ws.git.as_ref().and_then(|g| Some((g, g.branch.clone()?))) else {
             self.notify("This workspace is not on a git branch", true);
             return;
         };
-        let open_mr = ws.mr.is_none() && !matches!(branch.as_str(), "main" | "master");
-        let what = if open_mr { " and open a draft merge request" } else { "" };
+        // Several remotes and no upstream: origin is the usual answer; the web page lets you choose.
+        let Some(remote) = g.push_remote().or(g.remotes.iter().find(|r| *r == "origin").map(String::as_str)).map(String::from) else {
+            let why = if g.remotes.is_empty() { "This repo has no remote to push to" } else { "This branch has no upstream and the repo has no origin" };
+            self.notify(why, true);
+            return;
+        };
         let (cmd, path) = (self.cmd.clone(), ws.path.clone());
+        let question = format!("Push {branch} to {remote}/{branch}?");
         let then = move || {
-            let _ = cmd.send(Cmd::Publish { path: path.clone(), open_mr });
+            let _ = cmd.send(Cmd::Push { path: path.clone(), remote: remote.clone() });
             Ok(())
         };
-        self.modal = Some(Modal::Confirm { question: format!("Push {branch}{what}?"), then: Box::new(then), yes: false, done: Some(format!("Pushing {branch}…")) });
+        self.modal = Some(Modal::Confirm { question, then: Box::new(then), yes: false, done: Some(format!("Pushing {branch}…")) });
+    }
+
+    /// Open a draft merge request for the workspace's branch, after asking.
+    fn open_mr(&mut self) {
+        let Some(ws) = self.current_workspace() else { return };
+        if !self.cfg.gitlab() {
+            return self.notify("GitLab is not on: add a gitlab section to the config", true);
+        }
+        if let Some(mr) = &ws.mr {
+            return self.notify(format!("This branch has !{} already", mr.iid), true);
+        }
+        let Some(branch) = ws.git.as_ref().and_then(|g| g.branch.clone()) else {
+            return self.notify("This workspace is not on a git branch", true);
+        };
+        let (cmd, path) = (self.cmd.clone(), ws.path.clone());
+        let then = move || {
+            let _ = cmd.send(Cmd::OpenMr(path.clone()));
+            Ok(())
+        };
+        self.modal = Some(Modal::Confirm { question: format!("Open a draft merge request for {branch}?"), then: Box::new(then), yes: false, done: Some("Opening the merge request…".into()) });
     }
 
     /// Fetch the selected workspace's merge request now instead of waiting for the next round.
@@ -1456,7 +1483,8 @@ impl App {
             KeyCode::Char('w') => self.act(Action::NextWaiting),
             KeyCode::Char('f') => self.act(Action::Forward),
             KeyCode::Char('v') => self.act(Action::Resolve),
-            KeyCode::Char('p') => self.act(Action::Publish),
+            KeyCode::Char('p') => self.act(Action::Push),
+            KeyCode::Char('M') => self.act(Action::OpenMr),
             KeyCode::Char('r') => self.act(Action::Reply),
             KeyCode::Char('y') => self.act(Action::Approve),
             KeyCode::Char('d') => self.act(Action::Deny),

@@ -15,6 +15,9 @@ pub struct GitStatus {
     pub dirty: usize,
     pub ahead: u32,
     pub behind: u32,
+    /// Like origin/main; a branch made from origin/main tracks it until its first push.
+    pub upstream: Option<String>,
+    pub remotes: Vec<String>,
     pub added: u32,
     pub removed: u32,
     /// (XY status code or ??, path)
@@ -95,6 +98,8 @@ fn parse_status(out: &str) -> GitStatus {
             st.commit = Some(oid.into());
         } else if let Some(head) = line.strip_prefix("# branch.head ") {
             st.branch = Some(head.into());
+        } else if let Some(up) = line.strip_prefix("# branch.upstream ") {
+            st.upstream = Some(up.into());
         } else if let Some(ab) = line.strip_prefix("# branch.ab ") {
             let mut it = ab.split(' ').map(|n| n.trim_start_matches(['+', '-']).parse().unwrap_or(0));
             st.ahead = it.next().unwrap_or(0);
@@ -105,6 +110,18 @@ fn parse_status(out: &str) -> GitStatus {
         }
     }
     st
+}
+
+impl GitStatus {
+    /// The remote to push to without asking: the upstream's, else the only one.
+    pub fn push_remote(&self) -> Option<&str> {
+        let upstream = self.upstream.as_deref().and_then(|u| self.remotes.iter().find(|r| u.starts_with(&format!("{r}/"))));
+        upstream.or(match self.remotes.as_slice() {
+            [one] => Some(one),
+            _ => None,
+        })
+        .map(String::as_str)
+    }
 }
 
 /// Caches for repo-root lookups and rate-limited git status, safe to share between threads.
@@ -152,6 +169,7 @@ impl GitCache {
     fn refresh(&self, repo: &str) -> GitStatus {
         let generation = self.gens.lock().unwrap().get(repo).copied();
         let mut st = git(repo, &["status", "--porcelain=v2", "--branch"]).map(|o| parse_status(&o)).unwrap_or_default();
+        st.remotes = git(repo, &["remote"]).unwrap_or_default().lines().map(String::from).collect();
         for line in git(repo, &["diff", "--numstat", "HEAD"]).unwrap_or_default().lines() {
             let mut f = line.split('\t');
             if let (Some(Ok(a)), Some(Ok(r))) = (f.next().map(str::parse::<u32>), f.next().map(str::parse::<u32>)) {
@@ -164,6 +182,63 @@ impl GitCache {
         }
         st
     }
+}
+
+/// Run a program in cwd. On failure, the line of its error output that says what went wrong.
+pub fn run(cwd: &str, secs: u32, program: &str, args: &[&str]) -> Result<String, String> {
+    // coreutils timeout, so a slow GitLab or remote cannot hang the caller.
+    let out = Command::new("timeout")
+        .arg(secs.to_string())
+        .arg(program)
+        .args(args)
+        .current_dir(cwd)
+        // Never wait for a password prompt nobody can see.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{program}: {e}"))?;
+    match out.status.code() {
+        Some(0) => return Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Some(124) => return Err(format!("{program} timed out")),
+        Some(127) => return Err(format!("{program} is not installed")),
+        _ => {}
+    }
+    Err(failure(&String::from_utf8_lossy(&out.stderr)).unwrap_or(format!("{program} failed")))
+}
+
+/// The line of error output that says what went wrong.
+pub fn failure(stderr: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    // git push starts with "To <remote>"; the useful part is the error or rejection further down.
+    let line = lines.iter().find(|l| l.starts_with("error:") || l.starts_with("fatal:") || l.starts_with("! [")).or(lines.first());
+    line.map(|l| l.to_string())
+}
+
+/// Push the branch checked out at cwd to a branch of the same name on the remote, and track it.
+/// The same name, since an upstream like origin/master (the branch was made from it) makes a plain push fail.
+pub fn push(cwd: &str, remote: &str) -> Result<String, String> {
+    let branch = run(cwd, 5, "git", &["branch", "--show-current"])?.trim().to_string();
+    if branch.is_empty() {
+        return Err("This checkout is not on a branch".into());
+    }
+    run(cwd, 120, "git", &["push", "-u", remote, "HEAD"])?;
+    Ok(format!("Pushed {branch} to {remote}"))
+}
+
+/// Commit what is staged, or every change when nothing is.
+pub fn commit(cwd: &str, message: &str) -> Result<String, String> {
+    // --quiet exits 1 when something is staged.
+    if run(cwd, 5, "git", &["diff", "--cached", "--quiet"]).is_ok() {
+        run(cwd, 30, "git", &["add", "-A"])?;
+    }
+    // Long: a pre-commit hook may lint or test.
+    run(cwd, 300, "git", &["commit", "-q", "-m", message])?;
+    Ok(format!("Committed {}", head(cwd).unwrap_or_default()))
+}
+
+/// The short id of the commit checked out in cwd.
+pub fn head(cwd: &str) -> Option<String> {
+    run(cwd, 5, "git", &["rev-parse", "--short", "HEAD"]).ok().map(|s| s.trim().to_string())
 }
 
 /// Run git in the repo for a change the user asked for; the error is git's own message.
@@ -249,9 +324,19 @@ mod tests {
         assert_eq!(st.branch.as_deref(), Some("main"));
         assert_eq!(st.commit.as_deref(), Some("abc"));
         assert_eq!((st.ahead, st.behind, st.dirty), (2, 3, 3));
+        assert_eq!(st.upstream.as_deref(), Some("origin/main"));
         assert_eq!(st.files[0], (".M".into(), "src/x.rs".into()));
         assert_eq!(st.files[1], ("R.".into(), "new name.rs".into()));
         assert_eq!(st.files[2], ("??".into(), "untracked file".into()));
+    }
+
+    #[test]
+    fn push_remote_is_the_upstreams_or_the_only_one() {
+        let st = |up: Option<&str>, remotes: &[&str]| GitStatus { upstream: up.map(String::from), remotes: remotes.iter().map(|r| r.to_string()).collect(), ..GitStatus::default() };
+        assert_eq!(st(Some("fork/main"), &["origin", "fork"]).push_remote(), Some("fork"));
+        assert_eq!(st(None, &["origin"]).push_remote(), Some("origin"));
+        assert_eq!(st(None, &["origin", "fork"]).push_remote(), None, "two remotes and no upstream: ask");
+        assert_eq!(st(None, &[]).push_remote(), None);
     }
 
     #[test]

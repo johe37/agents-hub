@@ -1,4 +1,4 @@
-import { For, Show, createEffect, on } from "solid-js";
+import { For, Show, createEffect, createSignal, on } from "solid-js";
 import { confirmBox, dismiss, helpOpen, prefix, setConfirmBox, setHelpOpen, setPrefix, toasts } from "../store";
 import { MOD, cls } from "../util";
 import { Check, X } from "./icons";
@@ -31,7 +31,13 @@ export function Toasts() {
 
 export function Confirm() {
   let ok!: HTMLButtonElement;
-  createEffect(on(confirmBox, (c) => c && queueMicrotask(() => ok?.focus())));
+  const [choice, setChoice] = createSignal<string>();
+  createEffect(
+    on(confirmBox, (c) => {
+      setChoice(c?.choices?.[0]);
+      if (c) queueMicrotask(() => ok?.focus());
+    }),
+  );
   const close = () => setConfirmBox(null);
   return (
     <Show when={confirmBox()}>
@@ -49,6 +55,25 @@ export function Confirm() {
             <Show when={c().body}>
               <p class="mt-1.5 text-fg-2">{c().body}</p>
             </Show>
+            <Show when={c().choices?.length}>
+              <div class="mt-3 flex flex-wrap gap-1.5" role="radiogroup">
+                <For each={c().choices}>
+                  {(name) => (
+                    <button
+                      role="radio"
+                      aria-checked={choice() === name}
+                      class={cls(
+                        "rounded-lg border px-2.5 py-1 font-mono text-sm",
+                        choice() === name ? "border-accent bg-accent/10 text-fg" : "border-line text-fg-2 hover:bg-hover hover:text-fg",
+                      )}
+                      onClick={() => setChoice(name)}
+                    >
+                      {name}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
             <div class="mt-5 flex justify-end gap-2">
               <Button variant="ghost" onClick={close}>
                 Cancel
@@ -59,8 +84,9 @@ export function Confirm() {
                 onClick={() => {
                   // c() throws once the box is closed, so take the action first.
                   const run = c().run;
+                  const picked = choice();
                   close();
-                  run();
+                  run(picked);
                 }}
               >
                 {c().confirm}

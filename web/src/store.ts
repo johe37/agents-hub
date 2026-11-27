@@ -540,7 +540,9 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   body?: string;
   confirm: string;
   danger?: boolean;
-  run: () => void;
+  /** Options to pick one of before confirming; the first is chosen at the start. */
+  choices?: string[];
+  run: (choice?: string) => void;
 } | null>(null);
 /** Chat or terminal for each agent window you switched; the others follow agentView. */
 export const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});

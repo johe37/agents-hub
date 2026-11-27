@@ -111,11 +111,20 @@ function ChangeGroup(p: { ws: Workspace; side: "staged" | "unstaged"; files: [st
 
 function SidePanel(p: { ws: Workspace }) {
   const g = () => p.ws.git;
-  // Commits to push, or a branch of its own that has no merge request yet.
-  const canPush = () => {
-    const b = g()?.branch;
-    if (!b || !state.gitlab.enabled) return false;
-    return g()!.ahead > 0 || (!p.ws.mr && b !== "main" && b !== "master");
+  // A new branch tracks the one it was made from, like origin/main, until its first push.
+  const pushed = () => !!g()?.branch && !!g()!.upstream?.endsWith(`/${g()!.branch}`);
+  const canPush = () => !!g()?.branch && g()!.remotes.length > 0 && (!pushed() || g()!.ahead > 0);
+  const canOpenMr = () => state.gitlab.enabled && !p.ws.mr && pushed() && !["main", "master"].includes(g()!.branch!);
+  const push = () => {
+    const { branch, push_remote: remote, remotes } = g()!;
+    const choices = remote ? undefined : [...remotes].sort((a, b) => Number(b === "origin") - Number(a === "origin"));
+    ask({
+      title: `Push ${branch}?`,
+      body: remote ? `It goes to ${remote}/${branch}.` : `The branch has no upstream. Choose the remote; it goes to a branch named ${branch} there.`,
+      choices,
+      confirm: "Push",
+      run: (choice) => act({ type: "push", workspace: p.ws.name, remote: choice }, { key: `push:${p.ws.name}` }),
+    });
   };
   const [message, setMessage] = createSignal("");
   const stagedFiles = () => g()?.files.filter(([code]) => isStaged(code)) ?? [];
@@ -157,6 +166,30 @@ function SidePanel(p: { ws: Workspace }) {
           )}
         </Show>
 
+        <Show when={canOpenMr()}>
+          <section class="border-b border-line p-3">
+            <div class="mb-2 px-1">
+              <SectionTitle>Merge request</SectionTitle>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              class="w-full"
+              loading={isBusy(`open_mr:${p.ws.name}`)}
+              onClick={() =>
+                ask({
+                  title: `Open a draft merge request for ${g()!.branch}?`,
+                  body: "The title and description come from the commits.",
+                  confirm: "Open",
+                  run: () => act({ type: "open_mr", workspace: p.ws.name }, { key: `open_mr:${p.ws.name}` }),
+                })
+              }
+            >
+              <Plus size={13} /> Open draft MR
+            </Button>
+          </section>
+        </Show>
+
         <section class="flex shrink-0 flex-col p-3">
           <div class="mb-2 flex items-center gap-2 px-1">
             <SectionTitle>Changes</SectionTitle>
@@ -185,20 +218,8 @@ function SidePanel(p: { ws: Workspace }) {
             </Show>
           </div>
           <Show when={canPush()}>
-            <Button
-              size="sm"
-              class="mb-2 w-full"
-              loading={isBusy(`publish:${p.ws.name}`)}
-              onClick={() =>
-                ask({
-                  title: `Push ${g()!.branch}?`,
-                  body: p.ws.mr ? `It updates !${p.ws.mr.iid}.` : "It also opens a draft merge request.",
-                  confirm: "Push",
-                  run: () => act({ type: "publish", workspace: p.ws.name }, { key: `publish:${p.ws.name}` }),
-                })
-              }
-            >
-              <ArrowUp size={13} /> {p.ws.mr ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push and open draft MR"}
+            <Button size="sm" class="mb-2 w-full" loading={isBusy(`push:${p.ws.name}`)} onClick={push}>
+              <ArrowUp size={13} /> {pushed() ? `Push ${g()!.ahead} commit${g()!.ahead === 1 ? "" : "s"}` : "Push branch"}
             </Button>
           </Show>
           <Show when={g()?.files.length}>

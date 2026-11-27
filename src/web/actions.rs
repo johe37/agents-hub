@@ -44,8 +44,10 @@ pub enum Action {
     /// Check out a worktree for the issue with this key, cloning the project into the cache when missing.
     IssueCheckout { issue: String },
     ThreadReply { mr: String, thread: String, text: String, resolve: bool },
-    /// Push the workspace's branch, opening a draft merge request when it has none.
-    Publish { workspace: String },
+    /// Push the workspace's branch to a same-named branch. Without remote, to the upstream's remote or the only one.
+    Push { workspace: String, remote: Option<String> },
+    /// Open a draft merge request for the workspace's branch.
+    OpenMr { workspace: String },
     /// Commit the staged changes, or all of them when nothing is staged.
     Commit { workspace: String, message: String },
     /// Run git status again now, instead of when the cached one is old.
@@ -519,12 +521,23 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             let done = if resolve { format!("Resolved the thread at {} on !{}", th.place(), m.iid) } else { format!("Replied on !{} at {}", m.iid, th.place()) };
             Ok(said(done))
         }
-        Action::Publish { workspace } => {
+        Action::Push { workspace, remote } => {
             let ws = hub.snapshot().workspaces.iter().find(|w| w.name == workspace).cloned().ok_or("This workspace is gone")?;
-            let branch = ws.git.as_ref().and_then(|g| g.branch.clone()).ok_or("This workspace is not on a git branch")?;
-            let open_mr = ws.mr.is_none() && !matches!(branch.as_str(), "main" | "master");
-            let r = crate::gitlab::publish(&ws.path, open_mr);
+            let g = ws.git.as_ref().filter(|g| g.branch.is_some()).ok_or("This workspace is not on a git branch")?;
+            let remote = match remote {
+                Some(r) if g.remotes.contains(&r) => r,
+                Some(r) => return Err(format!("{r} is not a remote of this repo")),
+                None => g.push_remote().ok_or(if g.remotes.is_empty() { "This repo has no remote to push to" } else { "Choose a remote to push to" })?.to_string(),
+            };
+            let r = crate::git::push(&ws.path, &remote);
+            forget_git(hub, &ws.path);
             forget_gitlab(hub, Some(&ws.path));
+            Ok(said(r?))
+        }
+        Action::OpenMr { workspace } => {
+            let path = workspace_path(hub, &workspace)?;
+            let r = crate::gitlab::open_draft(&path);
+            forget_gitlab(hub, Some(&path));
             Ok(said(r?))
         }
         Action::Commit { workspace, message } => {
@@ -532,7 +545,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             if message.trim().is_empty() {
                 return Err("Write a commit message".into());
             }
-            let r = crate::gitlab::commit(&ws.path, message.trim());
+            let r = crate::git::commit(&ws.path, message.trim());
             forget_git(hub, &ws.path);
             Ok(said(r?))
         }

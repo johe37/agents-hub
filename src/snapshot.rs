@@ -215,8 +215,10 @@ pub enum Cmd {
     ForgetMr(String),
     /// Run git status again for the checkout holding this path.
     ForgetGit(String),
-    /// Push the branch checked out at path, opening a draft merge request when asked.
-    Publish { path: String, open_mr: bool },
+    /// Push the branch checked out at path to the remote.
+    Push { path: String, remote: String },
+    /// Open a draft merge request for the branch checked out at path.
+    OpenMr(String),
     /// Post text in a review thread, when there is any, and resolve the thread when asked. `done` is the notice on success.
     ThreadNote { path: String, mr: Box<crate::gitlab::Mr>, thread: String, text: String, resolve: bool, done: String },
     /// Fetch the MRs to review and the assigned issues again.
@@ -393,12 +395,23 @@ impl Collector {
                     });
                 }
                 // Its own thread: a push can take a while, and status updates must keep flowing meanwhile.
-                Ok(Cmd::Publish { path, open_mr }) => {
-                    let (mrs, notices) = (Arc::clone(&self.mrs), Arc::clone(&self.notices));
+                Ok(Cmd::Push { path, remote }) => {
+                    let (git, mrs, notices) = (Arc::clone(&self.git), Arc::clone(&self.mrs), Arc::clone(&self.notices));
                     std::thread::spawn(move || {
-                        let r = crate::gitlab::publish(&path, open_mr);
+                        let r = crate::git::push(&path, &remote);
+                        if let Some(root) = git.repo_root(&path) {
+                            git.forget(&root);
+                        }
                         mrs.forget(&path);
                         notices.lock().unwrap().push(r.map_or_else(|e| (format!("Push failed: {e}"), true), |m| (m, false)));
+                    });
+                }
+                Ok(Cmd::OpenMr(path)) => {
+                    let (mrs, notices) = (Arc::clone(&self.mrs), Arc::clone(&self.notices));
+                    std::thread::spawn(move || {
+                        let r = crate::gitlab::open_draft(&path);
+                        mrs.forget(&path);
+                        notices.lock().unwrap().push(r.map_or_else(|e| (format!("Could not open a merge request: {e}"), true), |m| (m, false)));
                     });
                 }
                 Ok(Cmd::ThreadNote { path, mr, thread, text, resolve, done }) => {

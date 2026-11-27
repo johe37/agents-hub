@@ -6,6 +6,11 @@ export interface Git {
   dirty: number;
   ahead: number;
   behind: number;
+  /** Like origin/main; a new branch tracks the branch it was made from until its first push. */
+  upstream: string | null;
+  remotes: string[];
+  /** The remote to push to without asking: the upstream's, else the only one. */
+  push_remote: string | null;
   added: number;
   removed: number;
   files: [string, string][];
@@ -286,7 +291,8 @@ export type Action =
   | { type: "checkout"; mr: string; kind?: "agent" | "shell" | "nvim" }
   | { type: "issue_checkout"; issue: string }
   | { type: "thread_reply"; mr: string; thread: string; text: string; resolve: boolean }
-  | { type: "publish"; workspace: string }
+  | { type: "push"; workspace: string; remote?: string }
+  | { type: "open_mr"; workspace: string }
   | { type: "commit"; workspace: string; message: string }
   | { type: "refresh_git"; workspace: string }
   | { type: "stage"; workspace: string; files: string[] }
