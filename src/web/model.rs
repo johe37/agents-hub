@@ -239,6 +239,7 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
         "workspaces": snap.workspaces.iter().map(|w| workspace(w, snap)).collect::<Vec<_>>(),
         "agents": snap.agents.iter().map(agent).collect::<Vec<_>>(),
         "usage": usage,
+        "claude_installed": snap.claude_installed,
         "gitlab": {
             "enabled": cfg.gitlab(),
             "loading": snap.inbox_loading,

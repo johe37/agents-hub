@@ -6,6 +6,7 @@ import {
   configTheme,
   enableNotifications,
   go,
+  hasClaude,
   newChat,
   paletteMode,
   paletteOpen,
@@ -126,8 +127,12 @@ export function Palette() {
     if (paletteMode() === "theme") return themeItems();
     const ws = here();
     const commands: Item[] = [
-      { id: "new-agent", group: "Actions", title: "New agent…", hint: "Start Claude with a task", icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
-      { id: "new-chat", group: "Actions", title: "New chat…", hint: "Claude outside any repo", icon: <Chat size={15} />, keywords: "claude question ask", run: () => (close(), newChat()) },
+      ...(hasClaude()
+        ? [
+            { id: "new-agent", group: "Actions", title: "New agent…", hint: "Start Claude with a task", icon: <Sparkles size={15} />, keywords: "claude start task prompt", run: () => (close(), setComposer({ path: ws?.path ?? null })) },
+            { id: "new-chat", group: "Actions", title: "New chat…", hint: "Claude outside any repo", icon: <Chat size={15} />, keywords: "claude question ask", run: () => (close(), newChat()) },
+          ]
+        : []),
       ...(ws
         ? [
             { id: "new-term", group: "Actions", title: `New terminal in ${ws.name}`, icon: <Terminal size={15} />, keywords: "shell", run: () => (close(), act({ type: "new_window", workspace: ws.name, kind: "shell" }, { quiet: true }).then((r) => r.ok && r.window && go({ view: "workspace", name: ws.name, window: r.window }))) },

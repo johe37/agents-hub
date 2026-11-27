@@ -1039,7 +1039,7 @@ fn issue_side(is: &gitlab::Issue) -> Side {
 
 fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
     let t = tick(app);
-    let (wi, side) = match app.current() {
+    let (wi, mut side) = match app.current() {
         Some(Row::Terminal(wi, ti)) => return draw_terminal(f, app, area, wi, ti),
         Some(Row::Thread(..)) => return draw_thread(f, app, area),
         Some(Row::Agent(i)) => {
@@ -1079,12 +1079,14 @@ fn draw_side(f: &mut Frame, app: &mut App, area: Rect) {
             let block = panel(Line::from(s(" jugglr ", fg(colors().bright).bold())), false);
             let inner = block.inner(area).inner(Margin::new(2, 1));
             f.render_widget(block, area);
-            let text = vec![Line::from(s("No workspaces yet.", fg(colors().bright).bold())), Line::from(s("Press n to open one, then c to start Claude in it.", fg(colors().muted)))];
+            let hint = if app.snap.claude_installed { "Press n to open one, then c to start Claude in it." } else { "Press n to open one." };
+            let text = vec![Line::from(s("No workspaces yet.", fg(colors().bright).bold())), Line::from(s(hint, fg(colors().muted)))];
             f.render_widget(Paragraph::new(text), inner);
             app.hits.detail = Rect::default();
             return;
         }
     };
+    side.buttons.retain(|b| app.snap.claude_installed || b.3 != Action::NewWindow("claude"));
     let block = panel(Line::from(s(format!(" {} ", side.title), fg(colors().bright).bold())), false).title_bottom(side.meta);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
@@ -1531,7 +1533,8 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let right = area.right().saturating_sub(uw);
     let mut x = area.x + 1;
-    for (key, label, action) in app.actions(side_visible(f.area())) {
+    let actions = app.actions(side_visible(f.area()));
+    for (key, label, action) in actions.into_iter().filter(|a| app.snap.claude_installed || a.2 != Action::NewWindow("claude")) {
         let key_w = key.chars().count() as u16 + 2;
         let w = key_w + label.chars().count() as u16 + 3;
         if x + w > right {

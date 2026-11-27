@@ -154,6 +154,7 @@ pub struct Snapshot {
     pub inbox_errors: Vec<(crate::config::Section, String)>,
     pub inbox_busy: Vec<crate::config::Section>,
     pub usage: Option<crate::usage::Usage>,
+    pub claude_installed: bool,
     /// The last RefreshFor number this snapshot answers: it shows everything done before that request.
     pub served: u64,
 }
@@ -447,13 +448,14 @@ impl Collector {
             let paths: HashSet<String> = workspaces.iter().map(|w| w.path.clone()).collect();
             self.fill_pool(paths, &all_panes);
         }
+        let claude_installed = tmux::claude_installed();
         let started: HashSet<String> = sessions.iter().filter(|s| on_hub(s)).filter_map(|s| s.tmux_pane.clone()).collect();
         if !self.cfg.passive {
             if !self.adopted {
                 self.adopted = true;
                 self.adopt_claudes(&all_panes, &workspaces);
             }
-            self.fill_claude(&all_panes, &started);
+            self.fill_claude(&all_panes, &started, claude_installed);
         }
         let inbox = if self.cfg.gitlab() {
             let sections: Vec<Section> = self.cfg.sections.iter().copied().chain([Section::GitlabTodos]).collect();
@@ -474,6 +476,7 @@ impl Collector {
             inbox_errors: inbox.errors,
             inbox_busy: inbox.busy,
             usage: crate::usage::load(),
+            claude_installed,
             served: self.asked,
         }
     }
@@ -668,8 +671,8 @@ impl Collector {
     /// as Claude reads the git state and CLAUDE.md files when it starts.
     /// A workspace dropped from the targets keeps its Claude for a while, so moving back to it finds one ready.
     /// The old one stays ready until its replacement has started (`started` holds the panes that sent SessionStart).
-    fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>) {
-        let active = self.cfg.prewarm_claude && self.hub_seen.elapsed() < UNSEEN;
+    fn fill_claude(&mut self, all_panes: &[Pane], started: &HashSet<String>, installed: bool) {
+        let active = installed && self.cfg.prewarm_claude && self.hub_seen.elapsed() < UNSEEN;
         let wanted: Vec<String> = self
             .claude_targets
             .iter()

@@ -342,6 +342,7 @@ pub fn promote_claude(window_id: &str, path: &str) {
 }
 
 fn spawn_in_pool(name: &str, path: &str, command: Option<&str>) -> Option<String> {
+    require_claude(command).ok()?;
     let target = format!("={POOL_SESSION}:");
     let tail: Vec<&str> = ["-P", "-F", "#{window_id}", "-c", path, "-n", name].into_iter().chain(command).collect();
     // The pool session goes away with its last window, so create it when it is missing.
@@ -466,6 +467,7 @@ fn create_commands(name: &str, path: &str, window: &str, command: Option<&str>, 
 }
 
 pub fn create_workspace(name: &str, path: &str, window: &str, command: Option<&str>, spare: Option<&str>) -> Res {
+    require_claude(command).map_err(Fail::Error)?;
     // Switch only after the spare is in, so a failing switch never makes a second session.
     if spare.is_some() && run_chain(&create_commands(name, path, window, command, spare)).is_ok() {
         return run_and_switch(name, vec![]);
@@ -486,6 +488,7 @@ pub fn ensure_workspace_named(path: &str, name: &str) -> Result<String, String> 
 
 /// The workspace for path, or a new one named name whose first window is window running command.
 pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Option<&str>) -> Result<String, String> {
+    require_claude(command)?;
     let real = canonical(path);
     let panes: Vec<Pane> = list_all_panes().into_iter().filter(|p| !p.session.starts_with('_')).collect();
     if let Some(p) = panes.iter().find(|p| canonical(if p.workspace_path.is_empty() { &p.session_path } else { &p.workspace_path }) == real) {
@@ -502,6 +505,7 @@ pub fn ensure_workspace_with(path: &str, name: &str, window: &str, command: Opti
 /// A checkout that already has a workspace is only switched to.
 /// Go to the workspace for dir, or open one named name with a window of this kind; Claude gets prompt typed in, if any.
 pub fn open_checkout(dir: &str, name: &str, window: &str, command: Option<&str>, prompt: Option<&str>) -> Result<String, String> {
+    require_claude(command)?;
     let real = canonical(dir);
     let open = list_all_panes()
         .into_iter()
@@ -529,6 +533,7 @@ pub fn open_checkout(dir: &str, name: &str, window: &str, command: Option<&str>,
 
 /// Open Claude in a new window of the workspace for path, with prompt typed but not sent, and switch to it.
 pub fn open_issue(path: &str, prompt: &str) -> Result<String, String> {
+    require_claude(Some("claude"))?;
     let session = ensure_workspace(path)?;
     let out = run(&["new-window", "-P", "-F", "#{pane_id}", "-t", &format!("={session}:"), "-c", path, "-n", "claude", "claude"]).ok_or("tmux not found")?;
     if !out.status.success() {
@@ -566,6 +571,7 @@ pub fn canonical(path: &str) -> String {
 
 /// Open a window, taken from the pool when spare is a pre-started window that runs command.
 pub fn new_window(session: &str, cwd: &str, name: &str, command: Option<&str>, spare: Option<&str>) -> Res {
+    require_claude(command).map_err(Fail::Error)?;
     if let Some(spare) = spare {
         // Switch only after the spare is in, so a failing switch never starts a second window.
         let moved = run_chain(&[
@@ -624,10 +630,26 @@ pub fn call(args: &[&str]) -> Result<String, String> {
 
 /// Open a window in session without switching to it, and return its window id.
 pub fn open_window(session: &str, cwd: &str, name: &str, command: Option<&str>) -> Result<String, String> {
+    require_claude(command)?;
     let target = format!("={session}:");
     let mut args = vec!["new-window", "-d", "-P", "-F", "#{window_id}", "-t", &target, "-c", cwd, "-n", name];
     args.extend(command);
     call(&args)
+}
+
+pub const NO_CLAUDE: &str = "Claude Code is not installed: there is no claude in PATH";
+
+/// Whether claude is in PATH. Windows get the hub's PATH, as the hub runs on the tmux server.
+pub fn claude_installed() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(path) = std::env::var_os("PATH") else { return false };
+    std::env::split_paths(&path).any(|dir| dir.join("claude").metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+}
+
+/// Without this check, a window for a missing claude closes at once and shows no error.
+pub fn require_claude(command: Option<&str>) -> Result<(), String> {
+    let runs_claude = command.is_some_and(|c| c.split_whitespace().next() == Some("claude"));
+    if runs_claude && !claude_installed() { Err(NO_CLAUDE.into()) } else { Ok(()) }
 }
 
 pub fn shell_quote(s: &str) -> String {

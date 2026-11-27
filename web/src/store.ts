@@ -10,6 +10,7 @@ const EMPTY: State = {
   workspaces: [],
   agents: [],
   usage: null,
+  claude_installed: true,
   gitlab: { enabled: false, loading: false, errors: [], reviews: [], authored: [], assigned: [], issues: [], todos: [] },
   closed: [],
   chat_dir: "~/chats",
@@ -462,7 +463,15 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** Ctrl ⇧ Space in a terminal arms the prefix: the next key acts as a shortcut instead of typing.
  *  The value is the chord typed so far ("" at first, "g" after g); null when not armed. */
 export const [prefix, setPrefix] = createSignal<string | null>(null);
-export const [composer, setComposer] = createSignal<{ path: string | null; prompt?: string; chat?: boolean } | null>(null);
+type Composer = { path: string | null; prompt?: string; chat?: boolean };
+const [composer, openComposer] = createSignal<Composer | null>(null);
+export { composer };
+export const NO_CLAUDE = "Claude Code is not installed: there is no claude in PATH";
+export const hasClaude = () => state.claude_installed;
+export function setComposer(c: Composer | null) {
+  if (c && !hasClaude()) return void toast(NO_CLAUDE, true);
+  openComposer(c);
+}
 export const newChat = () => setComposer({ path: state.chat_dir, chat: true });
 /** The workspace of chat_dir, for questions that belong to no repo. */
 export const chatWorkspace = () => state.workspaces.find((w) => w.path === state.chat_dir);

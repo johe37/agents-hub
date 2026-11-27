@@ -226,6 +226,7 @@ export interface State {
   workspaces: Workspace[];
   agents: Agent[];
   usage: { five_hour: UsageWindow | null; seven_day: UsageWindow | null } | null;
+  claude_installed: boolean;
   gitlab: {
     enabled: boolean;
     loading: boolean;

@@ -18,7 +18,8 @@ One place for your Claude Code sessions and the terminals around them.
 
 ## Install
 
-Requires Linux, tmux, Rust (cargo) and Claude Code. The web app also needs Node.js (npm) to
+Requires Linux, tmux and Rust (cargo). Claude Code is optional: without `claude` in PATH, jugglr
+hides the agent actions, and workspaces and terminals still work. The web app also needs Node.js (npm) to
 build. `e` opens nvim, so install it if you want that key. The GitLab sections need [`glab`](https://gitlab.com/gitlab-org/cli), logged in with
 `glab auth login`.
 

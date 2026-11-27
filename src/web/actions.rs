@@ -265,6 +265,7 @@ pub fn run(hub: &Hub, action: Action) -> Result<Done, String> {
             Ok(Done { message: None, workspace: Some(ws.name), window: Some(w), path: None })
         }
         Action::NewAgent { path, prompt } => {
+            tmux::require_claude(Some("claude"))?;
             let path = crate::config::expand(path.trim());
             std::fs::create_dir_all(&path).map_err(|e| format!("Could not create {}: {e}", shorten(&path)))?;
             let path = tmux::canonical(&path);

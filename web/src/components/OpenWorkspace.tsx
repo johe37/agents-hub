@@ -1,18 +1,19 @@
-import { For, onCleanup, onMount } from "solid-js";
-import { act, go, isBusy, setComposer, state } from "../store";
+import { For, onCleanup, onMount, Show } from "solid-js";
+import { act, go, hasClaude, isBusy, setComposer, state } from "../store";
 import { basename } from "../util";
 import { Bot, Folder, Sparkles, Terminal } from "./icons";
 import { Spinner } from "./ui";
 
 type Kind = "claude" | "shell";
 
-const CHOICES: { kind: Kind; title: string; body: string; key: string; icon: () => any }[] = [
+const ALL_CHOICES: { kind: Kind; title: string; body: string; key: string; icon: () => any }[] = [
   { kind: "claude", title: "Claude", body: "Claude Code in this directory", key: "c", icon: () => <Bot size={20} /> },
   { kind: "shell", title: "Terminal", body: "A shell: run, test or start your editor", key: "t", icon: () => <Terminal size={20} /> },
 ];
 
 /** A directory without a workspace: the workspace opens with what you pick here. */
 export function OpenWorkspace(p: { path: string }) {
+  const choices = () => ALL_CHOICES.filter((c) => c.kind !== "claude" || hasClaude());
   const short = () => (state.home && p.path.startsWith(state.home) ? "~" + p.path.slice(state.home.length) : p.path);
   const busy = (k: Kind) => isBusy(`open:${p.path}:${k}`);
   const start = async (kind: Kind) => {
@@ -22,7 +23,7 @@ export function OpenWorkspace(p: { path: string }) {
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.target as HTMLElement).closest("input,textarea,[contenteditable]")) return;
-    const c = CHOICES.find((x) => x.key.toLowerCase() === e.key);
+    const c = choices().find((x) => x.key.toLowerCase() === e.key);
     if (!c) return;
     e.preventDefault();
     void start(c.kind);
@@ -43,11 +44,11 @@ export function OpenWorkspace(p: { path: string }) {
       </div>
       <p class="mt-6 text-fg-2">What do you want to start in this workspace?</p>
       <div class="mt-3 grid gap-3 sm:grid-cols-2">
-        <For each={CHOICES}>
+        <For each={choices()}>
           {(c) => (
             <button
               class="group relative flex flex-col items-start gap-2 rounded-2xl border border-line bg-panel p-4 text-left transition-[border-color,box-shadow] hover:border-accent/50 hover:shadow-soft disabled:opacity-60"
-              disabled={CHOICES.some((x) => busy(x.kind))}
+              disabled={choices().some((x) => busy(x.kind))}
               onClick={() => start(c.kind)}
             >
               <span class="text-fg-2 group-hover:text-accent">{busy(c.kind) ? <Spinner size={20} /> : c.icon()}</span>
@@ -58,9 +59,11 @@ export function OpenWorkspace(p: { path: string }) {
           )}
         </For>
       </div>
-      <button class="mt-4 inline-flex items-center gap-1.5 self-start text-base text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
-        <Sparkles size={14} /> Or start Claude with a task <span class="kbd">n</span>
-      </button>
+      <Show when={hasClaude()}>
+        <button class="mt-4 inline-flex items-center gap-1.5 self-start text-base text-fg-2 hover:text-fg" onClick={() => setComposer({ path: p.path })}>
+          <Sparkles size={14} /> Or start Claude with a task <span class="kbd">n</span>
+        </button>
+      </Show>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, untrack } from "solid-js";
 import { type Agent, type Win, type Workspace } from "../api";
-import { act, ask, readStored, writeStored, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, setDiffView, state, store } from "../store";
+import { act, ask, readStored, writeStored, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasClaude, isBusy, lastWindow, moveWindow, NO_CLAUDE, setDiffView, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { Commits } from "./Commits";
@@ -374,10 +374,10 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       size="sm"
       class={cls_}
       items={[
-        { label: "Agent", icon: <Bot size={14} />, hint: "c", run: () => open("claude") },
+        ...(hasClaude() ? [{ label: "Agent", icon: <Bot size={14} />, hint: "c", run: () => open("claude") }] : []),
         { label: "Terminal", icon: <TermIcon size={14} />, hint: "t", run: () => open("shell") },
         { label: "Terminal beside", icon: <Columns size={14} />, run: () => openBeside("shell") },
-        { label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("claude") },
+        ...(hasClaude() ? [{ label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("claude") }] : []),
       ]}
     />
   );
@@ -471,7 +471,8 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     } else if (e.altKey) return;
     else if (k === "]" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i + 1) % wins.length].id });
     else if (k === "[" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i - 1 + wins.length) % wins.length].id });
-    else if (k === "c") open("claude");
+    else if (k === "c" && hasClaude()) open("claude");
+    else if (k === "c") toast(NO_CLAUDE, true);
     else if (k === "t") open("shell");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");
     else if (k === "\\") togglePanel();
