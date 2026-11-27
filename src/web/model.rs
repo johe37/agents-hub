@@ -283,7 +283,8 @@ pub fn state(snap: &Snapshot, cfg: &Config) -> Value {
 const MAX_DIFF: usize = 1024 * 1024;
 
 fn git_out(cwd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("timeout").args(["5", "git", "-C", cwd]).args(args).output().ok()?;
+    // quotePath=false: callers use the printed names as paths, and git would quote "räka.txt".
+    let out = Command::new("timeout").args(["5", "git", "-c", "core.quotePath=false", "-C", cwd]).args(args).output().ok()?;
     // `git diff --no-index` exits 1 when the files differ.
     matches!(out.status.code(), Some(0 | 1)).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }

@@ -31,7 +31,8 @@ pub struct GitStatus {
 
 fn git(cwd: &str, args: &[&str]) -> Option<String> {
     // coreutils timeout, so a hung git (network fs, lock) cannot stall the collector.
-    let out = Command::new("timeout").args(["5", "git", "-C", cwd]).args(args).output().ok()?;
+    // quotePath=false: callers use the printed names as paths, and git would quote "räka.txt".
+    let out = Command::new("timeout").args(["5", "git", "-c", "core.quotePath=false", "-C", cwd]).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
@@ -561,6 +562,20 @@ mod tests {
 
         unstage(p, &files(&["a", "d"])).unwrap();
         assert_eq!(codes(), [".M a", ".D c", "?? d"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stages_non_ascii_names() {
+        let dir = std::env::temp_dir().join(format!("jugglr-utf8-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.to_str().unwrap();
+        git_change(p, &["init", "-q"]).unwrap();
+        std::fs::write(dir.join("räka.txt"), "x").unwrap();
+        let name = vec!["räka.txt".to_string()];
+        assert_eq!(entries(p, &name).len(), 1);
+        stage(p, &name).unwrap();
+        assert_eq!(entries(p, &name)[0].0, "A.");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
