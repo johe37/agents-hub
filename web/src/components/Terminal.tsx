@@ -4,7 +4,7 @@ import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { wsURL } from "../api";
-import { forward, pressPrefixed } from "./Overlays";
+import { MODIFIERS, forward, isPrefixKey, pressPrefixed } from "./Overlays";
 import { openPalette, prefix, setPrefix, theme } from "../store";
 import { termFontSize } from "../settings";
 import { Refresh } from "./icons";
@@ -17,7 +17,6 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
  * What macOS terminals send for their text-editing keys. xterm.js sends Option+arrow as a
  * modified arrow, which shells and Claude Code do not read as a word move.
  */
-const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
 function macKey(e: KeyboardEvent): string | undefined {
   const only = (m: "alt" | "meta") => (m === "alt" ? e.altKey && !e.metaKey : e.metaKey && !e.altKey) && !e.ctrlKey && !e.shiftKey;
@@ -92,7 +91,7 @@ export function Terminal(p: { window: string; focus?: boolean }) {
         openPalette();
         return false;
       }
-      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.code === "Space") {
+      if (e.type === "keydown" && isPrefixKey(e)) {
         e.preventDefault();
         setPrefix(prefix() === null ? "" : null);
         return false;

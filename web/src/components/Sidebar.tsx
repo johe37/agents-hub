@@ -1,9 +1,9 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
-import { act, chatWorkspace, readStored, writeStored, closeChat, closeDiff, pinDiff, diffId, diffLabel, diffTabs, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { act, chatWorkspace, readStored, writeStored, closeChat, closeDiff, pinDiff, diffId, diffLabel, diffTabs, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setPrefix, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, alive, cls, until, worst } from "../util";
-import { Bot, Chat, ChevronDown, Cog, FileDiff, Folder, Git, PanelLeft, Plus, Search, X } from "./icons";
+import { Bot, Chat, ChevronDown, Cog, FileDiff, Folder, Git, Keyboard, PanelLeft, Plus, Search, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle, Ago } from "./ui";
@@ -162,6 +162,9 @@ export function Sidebar(p: { onNavigate?: () => void }) {
           </span>
           <Show when={connection() !== "live"}>{connection() === "connecting" ? "Connecting" : "Offline"}</Show>
         </span>
+        <IconButton label="Shortcuts (Ctrl .)" onClick={() => setPrefix("")} class="size-7">
+          <Keyboard size={15} />
+        </IconButton>
         <IconButton
           label="Settings (,)"
           onClick={() => {

@@ -309,6 +309,7 @@ export function Palette() {
             <span><Kbd>↑</Kbd> <Kbd>↓</Kbd> move</span>
             <span><Kbd>↵</Kbd> open</span>
             <span><Kbd>Ctrl ↵</Kbd> agent in folder</span>
+            <span class="ml-auto"><Kbd>Ctrl .</Kbd> shortcuts</span>
           </div>
         </div>
       </div>

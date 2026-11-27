@@ -469,7 +469,7 @@ export type PaletteMode = "all" | "open" | "agent" | "theme";
 export const [paletteMode, setPaletteMode] = createSignal<PaletteMode>("all");
 export const [helpOpen, setHelpOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
-/** Ctrl ⇧ Space in a terminal arms the prefix: the next key acts as a shortcut instead of typing.
+/** Ctrl . arms the prefix: the next key acts as a shortcut, even in a terminal or an input.
  *  The value is the chord typed so far ("" at first, "g" after g); null when not armed. */
 export const [prefix, setPrefix] = createSignal<string | null>(null);
 type Composer = { path: string | null; prompt?: string; chat?: boolean };

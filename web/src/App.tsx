@@ -6,7 +6,7 @@ import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
 import { AskKeeper, ChangesReview } from "./components/ChangesReview";
 import { Eggs } from "./components/Eggs";
-import { Confirm, Help, PrefixMenu, Toasts } from "./components/Overlays";
+import { Confirm, Help, MODIFIERS, PrefixMenu, Toasts, isPrefixKey, pressPrefixed } from "./components/Overlays";
 import { Palette } from "./components/Palette";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
@@ -26,6 +26,7 @@ import {
   route,
   setComposer,
   setHelpOpen,
+  prefix,
   setPrefix,
   setSettingsOpen,
   settingsOpen,
@@ -77,6 +78,21 @@ export function App() {
   // Capture phase: this runs before the views' own keys, so "g a" never reaches the agents view as "a".
   let pendingG = 0;
   const onKey = (e: KeyboardEvent) => {
+    // A terminal handles the prefix itself. isTrusted skips the keys pressPrefixed forwards.
+    if (e.isTrusted && !(e.target as HTMLElement).closest(".xterm")) {
+      if (isPrefixKey(e)) {
+        e.preventDefault();
+        setPrefix(prefix() === null ? "" : null);
+        return;
+      }
+      if (prefix() !== null) {
+        if (MODIFIERS.has(e.key)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pressPrefixed(e.key, e.shiftKey);
+        return;
+      }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
       if ((e.target as HTMLElement).closest(".xterm")) return;
       e.preventDefault();

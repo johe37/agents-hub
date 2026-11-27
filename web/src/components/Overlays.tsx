@@ -79,7 +79,7 @@ const KEYS: [string, [string, string][]][] = [
     [
       [`${MOD} k`, "Search and run anything"],
       ["Ctrl ⇧ k", "Palette, from inside a terminal"],
-      ["Ctrl ⇧ Space", "Prefix: the next key in a terminal is a shortcut"],
+      ["Ctrl .", "Shortcut menu, also from inside a terminal"],
       ["n", "New agent with a task"],
       ["⇧ c", "New chat: Claude outside any repo"],
       ["o", "Open a workspace"],
@@ -140,6 +140,9 @@ export function forward(e: { key: string; code?: string; shiftKey?: boolean; alt
   const { key, code, shiftKey, altKey } = e;
   document.body.dispatchEvent(new KeyboardEvent("keydown", { key, code, shiftKey, altKey, bubbles: true, cancelable: true }));
 }
+
+export const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
+export const isPrefixKey = (e: KeyboardEvent) => e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ".";
 
 type PrefixItem = { key: string; shift?: boolean; label: string };
 
