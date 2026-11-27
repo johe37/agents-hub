@@ -44,6 +44,14 @@ Safari cut them to a rounded square.
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the agents, the merge request and the
   changed files; click a file to see its diff.
+- **Edits in the chat.** Each edit shows open as a diff with the file's line numbers. A turn that
+  changed files ends with a list of them; click a file for its diff against HEAD. Click or
+  Shift+click line numbers in an edit, then **Ask Claude**: the lines go to the reply box. Failed
+  tool calls and Claude's latest to-do list also show open.
+- **Two windows side by side.** Hover a tab and click the split icon, or press `s`. **Terminal
+  beside** in the `+` menu opens a new shell next to the current window. Click the tab of the
+  window beside, or its swap button, to swap the two. `s` again closes the split. Drag the
+  border to resize. Needs a wide screen.
 - **Open a workspace** (`o`). Pick a directory. If it has no workspace yet, choose what starts
   in it: Claude or a terminal. The workspace opens with only that window.
 - **New agent** (`n`). Pick a directory and write the task. The workspace opens if it is not

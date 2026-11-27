@@ -108,6 +108,7 @@ const KEYS: [string, [string, string][]][] = [
       ["Alt Shift ← / →", "Move the window left / right"],
       ["C / T", "New Claude / terminal"],
       ["V", "Chat or terminal for an agent"],
+      ["S", "Show a window beside, or close the split"],
       ["M", "Mark the agent done"],
       ["\\", "Hide or show the side panel"],
     ],

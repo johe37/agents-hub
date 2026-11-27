@@ -104,13 +104,16 @@ export function lineDiff(a: string, b: string, startLine = 1): DiffLine[] {
   return out;
 }
 
-export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: string }) {
+/** pick makes the gutter clickable: a click selects a line, Shift+click extends the selection to it. */
+export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: string; sel?: [number, number] | null; pick?: (i: number, extend: boolean) => void }) {
+  const picked = (i: number) => !!p.sel && i >= p.sel[0] && i <= p.sel[1];
+  const gutter = (i: number) => (p.pick ? { onClick: (e: MouseEvent) => p.pick!(i, e.shiftKey), class: "cursor-pointer hover:text-fg" } : { class: "" });
   return (
     <div class={cls("overflow-x-auto font-mono text-sm leading-[1.6]", p.class)}>
       <table class="w-full border-collapse">
         <tbody>
           <For each={p.lines}>
-            {(l) => (
+            {(l, i) => (
               <Show
                 when={l.type !== "hunk"}
                 fallback={
@@ -121,12 +124,12 @@ export function DiffLines(p: { lines: DiffLine[]; numbers?: boolean; class?: str
                   </tr>
                 }
               >
-                <tr class={cls(l.type === "add" && "bg-add-soft", l.type === "del" && "bg-del-soft")}>
+                <tr class={picked(i()) ? "bg-accent-soft shadow-[inset_3px_0_0_var(--accent)]" : cls(l.type === "add" && "bg-add-soft", l.type === "del" && "bg-del-soft")}>
                   <Show when={p.numbers !== false}>
-                    <td class="w-10 select-none px-2 text-right align-top text-fg-3/70">{l.old ?? ""}</td>
-                    <td class="w-10 select-none px-2 text-right align-top text-fg-3/70">{l.new ?? ""}</td>
+                    <td onClick={gutter(i()).onClick} class={cls("w-10 select-none px-2 text-right align-top text-fg-3/70", gutter(i()).class)}>{l.old ?? ""}</td>
+                    <td onClick={gutter(i()).onClick} class={cls("w-10 select-none px-2 text-right align-top text-fg-3/70", gutter(i()).class)}>{l.new ?? ""}</td>
                   </Show>
-                  <td class={cls("w-5 select-none text-center align-top", l.type === "add" ? "text-add" : l.type === "del" ? "text-del" : "text-fg-3/50")}>
+                  <td onClick={gutter(i()).onClick} class={cls("w-5 select-none text-center align-top", l.type === "add" ? "text-add" : l.type === "del" ? "text-del" : "text-fg-3/50", gutter(i()).class)}>
                     {l.type === "add" ? "+" : l.type === "del" ? "−" : ""}
                   </td>
                   <td class={cls("whitespace-pre pr-4 align-top", l.type === "add" ? "text-add" : l.type === "del" ? "text-del" : "text-fg-2")}>{l.text || " "}</td>

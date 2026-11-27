@@ -12,6 +12,7 @@ const TAIL: u64 = 2 * 1024 * 1024;
 const MAX_ITEMS: usize = 250;
 const MAX_TEXT: usize = 20_000;
 const MAX_RESULT: usize = 4_000;
+const MAX_PATCH: usize = 60_000;
 
 fn clip(s: &str, n: usize) -> String {
     if s.len() <= n {
@@ -40,6 +41,21 @@ fn result_text(content: &Value) -> String {
         Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
         _ => String::new(),
     }
+}
+
+/// The edit as Claude Code applied it, as unified diff hunks, so the page can show real line numbers.
+fn patch(r: &Value) -> Option<String> {
+    let hunks = r["toolUseResult"]["structuredPatch"].as_array().filter(|h| !h.is_empty())?;
+    let mut out = String::new();
+    for h in hunks {
+        let n = |k: &str| h[k].as_u64().unwrap_or(0);
+        out.push_str(&format!("@@ -{},{} +{},{} @@\n", n("oldStart"), n("oldLines"), n("newStart"), n("newLines")));
+        for l in h["lines"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    Some(clip(&out, MAX_PATCH))
 }
 
 /// A typed prompt keeps its line breaks here; injected context and command output are skipped.
@@ -91,12 +107,18 @@ pub fn read(path: &str) -> Value {
             Some("user") => {
                 let content = &r["message"]["content"];
                 if let Some(blocks) = content.as_array().filter(|b| b.iter().any(|b| b["type"] == "tool_result")) {
-                    for b in blocks.iter().filter(|b| b["type"] == "tool_result") {
+                    let results: Vec<_> = blocks.iter().filter(|b| b["type"] == "tool_result").collect();
+                    // toolUseResult belongs to the record, so it is only safe to use with one result in it.
+                    let patch = if results.len() == 1 { patch(&r) } else { None };
+                    for b in results {
                         let Some(&i) = b["tool_use_id"].as_str().and_then(|id| tools.get(id)) else { continue };
                         items[i]["result"] = json!({
                             "text": clip(&result_text(&b["content"]), MAX_RESULT),
                             "error": b["is_error"] == true,
                         });
+                        if let Some(p) = &patch {
+                            items[i]["result"]["patch"] = json!(p);
+                        }
                     }
                 } else if r["isMeta"] != true {
                     if let Some(text) = prompt(content) {
@@ -151,16 +173,24 @@ mod tests {
             json!({"type": "user", "message": {"content": "<command-name>/review</command-name><command-args>42</command-args>"}}),
             json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "On it."}, {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}),
             json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "a\nb", "is_error": false}]}}),
+            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "/a", "old_string": "x", "new_string": "y"}}]}}),
+            json!({
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]},
+                "toolUseResult": {"structuredPatch": [{"oldStart": 3, "oldLines": 2, "newStart": 3, "newLines": 2, "lines": [" a", "-x", "+y"]}]},
+            }),
         ];
         std::fs::write(&path, lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
         let out = read(path.to_str().unwrap());
         let items = out["items"].as_array().unwrap();
-        assert_eq!(items.len(), 4);
+        assert_eq!(items.len(), 5);
         assert_eq!(items[0]["text"], "Fix it\nplease");
         assert_eq!(items[1]["text"], "/review 42");
         assert_eq!(items[2]["kind"], "assistant");
         assert_eq!(items[3]["summary"], "Bash: ls");
         assert_eq!(items[3]["result"]["text"], "a\nb");
+        assert!(items[3]["result"]["patch"].is_null());
+        assert_eq!(items[4]["result"]["patch"], "@@ -3,2 +3,2 @@\n a\n-x\n+y\n");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

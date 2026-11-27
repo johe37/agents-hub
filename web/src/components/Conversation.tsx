@@ -1,7 +1,8 @@
-import { For, Match, Show, Switch, createEffect, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
+import { Index, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { getJSON, type Agent, type ConversationItem } from "../api";
 import { act, isBusy, tilde } from "../store";
 import { cls, toolLine } from "../util";
+import { EditView, TurnChanges, change, isEdit, keep, type Change, type Tool } from "./ChatEdits";
 import { Check, ChevronDown, Stop, Wrench, X } from "./icons";
 import { Markdown } from "./Markdown";
 import { Reply } from "./Reply";
@@ -10,15 +11,25 @@ import { Button, Spinner, StatusDot } from "./ui";
 
 type Conv = { items: ConversationItem[]; truncated?: boolean; missing?: boolean };
 
-function ToolRow(p: { item: Extract<ConversationItem, { kind: "tool" }> }) {
-  const [open, setOpen] = createSignal(false);
-  const line = () => tilde(toolLine(p.item.input) ?? "");
+type Entry = { kind: "msg"; item: ConversationItem } | { kind: "tools"; items: Tool[] } | { kind: "changes"; changes: Change[] };
+
+function todoLine(input: Record<string, unknown>) {
+  const todos = Array.isArray(input.todos) ? (input.todos as { status?: string }[]) : [];
+  return todos.length ? `${todos.filter((t) => t.status === "completed").length}/${todos.length} done` : "";
+}
+
+/** Edits, failed calls and Claude's latest plan show open: they are what you want to see. */
+function ToolRow(p: { item: Tool; agent: Agent; plan: boolean }) {
+  const toggled = createMemo(() => keep<boolean | null>(`open:${p.item.id}`, null));
+  const open = () => toggled()[0]() ?? (isEdit(p.item) || p.plan || !!p.item.result?.error);
+  const line = () => (p.item.name === "TodoWrite" ? todoLine(p.item.input) : tilde(toolLine(p.item.input) ?? ""));
   const state = () => (p.item.result ? (p.item.result.error ? "error" : "ok") : "running");
+  const edit = createMemo(() => change(p.item));
   return (
     <div class="group">
       <button
         class="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-left text-sm transition-colors hover:bg-hover"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => toggled()[1](!open())}
       >
         <span class={cls("grid size-5 shrink-0 place-items-center rounded-md", state() === "error" ? "bg-danger-soft text-danger" : "bg-hover text-fg-3")}>
           <Switch fallback={<Wrench size={11} />}>
@@ -32,15 +43,31 @@ function ToolRow(p: { item: Extract<ConversationItem, { kind: "tool" }> }) {
         </span>
         <span class="shrink-0 font-medium text-fg-2">{p.item.name}</span>
         <span class="min-w-0 truncate font-mono text-xs text-fg-3">{line().split("\n")[0]}</span>
+        <Show when={edit()}>
+          {(c) => (
+            <span class="shrink-0 font-mono text-xs">
+              <span class="text-add">+{c().added}</span> <span class="text-del">−{c().removed}</span>
+            </span>
+          )}
+        </Show>
         <ChevronDown size={13} class={cls("ml-auto shrink-0 text-fg-3 opacity-0 transition-[opacity,transform] group-hover:opacity-100", open() && "rotate-180 opacity-100")} />
       </button>
       <Show when={open()}>
         <div class="mb-2 ml-9 mt-1 flex flex-col gap-2 animate-fade-in">
-          <ToolDetail name={p.item.name} input={p.item.input} compact />
-          <Show when={p.item.result?.text}>
-            <pre class={cls("max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed", p.item.result!.error ? "border-danger/30 bg-danger-soft text-danger" : "border-line bg-bg text-fg-2")}>
-              {p.item.result!.text}
-            </pre>
+          <Show
+            when={edit()}
+            fallback={
+              <>
+                <ToolDetail name={p.item.name} input={p.item.input} compact />
+                <Show when={p.item.result?.text}>
+                  <pre class={cls("max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border px-3 py-2 font-mono text-xs leading-relaxed", p.item.result!.error ? "border-danger/30 bg-danger-soft text-danger" : "border-line bg-bg text-fg-2")}>
+                    {p.item.result!.text}
+                  </pre>
+                </Show>
+              </>
+            }
+          >
+            {(c) => <EditView id={p.item.id} agent={p.agent} change={c()} />}
           </Show>
         </div>
       </Show>
@@ -50,13 +77,15 @@ function ToolRow(p: { item: Extract<ConversationItem, { kind: "tool" }> }) {
 
 const FOLD = 3;
 
-/** A long run of tool calls folds to its last few, so the messages around it stay readable. */
-function ToolGroup(p: { items: Extract<ConversationItem, { kind: "tool" }>[] }) {
+/** A long run of tool calls folds to its last few, so the messages around it stay readable. Edits never fold. */
+function ToolGroup(p: { items: Tool[]; agent: Agent; plan: string | null }) {
   const [open, setOpen] = createSignal(false);
-  const hidden = () => (open() ? 0 : Math.max(0, p.items.length - FOLD));
+  const keepShown = (it: Tool, i: number) => isEdit(it) || it.id === p.plan || !!it.result?.error || i >= p.items.length - FOLD;
+  const shown = createMemo(() => (open() ? p.items : p.items.filter(keepShown)));
+  const hidden = () => p.items.length - shown().length;
   const counts = () => {
     const m = new Map<string, number>();
-    for (const it of p.items.slice(0, hidden())) m.set(it.name, (m.get(it.name) ?? 0) + 1);
+    p.items.forEach((it, i) => keepShown(it, i) || m.set(it.name, (m.get(it.name) ?? 0) + 1));
     return [...m].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(", ");
   };
   return (
@@ -70,21 +99,32 @@ function ToolGroup(p: { items: Extract<ConversationItem, { kind: "tool" }>[] }) 
           <span class="truncate text-fg-3/80">· {counts()}</span>
         </button>
       </Show>
-      <For each={p.items.slice(hidden())}>{(it) => <ToolRow item={it} />}</For>
+      <Index each={shown()}>{(it) => <ToolRow item={it()} agent={p.agent} plan={it().id === p.plan} />}</Index>
     </div>
   );
 }
 
-/** Tool calls between two messages fold into one group, so the text stays readable. */
-function group(items: ConversationItem[]) {
-  const out: ({ kind: "msg"; item: ConversationItem } | { kind: "tools"; items: Extract<ConversationItem, { kind: "tool" }>[] })[] = [];
+const message = (e: Entry, kind: "user" | "assistant") => (e.kind === "msg" && e.item.kind === kind ? e.item : null);
+
+/** Tool calls between two messages fold into one group, and a turn that edited files ends with a list of them. */
+function group(items: ConversationItem[], done: boolean) {
+  const out: Entry[] = [];
+  let turn: Change[] = [];
+  const flush = () => {
+    if (turn.length) out.push({ kind: "changes", changes: turn });
+    turn = [];
+  };
   for (const it of items) {
+    if (it.kind === "user") flush();
     if (it.kind === "tool") {
+      const c = change(it);
+      if (c) turn.push(c);
       const last = out[out.length - 1];
       if (last?.kind === "tools") last.items.push(it);
       else out.push({ kind: "tools", items: [it] });
     } else out.push({ kind: "msg", item: it });
   }
+  if (done) flush();
   return out;
 }
 
@@ -108,6 +148,12 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
     () => [a().key, tick()] as const,
     ([key]) => getJSON<Conv>(`/api/conversation?agent=${encodeURIComponent(key)}`),
   );
+
+  const plan = createMemo(() => {
+    let id: string | null = null;
+    for (const it of conv.latest?.items ?? []) if (it.kind === "tool" && it.name === "TodoWrite") id = it.id;
+    return id;
+  });
 
   let scroller!: HTMLDivElement;
   const [stuck, setStuck] = createSignal(true);
@@ -134,20 +180,23 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
             <Show when={!conv.latest!.items.length}>
               <div class="py-16 text-center text-fg-3">No messages yet. Write the first prompt below.</div>
             </Show>
-            <For each={group(conv.latest!.items)}>
+            <Index each={group(conv.latest!.items, a().status !== "working")}>
               {(g) => (
                 <Switch>
-                  <Match when={g.kind === "tools" && g}>
-                    {(t) => <ToolGroup items={t().items} />}
+                  <Match when={g().kind === "tools" && (g() as Extract<Entry, { kind: "tools" }>)}>
+                    {(t) => <ToolGroup items={t().items} agent={a()} plan={plan()} />}
                   </Match>
-                  <Match when={g.kind === "msg" && g.item.kind === "user" && g.item}>
+                  <Match when={g().kind === "changes" && (g() as Extract<Entry, { kind: "changes" }>)}>
+                    {(c) => <TurnChanges agent={a()} changes={c().changes} />}
+                  </Match>
+                  <Match when={message(g(), "user")}>
                     {(m) => (
                       <div class="ml-auto max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-fg animate-fade-in">
                         {m().text}
                       </div>
                     )}
                   </Match>
-                  <Match when={g.kind === "msg" && g.item.kind === "assistant" && g.item}>
+                  <Match when={message(g(), "assistant")}>
                     {(m) => (
                       <div>
                         <Markdown text={m().text} class="text-base leading-relaxed text-fg animate-fade-in" />
@@ -157,7 +206,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   </Match>
                 </Switch>
               )}
-            </For>
+            </Index>
             <Show when={a().status === "working"}>
               <div class="flex items-center gap-2 text-sm text-working">
                 <StatusDot status="working" size={7} />

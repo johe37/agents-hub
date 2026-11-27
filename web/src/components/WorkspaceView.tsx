@@ -1,13 +1,13 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, untrack } from "solid-js";
 import { type Agent, type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, setDiffView, state, store } from "../store";
+import { act, ask, readStored, writeStored, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, isBusy, lastWindow, moveWindow, setDiffView, state, store } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
 import { Commits } from "./Commits";
 import { Conversation } from "./Conversation";
-import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
+import { ArrowDown, ArrowUp, Bot, Check, Columns, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
 import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Ago, Resizer } from "./ui";
-import { focus, panelWidth, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
+import { focus, panelWidth, resizable, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
 const Terminal = lazy(() => import("./Terminal").then((m) => ({ default: m.Terminal })));
@@ -21,6 +21,17 @@ function fileCode(code: string) {
 
 /** Chat or terminal for each agent window you switched; the others follow agentView. */
 const [modes, setModes] = createSignal<Record<string, "chat" | "terminal">>({});
+
+/** The window shown beside the current one, per workspace. */
+const [splits, setSplits] = createSignal<Record<string, string>>(JSON.parse(readStored("splits") ?? "{}"));
+function setSplit(workspace: string, win: string | null) {
+  const s = { ...splits() };
+  if (win) s[workspace] = win;
+  else delete s[workspace];
+  setSplits(s);
+  writeStored("splits", JSON.stringify(s));
+}
+const splitWidth = resizable("split-width", 560, 320, 1600);
 
 function SidePanel(p: { ws: Workspace; agents: Agent[] }) {
   const g = () => p.ws.git;
@@ -298,22 +309,43 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     onCleanup(() => clearTimeout(t));
   });
 
-  const mode = () => {
-    const w = current();
+  const modeOf = (w: Win | null) => {
     if (!w || w.kind !== "agent") return "terminal";
     const v = agentView();
     return modes()[w.id] ?? (v === "last" ? lastAgentView() : v);
   };
-  const setMode = (m: "chat" | "terminal", picked = true) => {
-    const w = current();
+  const setModeOf = (w: Win | null, m: "chat" | "terminal", picked = true) => {
     if (!w) return;
     setModes((s) => ({ ...s, [w.id]: m }));
     if (picked) setLastAgentView(m);
   };
-  // A draft for this window's agent waits in the chat's reply box, so show the chat.
+  const mode = () => modeOf(current());
+  const setMode = (m: "chat" | "terminal", picked = true) => setModeOf(current(), m, picked);
+
+  const second = createMemo(() => {
+    const id = splits()[p.name];
+    return id && id !== p.window ? (ws()?.windows.find((w) => w.id === id) ?? null) : null;
+  });
+  // Going to the window beside swaps the two, so both stay in view.
+  createEffect(
+    on([() => p.name, () => p.window], ([name, win], prev) => {
+      if (prev && prev[0] === name && prev[1] && win && win === untrack(() => splits()[name])) setSplit(name, prev[1]);
+    }),
+  );
+  const beside = (id: string) => setSplit(p.name, id);
+  const toggleSplit = () => {
+    if (second()) return setSplit(p.name, null);
+    const wins = ws()?.windows ?? [];
+    const i = wins.findIndex((w) => w.id === p.window);
+    if (wins.length > 1) beside(wins[(i + 1) % wins.length].id);
+    else openBeside("shell");
+  };
+
+  // A draft for an agent waits in the chat's reply box, so show the chat.
   createEffect(() => {
     const d = draft();
-    if (d && agentOf(current())?.key === d.agent) setMode("chat", false);
+    if (!d) return;
+    for (const w of [current(), second()]) if (agentOf(w)?.key === d.agent) setModeOf(w, "chat", false);
   });
 
   const open = (kind: "claude" | "shell") =>
@@ -321,6 +353,11 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       if (r.ok && r.window) {
         go({ view: "workspace", name: p.name, window: r.window });
       }
+    });
+
+  const openBeside = (kind: "claude" | "shell") =>
+    act({ type: "new_window", workspace: p.name, kind }, { key: `new:${kind}`, quiet: true }).then((r) => {
+      if (r.ok && r.window) beside(r.window);
     });
 
   const closeWindow = (win: Win) => {
@@ -339,9 +376,72 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       items={[
         { label: "Agent", icon: <Bot size={14} />, hint: "C", run: () => open("claude") },
         { label: "Terminal", icon: <TermIcon size={14} />, hint: "T", run: () => open("shell") },
+        { label: "Terminal beside", icon: <Columns size={14} />, run: () => openBeside("shell") },
+        { label: "Agent beside", icon: <Columns size={14} />, run: () => openBeside("claude") },
       ]}
     />
   );
+
+  /** One window's content. The window beside has a bar of its own, to swap it in or close it. */
+  const Pane = (q: { win: Win; primary: boolean }) => {
+    const a = () => (q.win.kind === "agent" ? agentOf(q.win) : undefined);
+    const m = () => modeOf(q.win);
+    return (
+      <>
+        <Show when={a() || !q.primary}>
+          <div class={cls("flex min-h-[41px] items-center gap-2 border-b border-line py-1.5", q.primary ? "px-4 sm:px-5" : "bg-panel/60 px-3")}>
+            <Show when={!q.primary}>
+              <span class="text-fg-3">{kindIcon(q.win)}</span>
+              <span class="max-w-[12rem] shrink-0 truncate text-sm font-medium text-fg">{a()?.title ?? q.win.running ?? q.win.name}</span>
+            </Show>
+            <Show when={a()}>
+              {(ag) => (
+                <>
+                  <StatusPill status={ag().status} />
+                  <span class="min-w-0 truncate text-sm text-fg-2">
+                    <Switch fallback={ag().model ?? ""}>
+                      <Match when={ag().status === "working"}>{ag().tool ?? "Thinking…"}</Match>
+                      <Match when={ag().status === "waiting"}>{ag().message}</Match>
+                    </Switch>
+                  </span>
+                </>
+              )}
+            </Show>
+            <div class="ml-auto flex shrink-0 items-center gap-1">
+              <Show when={a() && a()!.status === "waiting" && !a()!.needs_permission}>
+                <Button size="sm" variant="ghost" class="shrink-0" onClick={() => act({ type: "mark_done", agent: a()!.key })} title="Stop showing it as waiting (m)">
+                  <Done size={13} /> Done
+                </Button>
+              </Show>
+              <Show when={a()}>
+                <div class="flex rounded-lg bg-hover p-0.5 text-sm">
+                  <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", m() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setModeOf(q.win, "chat")} title={q.primary ? "Chat (v)" : "Chat"}>
+                    <Chat size={12} /> Chat
+                  </button>
+                  <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", m() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setModeOf(q.win, "terminal")} title={q.primary ? "Terminal (v)" : "Terminal"}>
+                    <TermIcon size={12} /> Terminal
+                  </button>
+                </div>
+              </Show>
+              <Show when={!q.primary}>
+                <IconButton label="Swap with the main window" onClick={() => go({ view: "workspace", name: p.name, window: q.win.id })}>
+                  <Columns size={14} />
+                </IconButton>
+                <IconButton label="Close the split (s)" onClick={() => setSplit(p.name, null)}>
+                  <X size={14} />
+                </IconButton>
+              </Show>
+            </div>
+          </div>
+        </Show>
+        <div class="min-h-0 flex-1">
+          <Show when={m() === "chat" && a()} fallback={<Terminal window={q.win.id} focus={q.primary} />}>
+            {(ag) => <Conversation agent={ag()} />}
+          </Show>
+        </div>
+      </>
+    );
+  };
 
   const closeWorkspace = () => {
     const w = ws();
@@ -375,6 +475,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     else if (k === "t") open("shell");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");
     else if (k === "\\") togglePanel();
+    else if (k === "s") toggleSplit();
     else if (k === "m") {
       const a = agentOf(current());
       if (!a || a.status !== "waiting" || a.needs_permission) return;
@@ -486,6 +587,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                 {(win, i) => {
                   const a = () => agentOf(win);
                   const active = () => win.id === p.window;
+                  const isBeside = () => second()?.id === win.id;
                   const d = () => drag();
                   const markerBefore = () => d() && !inPlace(d()!) && d()!.before === win.id;
                   const markerAfter = () => d() && !inPlace(d()!) && d()!.before === null && i() === w().windows.length - 1;
@@ -510,6 +612,19 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       <Show when={a()}>
                         <StatusDot status={a()!.status} size={7} />
                       </Show>
+                      <Show when={!active() && !isBeside()}>
+                        <button
+                          class="-mr-1 hidden size-5 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100 lg:grid"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            beside(win.id);
+                          }}
+                          aria-label="Show beside"
+                          title="Show beside the current window"
+                        >
+                          <Columns size={12} />
+                        </button>
+                      </Show>
                       <button
                         class="-mr-1 grid size-5 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
                         onClick={(e) => {
@@ -520,8 +635,8 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       >
                         <X size={12} />
                       </button>
-                      <Show when={active()}>
-                        <span class="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-accent" />
+                      <Show when={active() || isBeside()}>
+                        <span class={cls("absolute inset-x-2 bottom-0 h-[2px] rounded-full", active() ? "bg-accent" : "bg-accent/40")} />
                       </Show>
                       <Show when={markerBefore() || markerAfter()}>
                         <span class={cls("absolute inset-y-2 w-[2px] rounded-full bg-accent", markerBefore() ? "-left-[3px]" : "-right-[3px]")} />
@@ -537,43 +652,17 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
           <div class="flex min-h-0 flex-1">
             <main class="flex min-w-0 flex-1 flex-col">
               <Show when={current()} fallback={<div class="grid flex-1 place-items-center"><Spinner size={18} /></div>}>
-                {(win) => (
-                  <>
-                    <Show when={win().kind === "agent" && agentOf(win())}>
-                      {(a) => (
-                        <div class="flex items-center gap-2 border-b border-line px-4 py-1.5 sm:px-5">
-                          <StatusPill status={a().status} />
-                          <span class="min-w-0 truncate text-sm text-fg-2">
-                            <Switch fallback={a().model ?? ""}>
-                              <Match when={a().status === "working"}>{a().tool ?? "Thinking…"}</Match>
-                              <Match when={a().status === "waiting"}>{a().message}</Match>
-                            </Switch>
-                          </span>
-                          <Show when={a().status === "waiting" && !a().needs_permission}>
-                            <Button size="sm" variant="ghost" class="ml-auto shrink-0" onClick={() => act({ type: "mark_done", agent: a().key })} title="Stop showing it as waiting (m)">
-                              <Done size={13} /> Done
-                            </Button>
-                          </Show>
-                          <div class={cls("flex rounded-lg bg-hover p-0.5 text-sm", !(a().status === "waiting" && !a().needs_permission) && "ml-auto")}>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "chat" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("chat")} title="Chat (v)">
-                              <Chat size={12} /> Chat
-                            </button>
-                            <button class={cls("flex items-center gap-1 rounded-md px-2 py-1", mode() === "terminal" ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => setMode("terminal")} title="Terminal (v)">
-                              <TermIcon size={12} /> Terminal
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </Show>
-                    <div class="min-h-0 flex-1">
-                      <Show when={mode() === "chat" && agentOf(win())} fallback={<Terminal window={win().id} focus />}>
-                        {(a) => <Conversation agent={a()} />}
-                      </Show>
-                    </div>
-                  </>
-                )}
+                {(win) => <Pane win={win()} primary />}
               </Show>
             </main>
+            <Show when={second()}>
+              {(win) => (
+                <section class="relative hidden min-w-0 shrink-0 flex-col border-l border-line lg:flex" style={{ width: `${splitWidth.width()}px`, "max-width": "70%" }}>
+                  <Resizer size={splitWidth} side="left" label="Width of the window beside" />
+                  <Pane win={win()} primary={false} />
+                </section>
+              )}
+            </Show>
             <Show
               when={showPanel()}
               fallback={

@@ -255,7 +255,7 @@ export type ConversationItem =
       name: string;
       summary: string | null;
       input: Record<string, unknown>;
-      result?: { text: string; error: boolean };
+      result?: { text: string; error: boolean; patch?: string };
       ts: string;
     };
 

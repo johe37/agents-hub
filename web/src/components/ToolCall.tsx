@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createMemo } from "solid-js";
 import { DiffLines, lineDiff } from "./Diff";
 import { tilde } from "../store";
 import { cls } from "../util";
+import { Check } from "./icons";
 
 type Input = Record<string, unknown>;
 
@@ -48,6 +49,31 @@ export function ToolDetail(p: { name: string; input: Input; compact?: boolean })
           </Show>
         }
       >
+        <Match when={p.name === "TodoWrite" && Array.isArray(p.input.todos) && (p.input.todos as Input[])}>
+          {(todos) => (
+            <ul class="flex flex-col gap-1 text-sm">
+              <For each={todos()}>
+                {(t) => (
+                  <li class="flex items-start gap-2">
+                    <span
+                      class={cls(
+                        "mt-[3px] grid size-4 shrink-0 place-items-center rounded-full border",
+                        t.status === "completed" ? "border-add bg-add-soft text-add" : t.status === "in_progress" ? "border-accent" : "border-line-strong",
+                      )}
+                    >
+                      <Show when={t.status === "completed"} fallback={<Show when={t.status === "in_progress"}><span class="size-1.5 rounded-full bg-accent" /></Show>}>
+                        <Check size={10} stroke-width={3} />
+                      </Show>
+                    </span>
+                    <span class={t.status === "completed" ? "text-fg-3 line-through" : t.status === "in_progress" ? "text-fg" : "text-fg-2"}>
+                      {str(t.status === "in_progress" ? (t.activeForm ?? t.content) : t.content)}
+                    </span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          )}
+        </Match>
         <Match when={p.name === "Bash" || p.name === "BashOutput"}>
           <Show when={p.input.description}>
             <div class="text-fg-2">{str(p.input.description)}</div>
