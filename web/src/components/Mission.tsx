@@ -92,6 +92,7 @@ interface LoggedCommand {
   workspace?: string | null;
   window?: string | null;
   window_name?: string;
+  title?: string;
 }
 
 function fromLog(c: LoggedCommand, i: number): FeedEntry {
@@ -100,7 +101,7 @@ function fromLog(c: LoggedCommand, i: number): FeedEntry {
     return { id, ts: c.time, source: "shell", where: `${c.workspace} · ${c.window_name}`, text: c.text, route: c.workspace ? { view: "workspace", name: c.workspace, window: c.window ?? null } : null };
   }
   const agent = c.agent ? state.agents.find((a) => a.key === c.agent) : undefined;
-  return { id, ts: c.time, source: "claude", where: c.workspace ?? c.cwd?.replace(state.home, "~") ?? "", text: c.text, route: agent ? agentRoute(agent) : null };
+  return { id, ts: c.time, source: "claude", where: [c.workspace ?? c.cwd?.replace(state.home, "~"), c.title].filter(Boolean).join(" · "), text: c.text, route: agent ? agentRoute(agent) : null };
 }
 
 let lastFetch = 0;
@@ -218,7 +219,19 @@ function satAt(prev: Map<string, Node>, key: string): Sat | undefined {
 }
 
 function where(a: Agent): string {
-  return a.workspace ?? a.short_path;
+  return `${a.workspace ?? a.short_path} · ${a.title || a.name}`;
+}
+
+function firstLine(text: string | null): string | null {
+  const line = text?.split("\n").find((l) => l.trim())?.trim();
+  if (!line) return null;
+  return line.length > 140 ? line.slice(0, 139) + "…" : line;
+}
+
+function statusText(a: Agent): string {
+  if (a.status === "waiting") return a.message ?? "Needs you";
+  if (a.status === "idle") return `Done: ${firstLine(a.reply) ?? "finished its turn"}`;
+  return STATUS[a.status].label;
 }
 
 function log(e: Omit<FeedEntry, "id" | "ts">) {
@@ -242,7 +255,7 @@ createRoot(() => {
       }
       if (primed && prevStatus && prevStatus !== a.status && (a.status === "waiting" || a.status === "idle" || a.status === "ended")) {
         if (a.status !== "ended") emit({ kind: "status", sat, color: STATUS[a.status].color });
-        log({ source: "status", where: where(a), text: a.status === "waiting" ? (a.message ?? "Needs you") : STATUS[a.status].label, status: a.status, route: agentRoute(a) });
+        log({ source: "status", where: where(a), text: statusText(a), status: a.status, route: agentRoute(a) });
       }
       seen.tool.set(a.key, a.tool);
       seen.status.set(a.key, a.status);
