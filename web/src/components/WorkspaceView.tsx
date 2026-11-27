@@ -7,7 +7,7 @@ import { DiffPane } from "./ChangesReview";
 import { Commits } from "./Commits";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
-import { Badge, Button, Edge, Empty, IconButton, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Resizer } from "./ui";
+import { Badge, Button, Edge, Empty, IconButton, Kbd, MenuButton, Spinner, StatusDot, StatusPill, kindIcon, SectionTitle, Resizer } from "./ui";
 import { focus, panelWidth, showNav, showPanel, toggleFocus, togglePanel } from "../layout";
 import { agentView, lastAgentView, setLastAgentView, tabsMode } from "../settings";
 
@@ -514,6 +514,11 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
               )}
             </Show>
             <div class="ml-auto flex items-center gap-1">
+              <Show when={shown() && !onDiff() && mode() === "terminal"}>
+                <span class="mr-1 hidden items-center gap-1.5 text-sm text-fg-3 md:flex" title="In a terminal, press Ctrl ⇧ Space and then a key to run a shortcut">
+                  <Kbd>Ctrl ⇧ Space</Kbd> shortcuts
+                </span>
+              </Show>
               <Show when={tabsHidden()}>{newWindowMenu("hidden md:inline-grid")}</Show>
               <MenuButton
                 label="Workspace actions"
