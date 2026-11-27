@@ -204,8 +204,15 @@ function prune(s: State) {
   }
 }
 
-function show() {
-  if (raw) setState(reconcile(visible(raw), { key: "key", merge: false }));
+const setPart = setState as unknown as (key: keyof State, value: unknown) => void;
+
+/** Only the fields named change; a close or a move hides or reorders workspaces and agents. */
+function show(keys: (keyof State)[] = ["workspaces", "agents"]) {
+  if (!raw) return;
+  const v = visible(raw);
+  batch(() => {
+    for (const k of keys) setPart(k, reconcile(v[k] as object, { key: "key", merge: false }));
+  });
 }
 
 /** Run an action that closes a workspace or window, and hide it before the hub answers. `before` runs with the hiding, e.g. to leave the page. */
@@ -271,10 +278,12 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data as string);
     if (msg.type === "state" && msg.data) {
-      raw = msg.data as State;
+      // The hub sends only the fields that changed since its last message on this socket.
+      const data = msg.data as Partial<State>;
+      raw = { ...(raw ?? EMPTY), ...data };
       prune(raw);
-      notifyChanges(raw);
-      show();
+      if (data.agents) notifyChanges(raw);
+      show(Object.keys(data) as (keyof State)[]);
       setLoaded(true);
     } else if (msg.type === "notice") {
       toast(msg.text, msg.error);

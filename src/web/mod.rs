@@ -36,12 +36,15 @@ struct Assets;
 
 const COOKIE: &str = "jugglr";
 
+type Parts = Vec<(String, Arc<str>)>;
+
 pub struct Hub {
     snap: RwLock<Snapshot>,
     cmd: Mutex<Sender<Cmd>>,
     token: String,
     port: u16,
-    state: watch::Sender<Arc<str>>,
+    /// The state's top-level fields as JSON, so a page gets only the fields that changed.
+    state: watch::Sender<Arc<Parts>>,
     /// Toasts for every open page: notices from background jobs.
     events: broadcast::Sender<Arc<str>>,
     asked: AtomicU64,
@@ -100,7 +103,7 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
     cfg.passive = true;
     let screens = Arc::default();
     let (cmd, snaps) = crate::snapshot::spawn(cfg.clone(), screens);
-    let (state_tx, _) = watch::channel::<Arc<str>>(Arc::from("null"));
+    let (state_tx, _) = watch::channel::<Arc<Parts>>(Arc::default());
     let (events, _) = broadcast::channel(64);
 
     let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
@@ -130,11 +133,12 @@ pub fn run(mut cfg: Config, port: u16, open: bool) -> ExitCode {
                 }
                 let served = snap.served;
                 *bridge.snap.write().unwrap() = snap;
-                let text = json!({"type": "state", "data": state}).to_string();
+                let Value::Object(fields) = state else { continue };
+                let parts: Parts = fields.into_iter().map(|(k, v)| (k, Arc::from(v.to_string()))).collect();
                 bridge.state.send_if_modified(|cur| {
-                    let changed = **cur != *text;
+                    let changed = **cur != parts;
                     if changed {
-                        *cur = Arc::from(text);
+                        *cur = Arc::new(parts);
                     }
                     changed
                 });
@@ -299,9 +303,12 @@ async fn stream_events(socket: WebSocket, hub: Arc<Hub>) {
     let (mut tx, mut rx) = socket.split();
     let mut state = hub.state.subscribe();
     let mut events = hub.events.subscribe();
+    let mut sent = HashMap::new();
     let first = state.borrow_and_update().clone();
-    if tx.send(Message::Text((*first).into())).await.is_err() {
-        return;
+    if let Some(text) = state_message(&first, &mut sent) {
+        if tx.send(Message::Text(text.into())).await.is_err() {
+            return;
+        }
     }
     loop {
         tokio::select! {
@@ -309,8 +316,9 @@ async fn stream_events(socket: WebSocket, hub: Arc<Hub>) {
                 if changed.is_err() {
                     return;
                 }
-                let text = state.borrow_and_update().clone();
-                if tx.send(Message::Text((*text).into())).await.is_err() {
+                let parts = state.borrow_and_update().clone();
+                let Some(text) = state_message(&parts, &mut sent) else { continue };
+                if tx.send(Message::Text(text.into())).await.is_err() {
                     return;
                 }
             }
@@ -331,6 +339,26 @@ async fn stream_events(socket: WebSocket, hub: Arc<Hub>) {
             }
         }
     }
+}
+
+/// The fields that differ from what this page got last; the first message has them all.
+fn state_message(parts: &Parts, sent: &mut HashMap<String, Arc<str>>) -> Option<String> {
+    let mut out = String::from(r#"{"type":"state","data":{"#);
+    let mut any = false;
+    for (k, v) in parts {
+        if sent.get(k).is_some_and(|s| s == v) {
+            continue;
+        }
+        if any {
+            out.push(',');
+        }
+        any = true;
+        out.push_str(&Value::from(k.as_str()).to_string());
+        out.push(':');
+        out.push_str(v);
+        sent.insert(k.clone(), Arc::clone(v));
+    }
+    any.then(|| out + "}}")
 }
 
 async fn action(State(hub): State<Arc<Hub>>, Json(body): Json<Value>) -> Response {
@@ -490,6 +518,15 @@ mod tests {
         assert!(!is_install_asset("/icons/missing.png"));
         assert!(!is_install_asset("/icons/../index.html"));
         assert_eq!(mime_guess::from_path("manifest.webmanifest").first_or_octet_stream(), "application/manifest+json");
+    }
+
+    #[test]
+    fn sends_only_changed_fields() {
+        let parts = |a: &str, b: &str| vec![("a".to_string(), Arc::from(a)), ("b".to_string(), Arc::from(b))];
+        let mut sent = HashMap::new();
+        assert_eq!(state_message(&parts("1", "[]"), &mut sent).as_deref(), Some(r#"{"type":"state","data":{"a":1,"b":[]}}"#));
+        assert_eq!(state_message(&parts("1", "[]"), &mut sent), None);
+        assert_eq!(state_message(&parts("1", "[2]"), &mut sent).as_deref(), Some(r#"{"type":"state","data":{"b":[2]}}"#));
     }
 
     #[test]
