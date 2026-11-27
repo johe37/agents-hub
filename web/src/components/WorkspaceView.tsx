@@ -1,8 +1,9 @@
 import { For, Match, Show, Switch, batch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount, untrack } from "solid-js";
 import { type Win, type Workspace } from "../api";
-import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, setDiffView, state, store, toast } from "../store";
+import { act, ask, closeWindow as closeWin, closeWorkspace as closeWs, draft, forgetLastWindow, go, hasAgent, isBusy, lastWindow, moveWindow, noAgent, openDiff, closeDiff, diffId, diffLabel, diffTabs, isDiff, state, store, toast } from "../store";
 import { pipelineTone } from "../gitlab";
 import { cls, worst } from "../util";
+import { DiffPane } from "./ChangesReview";
 import { Commits } from "./Commits";
 import { Conversation } from "./Conversation";
 import { ArrowDown, ArrowUp, Bot, Check, Done, More, Branch, Chat, External, FileDiff, Layers, Maximize, Minimize, PanelRight, Pipeline, Plus, Rename, Terminal as TermIcon, Trash, X } from "./icons";
@@ -78,7 +79,7 @@ function SidePanel(p: { ws: Workspace }) {
               </span>
             </Show>
             <Show when={g()?.files.length}>
-              <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
+              <button class="ml-auto text-sm text-fg-2 hover:text-fg" onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file: null, title: `All changes in ${p.ws.name}` })}>
                 Review all
               </button>
             </Show>
@@ -134,7 +135,7 @@ function SidePanel(p: { ws: Workspace }) {
                       <button
                         class="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover"
                         title={`${c.title}: ${file}`}
-                        onClick={() => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
+                        onClick={() => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: file })}
                       >
                         <span class={cls("w-3 shrink-0 text-center font-mono text-xs font-semibold", c.tone)}>{c.letter}</span>
                         <span class="min-w-0 truncate font-mono text-sm">
@@ -165,6 +166,12 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   const ws = createMemo(() => state.workspaces.find((w) => w.name === p.name));
   const agents = createMemo(() => store.byWorkspace().get(p.name) ?? []);
   const current = createMemo(() => ws()?.windows.find((w) => w.id === p.window) ?? null);
+  const diffs = () => diffTabs()[p.name] ?? [];
+  const diff = createMemo(() => diffs().find((d) => diffId(d) === p.window));
+  const onDiff = () => !!diff();
+  // The diff tab hides the window shown before it, so a terminal stays connected and keeps its screen.
+  const shownId = createMemo<string | null>((prev) => current()?.id ?? (onDiff() ? prev : null), null);
+  const shown = createMemo(() => ws()?.windows.find((w) => w.id === shownId()) ?? null);
   const agentOf = (w: Win | null) => (w?.agent ? store.agentsByKey().get(w.agent) : undefined);
 
   let tabs: HTMLDivElement | undefined;
@@ -336,7 +343,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
   // A window just opened is in the URL before the hub lists it: give it a moment to show up.
   createEffect(() => {
     const w = ws();
-    if (!w || current()) return;
+    if (!w || current() || onDiff()) return;
     const pickOne = () => {
       const last = lastWindow(w.name);
       const pick =
@@ -346,19 +353,19 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
         w.windows[0];
       if (pick) go({ view: "workspace", name: w.name, window: pick.id }, true);
     };
-    if (!p.window) return pickOne();
+    if (!p.window || isDiff(p.window)) return pickOne();
     const t = setTimeout(() => untrack(current) || pickOne(), 4000);
     onCleanup(() => clearTimeout(t));
   });
 
   const mode = () => {
-    const w = current();
+    const w = shown();
     if (!w || w.kind !== "agent") return "terminal";
     const v = agentView();
     return modes()[w.id] ?? (v === "last" ? lastAgentView() : v);
   };
   const setMode = (m: "chat" | "terminal", picked = true) => {
-    const w = current();
+    const w = shown();
     if (!w) return;
     setModes((s) => ({ ...s, [w.id]: m }));
     if (picked) setLastAgentView(m);
@@ -425,7 +432,7 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
       if (w) go({ view: "workspace", name: p.name, window: w.id });
     } else if (e.altKey) return;
     else if (k === "]" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i + 1) % wins.length].id });
-    else if (k === "[" && wins.length) go({ view: "workspace", name: p.name, window: wins[(i - 1 + wins.length) % wins.length].id });
+    else if (k === "[" && wins.length) go({ view: "workspace", name: p.name, window: wins[((i < 0 ? wins.length : i) - 1 + wins.length) % wins.length].id });
     else if (k === "c" && hasAgent()) open("agent");
     else if (k === "c") toast(noAgent(), true);
     else if (k === "t") open("shell");
@@ -588,15 +595,69 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                   );
                 }}
               </For>
+              <For each={diffs()}>
+                {(d) => {
+                  const id = diffId(d);
+                  const active = () => p.window === id;
+                  return (
+                    <div
+                      role="tab"
+                      aria-selected={active()}
+                      class={cls(
+                        "group relative flex h-8 shrink-0 cursor-pointer select-none items-center gap-2 rounded-lg border border-dashed pl-2.5 pr-1.5 text-base transition-colors",
+                        active() ? "border-line-strong bg-raised text-fg shadow-soft" : "border-line bg-raised/40 text-fg-2 hover:border-line-strong hover:bg-raised/80 hover:text-fg",
+                      )}
+                      onClick={() => go({ view: "workspace", name: p.name, window: id })}
+                      onAuxClick={(e) => e.button === 1 && closeDiff(p.name, id)}
+                      title={d.commit ? `${d.commit.short} ${d.commit.title}` : d.title}
+                    >
+                      <FileDiff size={14} class={active() ? "text-accent" : "text-fg-3"} />
+                      <span class="max-w-[16rem] truncate">{diffLabel(d)}</span>
+                      <button
+                        class={cls(
+                          "grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg group-hover:opacity-100",
+                          active() ? "opacity-60" : "opacity-0",
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeDiff(p.name, id);
+                        }}
+                        aria-label="Close diff"
+                      >
+                        <X size={12} />
+                      </button>
+                      <Show when={active()}>
+                        <span class="absolute inset-x-3 -bottom-px h-[2px] rounded-full bg-accent" />
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
             </div>
             {newWindowMenu("ml-0.5 shrink-0")}
           </nav>
 
           <div class="flex min-h-0 flex-1">
             <main class="flex min-w-0 flex-1 flex-col">
-              <Show when={current()} fallback={<div class="grid flex-1 place-items-center"><Spinner size={18} /></div>}>
+              <Show when={diff()} keyed>
+                {(d) => (
+                  <div
+                    class="min-h-0 flex-1"
+                    onKeyDown={(e) => {
+                      if (e.key !== "Escape" || e.defaultPrevented || (e.target as HTMLElement).closest("input,textarea")) return;
+                      e.preventDefault();
+                      go({ view: "workspace", name: p.name, window: lastWindow(p.name) ?? null });
+                    }}
+                    tabIndex={-1}
+                    ref={(el) => queueMicrotask(() => el.focus())}
+                  >
+                    <DiffPane target={d} onClose={() => closeDiff(p.name, diffId(d))} />
+                  </div>
+                )}
+              </Show>
+              <Show when={shown()} fallback={<Show when={!onDiff()}><div class="grid flex-1 place-items-center"><Spinner size={18} /></div></Show>}>
                 {(win) => (
-                  <>
+                  <div class={cls("flex min-h-0 flex-1 flex-col", onDiff() && "hidden")}>
                     <Show when={win().kind === "agent" && agentOf(win())}>
                       {(a) => (
                         <div class="flex items-center gap-2 border-b border-line px-4 py-1.5 sm:px-5">
@@ -624,11 +685,11 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
                       )}
                     </Show>
                     <div class="min-h-0 flex-1">
-                      <Show when={mode() === "chat" && agentOf(win())} fallback={<Terminal window={win().id} focus />}>
+                      <Show when={mode() === "chat" && agentOf(win())} fallback={<Terminal window={win().id} focus={!onDiff()} />}>
                         {(a) => <Conversation agent={a()} />}
                       </Show>
                     </div>
-                  </>
+                  </div>
                 )}
               </Show>
             </main>

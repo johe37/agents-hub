@@ -1,9 +1,9 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent, UsageWindow } from "../api";
-import { act, chatWorkspace, readStored, writeStored, closeChat, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
+import { act, chatWorkspace, readStored, writeStored, closeChat, closeDiff, diffId, diffLabel, diffTabs, closeWindow, closeWorkspace, connection, go, href, now, isBusy, newChat, openPalette, reopen, route, setSettingsOpen, state, store } from "../store";
 import { showFiveHour, showWeekly, tabsMode } from "../settings";
 import { MOD, alive, cls, until, worst } from "../util";
-import { Bot, Chat, ChevronDown, Cog, Folder, Git, PanelLeft, Plus, Search, X } from "./icons";
+import { Bot, Chat, ChevronDown, Cog, FileDiff, Folder, Git, PanelLeft, Plus, Search, X } from "./icons";
 import { stored, toggleNav } from "../layout";
 import { attention } from "../gitlab";
 import { IconButton, Spinner, StatusDot, kindIcon, SectionTitle, Ago } from "./ui";
@@ -330,6 +330,46 @@ export function Sidebar(p: { onNavigate?: () => void }) {
                                 onClick={() => closeWindow(w, win)}
                                 aria-label={`Close window ${a()?.title ?? win.running ?? win.name}`}
                                 title="Close window"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          );
+                        }}
+                      </For>
+                      <For each={diffTabs()[w.name] ?? []}>
+                        {(d) => {
+                          const id = diffId(d);
+                          const on = () => {
+                            const x = r();
+                            return x.view === "workspace" && x.name === w.name && x.window === id;
+                          };
+                          return (
+                            <div class={cls("group/win flex h-7 items-center rounded-md pr-1 text-sm transition-colors", on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg")}>
+                              <a
+                                href={href({ view: "workspace", name: w.name, window: id })}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  p.onNavigate?.();
+                                  go({ view: "workspace", name: w.name, window: id });
+                                }}
+                                onAuxClick={(e) => {
+                                  if (e.button !== 1) return;
+                                  e.preventDefault();
+                                  closeDiff(w.name, id);
+                                }}
+                                title={d.title}
+                                aria-current={on() ? "page" : undefined}
+                                class="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 pr-1"
+                              >
+                                <FileDiff size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
+                                <span class="min-w-0 flex-1 truncate">{diffLabel(d)}</span>
+                              </a>
+                              <button
+                                class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover/win:grid group-focus-within/win:grid"
+                                onClick={() => closeDiff(w.name, id)}
+                                aria-label="Close diff"
+                                title="Close diff"
                               >
                                 <X size={12} />
                               </button>

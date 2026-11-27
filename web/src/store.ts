@@ -93,7 +93,7 @@ export function forgetLastWindow(workspace: string) {
 createRoot(() =>
   createEffect(() => {
     const r = route();
-    if (r.view !== "workspace" || !r.window || lastWindows[r.name] === r.window) return;
+    if (r.view !== "workspace" || !r.window || isDiff(r.window) || lastWindows[r.name] === r.window) return;
     lastWindows[r.name] = r.window;
     writeStored("last-windows", JSON.stringify(lastWindows));
   }),
@@ -542,7 +542,56 @@ export const [confirmBox, setConfirmBox] = createSignal<{
   danger?: boolean;
   run: () => void;
 } | null>(null);
-export const [diffView, setDiffView] = createSignal<{ workspace: string; path: string; file: string | null; title: string; commit?: Commit } | null>(null);
+export type DiffTarget = { workspace: string; path: string; file: string | null; title: string; commit?: Commit };
+/** A diff for an agent without a workspace: it opens over everything. */
+export const [diffView, setDiffView] = createSignal<DiffTarget | null>(null);
+
+/** A diff tab's window id in the URL. tmux window ids start with @, so it never clashes. */
+export const diffId = (d: DiffTarget) => `diff:${d.commit?.sha ?? "HEAD"}${d.file ? ":" + d.file : ""}`;
+export const isDiff = (window: string | null) => !!window?.startsWith("diff:");
+/** The diff tabs of each workspace, after its windows. */
+export const [diffTabs, setDiffTabs] = createSignal<Record<string, DiffTarget[]>>(
+  (() => {
+    try {
+      const t: Record<string, DiffTarget | DiffTarget[]> = JSON.parse(readStored("diff-tabs") ?? "{}");
+      // Older versions kept one diff per workspace.
+      return Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Array.isArray(v) ? v : [v]]));
+    } catch {
+      return {};
+    }
+  })(),
+);
+createRoot(() => createEffect(() => writeStored("diff-tabs", JSON.stringify(diffTabs()))));
+
+export function openDiff(d: DiffTarget) {
+  if (!state.workspaces.some((w) => w.name === d.workspace)) return setDiffView(d);
+  const id = diffId(d);
+  setDiffTabs((t) => {
+    const list = t[d.workspace] ?? [];
+    const at = list.findIndex((x) => diffId(x) === id);
+    return { ...t, [d.workspace]: at < 0 ? [...list, d] : list.map((x, i) => (i === at ? d : x)) };
+  });
+  go({ view: "workspace", name: d.workspace, window: id });
+}
+
+export function diffLabel(d: DiffTarget) {
+  const name = d.file ? d.file.replace(/\/$/, "").split("/").pop()! : null;
+  if (d.commit) return name ? `${name} @ ${d.commit.short}` : d.commit.short;
+  return name ?? "All changes";
+}
+
+/** Close a diff tab. Closing the one shown shows the diff next to it, else the window you came from. */
+export function closeDiff(workspace: string, id: string) {
+  const list = diffTabs()[workspace] ?? [];
+  const at = list.findIndex((x) => diffId(x) === id);
+  if (at < 0) return;
+  const rest = list.filter((_, i) => i !== at);
+  setDiffTabs(({ [workspace]: _, ...others }) => (rest.length ? { ...others, [workspace]: rest } : others));
+  const r = route();
+  if (r.view !== "workspace" || r.name !== workspace || r.window !== id) return;
+  const next = rest[Math.min(at, rest.length - 1)];
+  go({ view: "workspace", name: workspace, window: next ? diffId(next) : (lastWindow(workspace) ?? null) }, true);
+}
 
 export function openPalette(mode: PaletteMode = "all") {
   setPaletteMode(mode);

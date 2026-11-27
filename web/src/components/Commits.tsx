@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { getJSON, type Commit, type Workspace } from "../api";
-import { setDiffView, toast } from "../store";
+import { openDiff, toast } from "../store";
 import { cls } from "../util";
 import { ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Search, X } from "./icons";
 import { Ago, SectionTitle, Spinner } from "./ui";
@@ -262,7 +262,7 @@ export function Commits(p: { ws: Workspace }) {
     }
     setOpen(s);
   };
-  const show = (c: Commit, file: string | null) => setDiffView({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
+  const show = (c: Commit, file: string | null) => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
   const browse = ([kind, name]: Ref) => {
     setRev(kind === "tag" ? `refs/tags/${name}` : kind === "remote" ? `refs/remotes/${name}` : name === "HEAD" ? null : `refs/heads/${name}`);
     setMode("all");

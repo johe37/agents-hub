@@ -4,7 +4,7 @@ import { Gitlab } from "./components/Gitlab";
 import { Menu } from "./components/icons";
 import { NewAgent } from "./components/NewAgent";
 import { OpenWorkspace } from "./components/OpenWorkspace";
-import { ChangesReview } from "./components/ChangesReview";
+import { ChangesReview, ReviewKeeper } from "./components/ChangesReview";
 import { Eggs } from "./components/Eggs";
 import { Confirm, Help, PrefixMenu, Toasts } from "./components/Overlays";
 import { Palette } from "./components/Palette";
@@ -223,6 +223,7 @@ export function App() {
       <Palette />
       <NewAgent />
       <ChangesReview />
+      <ReviewKeeper />
       <Eggs />
       <Help />
       <Settings />

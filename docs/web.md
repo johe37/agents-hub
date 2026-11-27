@@ -43,7 +43,9 @@ Safari cut them to a rounded square.
 - **Workspaces.** One tab per window. An agent opens in its terminal; `v` switches to the
   chat: its conversation, with the tool calls folded, and a box to reply. Shells are live terminals
   in the page; start your editor in one. The side panel lists the merge request and the
-  changed files; click a file to see its diff.
+  changed files; click a file or a commit to see its diff in a diff tab after the windows.
+  Each diff gets its own tab; opening one again shows its tab. `Esc` goes back to the window
+  you came from.
 - **Edits in the chat.** Each edit shows open as a diff with the file's line numbers. A turn that
   changed files ends with a list of them; click a file for its diff against HEAD. Click or
   Shift+click line numbers in an edit, then **Ask Claude**: the lines go to the reply box. Failed

@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { getJSON, type Commit } from "../api";
 import { language } from "../highlight";
-import { act, diffView, go, setDiffView, setDraft } from "../store";
+import { act, diffView, go, setDiffView, setDraft, type DiffTarget } from "../store";
 import { cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
 import { Chat, FileDiff, Trash, X } from "./icons";
@@ -147,7 +147,8 @@ function FileSection(p: { f: DiffFile; notes: Note[]; form: Form | null; open: (
   );
 }
 
-export function ChangesReview() {
+/** Effects that outlive any one diff: saving unsent comments and handing a review to a Claude that is starting. */
+export function ReviewKeeper() {
   createEffect(() => save("review-notes", JSON.stringify(notes())));
   createEffect(() => save("review-pending", JSON.stringify(pending())));
   // A new Claude shows up in state once its SessionStart hook reports; then the review goes to its reply box.
@@ -159,21 +160,28 @@ export function ChangesReview() {
       setDraft({ agent: a.key, text: p.text });
     }
   });
+  return null;
+}
 
-  const commit = () => diffView()?.commit ?? null;
-  const [diff] = createResource(diffView, (d) => {
+/** A diff to read and comment on. It fills its parent: a workspace's diff tab, or the modal. */
+export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
+  const commit = () => p.target.commit ?? null;
+  const [diff] = createResource(
+    () => p.target,
+    (d) => {
       const q = (d.commit ? `&commit=${d.commit.sha}` : "") + (d.file ? `&file=${encodeURIComponent(d.file)}` : "");
       return getJSON<{ diff: string }>(`/api/diff?path=${encodeURIComponent(d.path)}${q}`);
-  });
+    },
+  );
   const files = createMemo(() => parseUnified(diff.latest?.diff ?? ""));
 
-  const path = () => diffView()?.path ?? "";
+  const path = () => p.target.path;
   const mine = () => notes()[path()] ?? [];
   const setMine = (f: (l: Note[]) => Note[]) => setNotes((all) => ({ ...all, [path()]: f(all[path()] ?? []) }));
   const here = (file: string) => mine().filter((n) => n.file === file && (n.commit?.sha ?? "") === (commit()?.sha ?? ""));
 
   const [form, setForm] = createSignal<Form | null>(null);
-  createEffect(() => (diffView(), setForm(null)));
+  createEffect(() => (p.target, setForm(null)));
   const open = (f: DiffFile, a: number, b: number) => setForm((o) => ({ file: f.name, a: Math.min(a, b), b: Math.max(a, b), text: o?.text ?? "" }));
   const add = (f: DiffFile) => {
     const fm = form();
@@ -183,21 +191,74 @@ export function ChangesReview() {
     setForm(null);
   };
 
-  const close = () => setDiffView(null);
   const send = () => {
-    const d = diffView();
-    if (!d || !mine().length) return;
+    const ws = p.target.workspace;
+    if (!mine().length) return;
     const text = reviewPrompt(mine());
     setMine(() => []);
-    close();
-    toAgent(d.workspace, text);
+    p.onClose();
+    toAgent(ws, text);
   };
   const title = () => {
-    const d = diffView();
-    const c = d?.commit;
-    return d?.file ? (c ? `${d.file} in ${c.short}` : d.file) : c ? `${c.short} ${c.title}` : d?.title;
+    const d = p.target;
+    const c = d.commit;
+    return d.file ? (c ? `${d.file} in ${c.short}` : d.file) : c ? `${c.short} ${c.title}` : d.title;
   };
 
+  return (
+    <div class="flex h-full min-h-0 flex-col bg-bg">
+      <header class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
+        <FileDiff size={16} class="text-fg-3" />
+        <h2 class="min-w-0 flex-1 truncate font-mono text-base text-fg">{title()}</h2>
+        <div class="flex rounded-lg bg-hover p-0.5 text-sm" role="group" title="Layout">
+          <button class={cls("rounded-md px-2 py-1", !split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => split() && toggleSplit()}>
+            Unified
+          </button>
+          <button class={cls("rounded-md px-2 py-1", split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => !split() && toggleSplit()}>
+            Side by side
+          </button>
+        </div>
+        <Show when={mine().length}>
+          <Button size="sm" variant="primary" onClick={send} title="Put your comments in the workspace Claude's reply box">
+            <Chat size={13} /> Send review ({mine().length})
+          </Button>
+        </Show>
+        <IconButton label="Close (Esc)" onClick={p.onClose}>
+          <X size={16} />
+        </IconButton>
+      </header>
+      <div class="min-h-0 flex-1 overflow-y-auto p-5">
+        <Show when={!diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
+          <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
+            <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
+              <p class="mb-3 text-sm text-fg-3">Click or drag line numbers to comment. Comments collect until you send them as one review to {p.target.workspace}'s Claude.</p>
+              <div class="flex flex-col gap-4">
+                <For each={files()}>
+                  {(f) => (
+                    <FileSection
+                      f={f}
+                      notes={here(f.name)}
+                      form={form()?.file === f.name ? form() : null}
+                      open={(a, b) => open(f, a, b)}
+                      setText={(t) => setForm((o) => o && { ...o, text: t })}
+                      onDelete={(id) => setMine((l) => l.filter((x) => x.id !== id))}
+                      onAdd={() => add(f)}
+                      onCancel={() => setForm(null)}
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+          </Show>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+/** The diff of an agent that has no workspace, over everything. */
+export function ChangesReview() {
+  const close = () => setDiffView(null);
   return (
     <Show when={diffView()}>
       {(d) => (
@@ -208,52 +269,8 @@ export function ChangesReview() {
           tabIndex={-1}
           ref={(el) => queueMicrotask(() => el.focus())}
         >
-          <div class={cls("flex h-full w-full flex-col border-l border-line-strong bg-bg shadow-float animate-slide-up", split() ? "max-w-7xl" : "max-w-4xl")}>
-            <header class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
-              <FileDiff size={16} class="text-fg-3" />
-              <h2 class="min-w-0 flex-1 truncate font-mono text-base text-fg">{title()}</h2>
-              <div class="flex rounded-lg bg-hover p-0.5 text-sm" role="group" title="Layout">
-                <button class={cls("rounded-md px-2 py-1", !split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => split() && toggleSplit()}>
-                  Unified
-                </button>
-                <button class={cls("rounded-md px-2 py-1", split() ? "bg-raised text-fg shadow-soft" : "text-fg-2")} onClick={() => !split() && toggleSplit()}>
-                  Side by side
-                </button>
-              </div>
-              <Show when={mine().length}>
-                <Button size="sm" variant="primary" onClick={send} title="Put your comments in the workspace Claude's reply box">
-                  <Chat size={13} /> Send review ({mine().length})
-                </Button>
-              </Show>
-              <IconButton label="Close (Esc)" onClick={close}>
-                <X size={16} />
-              </IconButton>
-            </header>
-            <div class="min-h-0 flex-1 overflow-y-auto p-5">
-              <Show when={!diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
-                <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
-                  <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
-                    <p class="mb-3 text-sm text-fg-3">Click or drag line numbers to comment. Comments collect until you send them as one review to {d().workspace}'s Claude.</p>
-                    <div class="flex flex-col gap-4">
-                      <For each={files()}>
-                        {(f) => (
-                          <FileSection
-                            f={f}
-                            notes={here(f.name)}
-                            form={form()?.file === f.name ? form() : null}
-                            open={(a, b) => open(f, a, b)}
-                            setText={(t) => setForm((o) => o && { ...o, text: t })}
-                            onDelete={(id) => setMine((l) => l.filter((x) => x.id !== id))}
-                            onAdd={() => add(f)}
-                            onCancel={() => setForm(null)}
-                          />
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                </Show>
-              </Show>
-            </div>
+          <div class={cls("h-full w-full border-l border-line-strong shadow-float animate-slide-up", split() ? "max-w-7xl" : "max-w-4xl")}>
+            <DiffPane target={d()} onClose={close} />
           </div>
         </div>
       )}

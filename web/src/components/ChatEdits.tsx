@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, type Signal } from "solid-js";
 import type { Agent, ConversationItem } from "../api";
-import { setDiffView, setDraft, tilde } from "../store";
+import { openDiff, setDraft, tilde } from "../store";
 import { DiffLines, lineDiff, parseHunks, type DiffLine } from "./Diff";
 import { FileDiff, Sparkles } from "./icons";
 import { linesLabel } from "./MrReview";
@@ -49,7 +49,7 @@ export function change(t: Tool): Change | null {
 }
 
 function openFile(a: Agent, file: string | null) {
-  setDiffView({ workspace: a.workspace ?? a.name, path: a.path, file, title: file ? tilde(file) : `All changes in ${a.short_path}` });
+  openDiff({ workspace: a.workspace ?? a.name, path: a.path, file, title: file ? tilde(file) : `All changes in ${a.short_path}` });
 }
 
 function Stat(p: { added: number; removed: number }) {
