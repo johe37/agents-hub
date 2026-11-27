@@ -53,3 +53,9 @@ export function highlightLines(text: string, lang: string): string[] {
   lines.push(cur);
   return lines;
 }
+
+/** Highlighted HTML for a fenced code block, or null when the language is unknown. Takes aliases like ts, sh and py. */
+export function highlightBlock(text: string, lang: string): string | null {
+  if (!hljs.getLanguage(lang)) return null;
+  return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+}

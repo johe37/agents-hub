@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { getJSON, type Commit, type Workspace } from "../api";
-import { act, agentLabel, go, hasAgent, openDiff, toast } from "../store";
+import { act, agentLabel, copy, go, hasAgent, openDiff, toast } from "../store";
 import { cls } from "../util";
 import { ArrowDown, ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Refresh, Search, Sparkles, X } from "./icons";
 import { Ago, SectionTitle, Spinner } from "./ui";
@@ -33,27 +33,6 @@ const REF_TONE: Record<string, string> = {
   remote: "bg-working-soft text-working",
   tag: "bg-waiting-soft text-waiting",
 };
-
-/** The clipboard API needs a secure page; the page is often plain http on the LAN. */
-async function copy(text: string, what: string) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
-    else {
-      const t = document.createElement("textarea");
-      t.value = text;
-      t.style.position = "fixed";
-      t.style.opacity = "0";
-      document.body.append(t);
-      t.select();
-      const ok = document.execCommand("copy");
-      t.remove();
-      if (!ok) throw new Error();
-    }
-    toast(`Copied ${what}`);
-  } catch {
-    toast(`Could not copy ${what}`, true);
-  }
-}
 
 /** A list fixed to the screen at a point, so the scrolling side panel never cuts it off. */
 /** anchor is the button that opens it: a press there must not close it just before the click opens it again. */

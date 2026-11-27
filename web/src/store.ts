@@ -678,3 +678,24 @@ export function openPalette(mode: PaletteMode = "all") {
 export function ask(c: NonNullable<ReturnType<typeof confirmBox>>) {
   setConfirmBox(c);
 }
+
+/** The clipboard API needs a secure page; the page is often plain http on the LAN. */
+export async function copy(text: string, what: string) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const t = document.createElement("textarea");
+      t.value = text;
+      t.style.position = "fixed";
+      t.style.opacity = "0";
+      document.body.append(t);
+      t.select();
+      const ok = document.execCommand("copy");
+      t.remove();
+      if (!ok) throw new Error();
+    }
+    toast(`Copied ${what}`);
+  } catch {
+    toast(`Could not copy ${what}`, true);
+  }
+}

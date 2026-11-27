@@ -277,7 +277,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                   </Match>
                   <Match when={message(g(), "user")}>
                     {(m) => (
-                      <div class="ml-auto max-w-[min(85%,65ch)] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-fg animate-fade-in">
+                      <div class="ml-auto max-w-[min(85%,65ch)] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-md text-fg animate-fade-in">
                         {m().text}
                       </div>
                     )}
@@ -286,10 +286,10 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                     {(m) => (
                       <Show
                         when={answer(g())}
-                        fallback={<Markdown text={m().text} class="chat-measure text-sm leading-relaxed text-fg-2 animate-fade-in" />}
+                        fallback={<Markdown text={m().text} class="text-base text-fg-2 animate-fade-in" />}
                       >
                         <div class="rounded-2xl border border-line bg-raised px-5 py-4 animate-fade-in">
-                          <Markdown text={m().text} class="chat-measure text-base leading-relaxed text-fg" />
+                          <Markdown text={m().text} class="text-md text-fg" />
                           {p.action?.(m().text)}
                         </div>
                       </Show>
@@ -301,7 +301,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
             <Index each={conv.latest!.queued ?? []}>
               {(t) => (
                 <div class="ml-auto flex max-w-[min(85%,65ch)] flex-col items-end gap-1 animate-fade-in" title="Claude reads it when it gets to a pause">
-                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-fg-2">{t()}</div>
+                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-md text-fg-2">{t()}</div>
                   <span class="text-xs text-fg-3">Queued</span>
                 </div>
               )}
@@ -309,7 +309,7 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
             <Index each={unseen()}>
               {(s) => (
                 <div class="ml-auto flex max-w-[min(85%,65ch)] flex-col items-end gap-1 animate-fade-in">
-                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-fg-2">{s().text}</div>
+                  <div class="whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-dashed border-accent/50 px-4 py-2.5 text-md text-fg-2">{s().text}</div>
                   <span class="flex items-center gap-1.5 text-xs text-fg-3">
                     <Spinner size={9} /> {a().status === "working" ? "Queuing…" : "Sending…"}
                   </span>
