@@ -546,6 +546,12 @@ export function WorkspaceView(p: { name: string; window: string | null }) {
     else if (k === "c") toast(noAgent(), true);
     else if (k === "t") open("shell");
     else if (k === "v" && current()?.kind === "agent") setMode(mode() === "chat" ? "terminal" : "chat");
+    else if (k === "r" && mode() === "chat" && agentOf(current())) {
+      const box = [...document.querySelectorAll<HTMLTextAreaElement>("[data-reply]")].find((el) => el.offsetParent);
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    }
     else if (k === "\\") togglePanel();
     else if (k === "m") {
       const a = agentOf(current());

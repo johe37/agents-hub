@@ -266,6 +266,7 @@ export function Reply(p: { agent: Agent; placeholder?: string; ref?: (el: HTMLTe
         </div>
       </Show>
       <textarea
+        data-reply
         ref={(el) => {
           area = el;
           p.ref?.(el);

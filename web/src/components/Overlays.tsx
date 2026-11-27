@@ -135,6 +135,7 @@ const KEYS: [string, [string, string][]][] = [
       ["Alt Shift ← / →", "Move the window left / right"],
       ["c / t", "New Claude / terminal"],
       ["v", "Chat or terminal for an agent"],
+      ["r", "Write in the chat's reply box"],
       ["m", "Mark the agent done"],
       ["\\", "Hide or show the side panel"],
     ],
