@@ -4,10 +4,10 @@ import { language } from "../highlight";
 import { act, diffView, go, setDiffView, setDraft, type DiffTarget } from "../store";
 import { cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
-import { Chat, FileDiff, Trash, X } from "./icons";
+import { Chat, FileDiff, Refresh, Trash, X } from "./icons";
 import { highlightFile, linesLabel, load, save, split, toggleSplit, workspaceAgent } from "./MrReview";
 import { ReviewDiff } from "./ReviewDiff";
-import { Button, IconButton } from "./ui";
+import { Button, IconButton, Spinner } from "./ui";
 
 /** A comment on lines a..b of a file in the uncommitted changes (commit null) or in one commit. */
 interface Note {
@@ -166,7 +166,7 @@ export function ReviewKeeper() {
 /** A diff to read and comment on. It fills its parent: a workspace's diff tab, or the modal. */
 export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
   const commit = () => p.target.commit ?? null;
-  const [diff] = createResource(
+  const [diff, { refetch }] = createResource(
     () => p.target,
     (d) => {
       const q = (d.commit ? `&commit=${d.commit.sha}` : "") + (d.file ? `&file=${encodeURIComponent(d.file)}` : "");
@@ -174,6 +174,12 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
     },
   );
   const files = createMemo(() => parseUnified(diff.latest?.diff ?? ""));
+  // A refresh keeps the old diff on screen, so the scroll position stays.
+  const [refreshing, setRefreshing] = createSignal(false);
+  const refresh = () => {
+    setRefreshing(true);
+    void Promise.resolve(refetch()).finally(() => setRefreshing(false));
+  };
 
   const path = () => p.target.path;
   const mine = () => notes()[path()] ?? [];
@@ -223,12 +229,17 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
             <Chat size={13} /> Send review ({mine().length})
           </Button>
         </Show>
+        <IconButton label="Refresh" onClick={refresh}>
+          <Show when={diff.loading} fallback={<Refresh size={15} />}>
+            <Spinner size={13} />
+          </Show>
+        </IconButton>
         <IconButton label="Close (Esc)" onClick={p.onClose}>
           <X size={16} />
         </IconButton>
       </header>
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
-        <Show when={!diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
+        <Show when={refreshing() || !diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
           <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
             <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
               <p class="mb-3 text-sm text-fg-3">Click or drag line numbers to comment. Comments collect until you send them as one review to {p.target.workspace}'s Claude.</p>
