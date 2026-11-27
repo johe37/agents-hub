@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
-import { getJSON, type Agent } from "../api";
+import { getJSON, type Agent, type Commit } from "../api";
 import { language } from "../highlight";
 import { act, agentRoute, diffView, go, setDiffView, setModes, state, type DiffTarget } from "../store";
 import { alive, cls } from "../util";
@@ -7,7 +7,7 @@ import { parseUnified, type DiffFile } from "./Diff";
 import { FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
 import { highlightFile, linesLabel, split, toggleSplit, workspaceAgent } from "./MrReview";
 import { ReviewDiff } from "./ReviewDiff";
-import { Button, IconButton, MenuButton, Spinner } from "./ui";
+import { Ago, Button, IconButton, MenuButton, Spinner } from "./ui";
 
 /** A question waiting for the Claude that is starting in this window. */
 const [pending, setPending] = createSignal<{ window: string; text: string } | null>(null);
@@ -58,6 +58,29 @@ export function AskKeeper() {
     }
   });
   return null;
+}
+
+function CommitInfo(p: { c: Commit }) {
+  const [more, setMore] = createSignal(false);
+  const long = () => p.c.message.split("\n").length > 6 || p.c.message.length > 600;
+  return (
+    <div class="mb-4 rounded-lg border border-line bg-raised px-4 py-3">
+      <div class="text-base font-medium text-fg">{p.c.title}</div>
+      <div class="mt-0.5 flex flex-wrap items-center gap-x-1 text-xs text-fg-3">
+        <span class="font-mono" title={p.c.sha}>{p.c.short}</span>
+        <span>· {p.c.author} ·</span>
+        <Ago ts={p.c.created} suffix />
+      </div>
+      <Show when={p.c.message}>
+        <div class={cls("mt-2 whitespace-pre-wrap break-words text-sm text-fg-2", long() && !more() && "line-clamp-6")}>{p.c.message}</div>
+        <Show when={long()}>
+          <button class="mt-1 text-xs text-fg-3 hover:text-fg" onClick={() => setMore(!more())}>
+            {more() ? "Show less" : "Show more"}
+          </button>
+        </Show>
+      </Show>
+    </div>
+  );
 }
 
 type Sel = { file: string; a: number; b: number };
@@ -203,6 +226,9 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
         </IconButton>
       </header>
       <div class="min-h-0 flex-1 overflow-y-auto p-5">
+        <Show when={commit()} keyed>
+          {(c) => <CommitInfo c={c} />}
+        </Show>
         <Show when={refreshing() || !diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
           <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
             <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>

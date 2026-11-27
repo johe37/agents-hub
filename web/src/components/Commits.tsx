@@ -1,9 +1,9 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { getJSON, type Commit, type Workspace } from "../api";
-import { openDiff, toast } from "../store";
+import { act, agentLabel, go, hasAgent, openDiff, toast } from "../store";
 import { cls } from "../util";
-import { ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Search, X } from "./icons";
+import { ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Search, Sparkles, X } from "./icons";
 import { Ago, SectionTitle, Spinner } from "./ui";
 
 const PAGE = 50;
@@ -263,6 +263,12 @@ export function Commits(p: { ws: Workspace }) {
     setOpen(s);
   };
   const show = (c: Commit, file: string | null) => openDiff({ workspace: p.ws.name, path: p.ws.path, file, title: c.title, commit: c });
+  // One line, so an agent that gets it typed in does not send it early.
+  const review = async (c: Commit) => {
+    const prompt = `Review commit ${c.short} "${c.title}" by ${c.author}. See the change with \`git show ${c.sha}\`. Look for bugs, risky changes and missing tests. Do not change any files: the working tree may hold my own uncommitted work.`;
+    const r = await act({ type: "new_agent", path: p.ws.path, prompt }, { key: `review-commit:${c.sha}` });
+    if (r.ok && r.workspace && r.window) go({ view: "workspace", name: r.workspace, window: r.window });
+  };
   const browse = ([kind, name]: Ref) => {
     setRev(kind === "tag" ? `refs/tags/${name}` : kind === "remote" ? `refs/remotes/${name}` : name === "HEAD" ? null : `refs/heads/${name}`);
     setMode("all");
@@ -372,6 +378,11 @@ export function Commits(p: { ws: Workspace }) {
                   <div class="truncate text-sm text-fg">{c.title}</div>
                   <div class="flex min-w-0 items-center gap-1 text-xs text-fg-3">
                     <span class="font-mono">{c.short}</span>
+                    <Show when={c.message}>
+                      <span title="Has a description">
+                        <Menu size={11} />
+                      </span>
+                    </Show>
                     <Show when={c.unpushed}>
                       <span title="Not pushed" class="text-waiting">
                         <ArrowUp size={11} />
@@ -452,6 +463,9 @@ export function Commits(p: { ws: Workspace }) {
             <Popup at={m()} onClose={close} class="min-w-[12rem]">
               <div role="menu">
                 <MenuItem icon={<FileDiff size={14} />} label="Show changes" run={() => show(m().c, null)} close={close} />
+                <Show when={hasAgent()}>
+                  <MenuItem icon={<Sparkles size={14} />} label={`Review with ${agentLabel()}`} run={() => void review(m().c)} close={close} />
+                </Show>
                 <MenuItem icon={<Copy size={14} />} label="Copy SHA" run={() => copy(m().c.sha, "SHA")} close={close} />
                 <MenuItem label="Copy short SHA" run={() => copy(m().c.short, "short SHA")} close={close} />
                 <MenuItem label="Copy message" run={() => copy(m().c.message ? `${m().c.title}\n\n${m().c.message}` : m().c.title, "message")} close={close} />
