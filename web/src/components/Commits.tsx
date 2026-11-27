@@ -3,7 +3,7 @@ import { Portal } from "solid-js/web";
 import { getJSON, type Commit, type Workspace } from "../api";
 import { act, agentLabel, go, hasAgent, openDiff, toast } from "../store";
 import { cls } from "../util";
-import { ArrowDown, ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Search, Sparkles, X } from "./icons";
+import { ArrowDown, ArrowUp, Branch, Check, Chevron, ChevronDown, Copy, FileDiff, Menu, Refresh, Search, Sparkles, X } from "./icons";
 import { Ago, SectionTitle, Spinner } from "./ui";
 
 const PAGE = 50;
@@ -234,12 +234,13 @@ export function Commits(p: { ws: Workspace }) {
     }
   }
 
+  const reload = () => void load(0, Math.min(500, Math.max(PAGE, items().length)));
   // A new view starts at the first page; a moved HEAD reloads as many as were shown.
   createEffect(
     on([view, head], ([v], prev) => {
-      const same = prev?.[0] === v;
-      if (!same) setItems([]);
-      void load(0, same ? Math.min(500, Math.max(PAGE, items().length)) : PAGE);
+      if (prev?.[0] === v) return reload();
+      setItems([]);
+      void load(0, PAGE);
     }),
   );
   const more = () => !loading() && page().more && void load(items().length, PAGE);
@@ -301,6 +302,17 @@ export function Commits(p: { ws: Workspace }) {
     <section class="shrink-0 border-t border-line p-3">
       <div class="mb-2 flex items-center gap-1 px-1">
         <SectionTitle class="flex-1">Commits</SectionTitle>
+        <button
+          class="grid size-6 place-items-center rounded-md text-fg-3 hover:bg-hover hover:text-fg"
+          aria-label="Refresh commits"
+          title="Refresh commits"
+          disabled={loading()}
+          onClick={reload}
+        >
+          <Show when={loading()} fallback={<Refresh size={13} />}>
+            <Spinner size={12} />
+          </Show>
+        </button>
         <button
           class={cls("grid size-6 place-items-center rounded-md hover:bg-hover hover:text-fg", searching() ? "text-fg" : "text-fg-3")}
           aria-label="Search commits"
