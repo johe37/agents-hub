@@ -12,6 +12,8 @@ const [showClosed, setShowClosed] = stored("show-closed", false);
 const [showClosedChats, setShowClosedChats] = stored("show-closed-chats", false);
 const toggleClosed = () => setShowClosed(!showClosed());
 const toggleClosedChats = () => setShowClosedChats(!showClosedChats());
+const [workspacesOpen, setWorkspacesOpen] = stored("nav-workspaces-open", true);
+const [chatsOpen, setChatsOpen] = stored("nav-chats-open", true);
 
 function storedSet(key: string) {
   const list = (() => {
@@ -64,6 +66,26 @@ function NavItem(p: { to: Parameters<typeof href>[0]; icon: any; label: string; 
   );
 }
 
+// A folded group still shows its worst status, so a waiting agent is not missed.
+function GroupHeader(p: { title: string; count: number; open: boolean; onToggle: () => void; agents: Agent[]; addLabel: string; onAdd: () => void; class?: string }) {
+  const waiting = () => p.agents.filter((a) => a.status === "waiting").length;
+  return (
+    <div class={cls("flex items-center gap-2 pb-1 pl-2.5 pr-1", p.class)}>
+      <SectionTitle as="div" class="min-w-0 flex-1" count={p.open ? undefined : p.count} open={p.open} onToggle={p.onToggle}>
+        {p.title}
+      </SectionTitle>
+      <Show when={!p.open}>
+        <Show when={waiting()} fallback={<StatusDot status={worst(p.agents)} size={7} />}>
+          <span class="rounded-full bg-waiting px-1.5 text-xs font-semibold leading-[18px] text-waiting-fg">{waiting()}</span>
+        </Show>
+      </Show>
+      <button class="grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={p.onAdd} title={p.addLabel}>
+        <Plus size={14} />
+      </button>
+    </div>
+  );
+}
+
 function Meter(p: { label: string; w: UsageWindow }) {
   const tone = () => (p.w.used >= 90 ? "var(--danger)" : p.w.used >= 70 ? "var(--waiting)" : "var(--fg-3)");
   return (
@@ -93,6 +115,8 @@ export function Sidebar(p: { onNavigate?: () => void }) {
   const closedChats = createMemo(() =>
     state.agents.filter((a) => a.id && !a.workspace && !alive(a.status) && a.path === state.chat_dir).sort((a, b) => b.timestamp - a.timestamp),
   );
+  const workspaceAgents = createMemo(() => workspaces().flatMap((w) => store.byWorkspace().get(w.name) ?? []));
+  const chatAgents = createMemo(() => chats().flatMap(({ win }) => store.agentsByKey().get(win.agent ?? "") ?? []));
   const resume = (a: Agent) => {
     p.onNavigate?.();
     void act({ type: "resume", agent: a.key }, { key: `resume:${a.key}` }).then((r) => r.ok && r.workspace && r.window && go({ view: "workspace", name: r.workspace, window: r.window }));
@@ -186,248 +210,259 @@ export function Sidebar(p: { onNavigate?: () => void }) {
         </Show>
       </nav>
 
-      <div class="mt-4 flex items-center px-5 pb-1">
-        <SectionTitle as="span">Workspaces</SectionTitle>
-        <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={() => openPalette("open")} title="Open a workspace (O)">
-          <Plus size={14} />
-        </button>
-      </div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        <For each={workspaces()} fallback={<div class="px-2.5 py-2 text-sm text-fg-3">No workspaces open. Press O to open one.</div>}>
-          {(w) => {
-            const agents = () => store.byWorkspace().get(w.name) ?? [];
-            const waiting = () => agents().filter((a) => a.status === "waiting").length;
-            const tree = () => tabsMode() !== "tabs" && w.windows.length > (tabsMode() === "tree" ? 0 : 1);
-            const open = () => isExpanded(w.name);
-            return (
-              <div>
-                <div
-                  data-juggle
-                  class={cls(
-                    "group flex items-center gap-2.5 rounded-lg pl-2.5 pr-1 transition-colors",
-                    active(w.name) ? "bg-hover" : "hover:bg-hover/70",
-                  )}
-                >
-                  <Show when={tree()} fallback={<span class="-ml-1.5 size-4 shrink-0" />}>
-                    <button
-                      class="-ml-1.5 grid size-4 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg"
-                      onClick={() => toggleTree(w.name)}
-                      aria-expanded={open()}
-                      aria-label={`${open() ? "Collapse" : "Expand"} ${w.name}`}
+      <div class="mt-4 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        <GroupHeader
+          title="Workspaces"
+          count={workspaces().length}
+          open={workspacesOpen()}
+          onToggle={() => setWorkspacesOpen(!workspacesOpen())}
+          agents={workspaceAgents()}
+          addLabel="Open a workspace (O)"
+          onAdd={() => openPalette("open")}
+        />
+        <Show when={workspacesOpen()}>
+          <For each={workspaces()} fallback={<div class="px-2.5 py-2 text-sm text-fg-3">No workspaces open. Press O to open one.</div>}>
+            {(w) => {
+              const agents = () => store.byWorkspace().get(w.name) ?? [];
+              const waiting = () => agents().filter((a) => a.status === "waiting").length;
+              const tree = () => tabsMode() !== "tabs" && w.windows.length > (tabsMode() === "tree" ? 0 : 1);
+              const open = () => isExpanded(w.name);
+              return (
+                <div>
+                  <div
+                    data-juggle
+                    class={cls(
+                      "group flex items-center gap-2.5 rounded-lg pl-2.5 pr-1 transition-colors",
+                      active(w.name) ? "bg-hover" : "hover:bg-hover/70",
+                    )}
+                  >
+                    <Show when={tree()} fallback={<span class="-ml-1.5 size-4 shrink-0" />}>
+                      <button
+                        class="-ml-1.5 grid size-4 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg"
+                        onClick={() => toggleTree(w.name)}
+                        aria-expanded={open()}
+                        aria-label={`${open() ? "Collapse" : "Expand"} ${w.name}`}
+                      >
+                        <ChevronDown size={12} class={cls("transition-transform", !open() && "-rotate-90")} />
+                      </button>
+                    </Show>
+                    <a
+                      href={href({ view: "workspace", name: w.name, window: null })}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        p.onNavigate?.();
+                        go({ view: "workspace", name: w.name, window: null });
+                      }}
+                      aria-current={active(w.name) ? "page" : undefined}
+                      class="flex min-w-0 flex-1 items-center gap-2.5 py-1.5"
                     >
-                      <ChevronDown size={12} class={cls("transition-transform", !open() && "-rotate-90")} />
+                      <StatusDot status={worst(agents())} size={7} />
+                      <div class="min-w-0 flex-1">
+                        <div class={cls("truncate text-base font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
+                        <Show when={w.git?.branch}>
+                          <div class="truncate text-xs text-fg-3">
+                            {w.git!.branch}
+                            <Show when={w.git!.dirty}>
+                              <span class="text-waiting"> · {w.git!.dirty}</span>
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
+                      <Show when={waiting()}>
+                        <span class="rounded-full bg-waiting px-1.5 text-xs font-semibold leading-[18px] text-waiting-fg group-hover:hidden group-focus-within:hidden">{waiting()}</span>
+                      </Show>
+                    </a>
+                    <button
+                      class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid group-focus-within:grid"
+                      onClick={() => closeWorkspace(w)}
+                      aria-label={`Close workspace ${w.name}`}
+                      title="Close workspace"
+                    >
+                      <X size={12} />
                     </button>
+                  </div>
+                  <Show when={tree() && open()}>
+                    <div class="mb-1 ml-[13px] flex flex-col gap-px border-l border-line pl-1.5">
+                      <For each={w.windows}>
+                        {(win) => {
+                          const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
+                          const on = () => {
+                            const x = r();
+                            return x.view === "workspace" && x.name === w.name && x.window === win.id;
+                          };
+                          return (
+                            <div
+                              class={cls(
+                                "group/win flex h-7 items-center rounded-md pr-1 text-sm transition-colors",
+                                on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
+                              )}
+                            >
+                              <a
+                                href={href({ view: "workspace", name: w.name, window: win.id })}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  p.onNavigate?.();
+                                  go({ view: "workspace", name: w.name, window: win.id });
+                                }}
+                                onAuxClick={(e) => {
+                                  if (e.button !== 1) return;
+                                  e.preventDefault();
+                                  closeWindow(w, win);
+                                }}
+                                title={win.command}
+                                aria-current={on() ? "page" : undefined}
+                                class="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 pr-1"
+                              >
+                                <span class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")}>{kindIcon(win, 13)}</span>
+                                <span class="min-w-0 flex-1 truncate">{a()?.title ?? win.running ?? win.name}</span>
+                                <Show when={a()}>
+                                  <span class="group-hover/win:hidden group-focus-within/win:hidden">
+                                    <StatusDot status={a()!.status} size={6} />
+                                  </span>
+                                </Show>
+                              </a>
+                              <button
+                                class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover/win:grid group-focus-within/win:grid"
+                                onClick={() => closeWindow(w, win)}
+                                aria-label={`Close window ${a()?.title ?? win.running ?? win.name}`}
+                                title="Close window"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          );
+                        }}
+                      </For>
+                    </div>
                   </Show>
+                </div>
+              );
+            }}
+          </For>
+
+          <Show when={closed().length}>
+            <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closed().length} open={showClosed()} onToggle={toggleClosed}>
+              Recently closed
+            </SectionTitle>
+            <Show when={showClosed()}>
+              <For each={closed()}>
+                {(c) => (
+                  <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
+                    <button
+                      class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
+                      title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
+                      disabled={isBusy(`reopen:${c.id}`)}
+                      onClick={() => {
+                        p.onNavigate?.();
+                        void reopen(c.id);
+                      }}
+                    >
+                      <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                        <Spinner size={13} />
+                      </Show>
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-base text-fg-2 group-hover:text-fg">{c.name}</div>
+                        <div class="truncate text-xs text-fg-3">
+                          {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · <Ago ts={c.closed_at} suffix />
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
+                      onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
+                      aria-label={`Remove ${c.name} from the list`}
+                      title="Remove from the list"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </Show>
+        </Show>
+
+        <GroupHeader
+          title="Chats"
+          class="mt-4"
+          count={chats().length}
+          open={chatsOpen()}
+          onToggle={() => setChatsOpen(!chatsOpen())}
+          agents={chatAgents()}
+          addLabel="New chat (⇧C)"
+          onAdd={newChat}
+        />
+        <Show when={chatsOpen()}>
+          <For each={chats()} fallback={<div class="px-2.5 py-1.5 text-sm text-fg-3">No chats. Press ⇧C to start one.</div>}>
+            {({ ws, win }) => {
+              const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
+              const on = () => {
+                const x = r();
+                return x.view === "workspace" && x.name === ws.name && x.window === win.id;
+              };
+              return (
+                <div class={cls("group flex items-center rounded-lg pr-1 transition-colors", on() ? "bg-hover" : "hover:bg-hover/70")}>
                   <a
-                    href={href({ view: "workspace", name: w.name, window: null })}
+                    href={href({ view: "workspace", name: ws.name, window: win.id })}
                     onClick={(e) => {
                       e.preventDefault();
                       p.onNavigate?.();
-                      go({ view: "workspace", name: w.name, window: null });
+                      go({ view: "workspace", name: ws.name, window: win.id });
                     }}
-                    aria-current={active(w.name) ? "page" : undefined}
-                    class="flex min-w-0 flex-1 items-center gap-2.5 py-1.5"
+                    aria-current={on() ? "page" : undefined}
+                    class="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2.5 pr-1"
                   >
-                    <StatusDot status={worst(agents())} size={7} />
+                    <Chat size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
                     <div class="min-w-0 flex-1">
-                      <div class={cls("truncate text-base font-medium", active(w.name) ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{w.name}</div>
-                      <Show when={w.git?.branch}>
-                        <div class="truncate text-xs text-fg-3">
-                          {w.git!.branch}
-                          <Show when={w.git!.dirty}>
-                            <span class="text-waiting"> · {w.git!.dirty}</span>
-                          </Show>
-                        </div>
+                      <div class={cls("truncate text-base", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
+                      <Show when={a()}>
+                        <div class="truncate text-xs text-fg-3"><Ago ts={a()!.timestamp} suffix /></div>
                       </Show>
                     </div>
-                    <Show when={waiting()}>
-                      <span class="rounded-full bg-waiting px-1.5 text-xs font-semibold leading-[18px] text-waiting-fg group-hover:hidden group-focus-within:hidden">{waiting()}</span>
+                    <Show when={a()}>
+                      <span class="group-hover:hidden group-focus-within:hidden">
+                        <StatusDot status={a()!.status} size={7} />
+                      </span>
                     </Show>
                   </a>
                   <button
                     class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid group-focus-within:grid"
-                    onClick={() => closeWorkspace(w)}
-                    aria-label={`Close workspace ${w.name}`}
-                    title="Close workspace"
+                    onClick={() => closeChat(ws, win)}
+                    aria-label={`Close chat ${a()?.title ?? win.name}`}
+                    title="Close chat"
                   >
                     <X size={12} />
                   </button>
                 </div>
-                <Show when={tree() && open()}>
-                  <div class="mb-1 ml-[13px] flex flex-col gap-px border-l border-line pl-1.5">
-                    <For each={w.windows}>
-                      {(win) => {
-                        const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
-                        const on = () => {
-                          const x = r();
-                          return x.view === "workspace" && x.name === w.name && x.window === win.id;
-                        };
-                        return (
-                          <div
-                            class={cls(
-                              "group/win flex h-7 items-center rounded-md pr-1 text-sm transition-colors",
-                              on() ? "bg-hover text-fg" : "text-fg-2 hover:bg-hover/70 hover:text-fg",
-                            )}
-                          >
-                            <a
-                              href={href({ view: "workspace", name: w.name, window: win.id })}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                p.onNavigate?.();
-                                go({ view: "workspace", name: w.name, window: win.id });
-                              }}
-                              onAuxClick={(e) => {
-                                if (e.button !== 1) return;
-                                e.preventDefault();
-                                closeWindow(w, win);
-                              }}
-                              title={win.command}
-                              aria-current={on() ? "page" : undefined}
-                              class="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 pr-1"
-                            >
-                              <span class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")}>{kindIcon(win, 13)}</span>
-                              <span class="min-w-0 flex-1 truncate">{a()?.title ?? win.running ?? win.name}</span>
-                              <Show when={a()}>
-                                <span class="group-hover/win:hidden group-focus-within/win:hidden">
-                                  <StatusDot status={a()!.status} size={6} />
-                                </span>
-                              </Show>
-                            </a>
-                            <button
-                              class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover/win:grid group-focus-within/win:grid"
-                              onClick={() => closeWindow(w, win)}
-                              aria-label={`Close window ${a()?.title ?? win.running ?? win.name}`}
-                              title="Close window"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </div>
-                </Show>
-              </div>
-            );
-          }}
-        </For>
+              );
+            }}
+          </For>
 
-        <Show when={closed().length}>
-          <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closed().length} open={showClosed()} onToggle={toggleClosed}>
-            Recently closed
-          </SectionTitle>
-          <Show when={showClosed()}>
-            <For each={closed()}>
-              {(c) => (
-                <div class="group flex items-center gap-1 rounded-lg hover:bg-hover/70">
+
+          <Show when={closedChats().length}>
+            <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closedChats().length} open={showClosedChats()} onToggle={toggleClosedChats}>
+              Recently closed
+            </SectionTitle>
+            <Show when={showClosedChats()}>
+              <For each={closedChats()}>
+                {(a) => (
                   <button
-                    class="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left"
-                    title={`Open ${c.short_path} again with ${c.windows.length} window${c.windows.length === 1 ? "" : "s"}${c.windows.some((w) => w.resume) ? "; its agents resume" : ""}`}
-                    disabled={isBusy(`reopen:${c.id}`)}
-                    onClick={() => {
-                      p.onNavigate?.();
-                      void reopen(c.id);
-                    }}
+                    class="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover/70"
+                    title="Resume this chat"
+                    disabled={isBusy(`resume:${a.key}`)}
+                    onClick={() => resume(a)}
                   >
-                    <Show when={isBusy(`reopen:${c.id}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
+                    <Show when={isBusy(`resume:${a.key}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
                       <Spinner size={13} />
                     </Show>
                     <div class="min-w-0 flex-1">
-                      <div class="truncate text-base text-fg-2 group-hover:text-fg">{c.name}</div>
-                      <div class="truncate text-xs text-fg-3">
-                        {c.windows.length} window{c.windows.length === 1 ? "" : "s"} · <Ago ts={c.closed_at} suffix />
-                      </div>
+                      <div class="truncate text-base text-fg-2 group-hover:text-fg">{a.title}</div>
+                      <div class="truncate text-xs text-fg-3"><Ago ts={a.timestamp} suffix /></div>
                     </div>
                   </button>
-                  <button
-                    class="mr-1 grid size-5 shrink-0 place-items-center rounded text-fg-3 opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100"
-                    onClick={() => act({ type: "forget_closed", id: c.id }, { quiet: true })}
-                    aria-label={`Remove ${c.name} from the list`}
-                    title="Remove from the list"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-            </For>
-          </Show>
-        </Show>
-
-        <div class="mt-4 flex items-center px-2 pb-1">
-          <SectionTitle as="span">Chats</SectionTitle>
-          <button class="ml-auto grid size-5 place-items-center rounded text-fg-3 hover:bg-hover hover:text-fg" onClick={newChat} title="New chat (⇧C)">
-            <Plus size={14} />
-          </button>
-        </div>
-        <For each={chats()} fallback={<div class="px-2.5 py-1.5 text-sm text-fg-3">No chats. Press ⇧C to start one.</div>}>
-          {({ ws, win }) => {
-            const a = () => (win.agent ? store.agentsByKey().get(win.agent) : undefined);
-            const on = () => {
-              const x = r();
-              return x.view === "workspace" && x.name === ws.name && x.window === win.id;
-            };
-            return (
-              <div class={cls("group flex items-center rounded-lg pr-1 transition-colors", on() ? "bg-hover" : "hover:bg-hover/70")}>
-                <a
-                  href={href({ view: "workspace", name: ws.name, window: win.id })}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    p.onNavigate?.();
-                    go({ view: "workspace", name: ws.name, window: win.id });
-                  }}
-                  aria-current={on() ? "page" : undefined}
-                  class="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2.5 pr-1"
-                >
-                  <Chat size={13} class={cls("shrink-0", on() ? "text-accent" : "text-fg-3")} />
-                  <div class="min-w-0 flex-1">
-                    <div class={cls("truncate text-base", on() ? "text-fg" : "text-fg-2 group-hover:text-fg")}>{a()?.title ?? win.name}</div>
-                    <Show when={a()}>
-                      <div class="truncate text-xs text-fg-3"><Ago ts={a()!.timestamp} suffix /></div>
-                    </Show>
-                  </div>
-                  <Show when={a()}>
-                    <span class="group-hover:hidden group-focus-within:hidden">
-                      <StatusDot status={a()!.status} size={7} />
-                    </span>
-                  </Show>
-                </a>
-                <button
-                  class="hidden size-5 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-danger group-hover:grid group-focus-within:grid"
-                  onClick={() => closeChat(ws, win)}
-                  aria-label={`Close chat ${a()?.title ?? win.name}`}
-                  title="Close chat"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
-          }}
-        </For>
-
-
-        <Show when={closedChats().length}>
-          <SectionTitle as="div" class="mt-3 px-2.5 py-1" count={closedChats().length} open={showClosedChats()} onToggle={toggleClosedChats}>
-            Recently closed
-          </SectionTitle>
-          <Show when={showClosedChats()}>
-            <For each={closedChats()}>
-              {(a) => (
-                <button
-                  class="group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-hover/70"
-                  title="Resume this chat"
-                  disabled={isBusy(`resume:${a.key}`)}
-                  onClick={() => resume(a)}
-                >
-                  <Show when={isBusy(`resume:${a.key}`)} fallback={<Undo size={13} class="shrink-0 text-fg-3" />}>
-                    <Spinner size={13} />
-                  </Show>
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-base text-fg-2 group-hover:text-fg">{a.title}</div>
-                    <div class="truncate text-xs text-fg-3"><Ago ts={a.timestamp} suffix /></div>
-                  </div>
-                </button>
-              )}
-            </For>
+                )}
+              </For>
+            </Show>
           </Show>
         </Show>
       </div>
