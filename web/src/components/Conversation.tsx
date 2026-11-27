@@ -7,7 +7,7 @@ import { Check, ChevronDown, Stop, Wrench, X } from "./icons";
 import { Markdown } from "./Markdown";
 import { Reply } from "./Reply";
 import { ToolDetail } from "./ToolCall";
-import { Button, Spinner, StatusDot } from "./ui";
+import { Button, Spinner } from "./ui";
 
 type Conv = { items: ConversationItem[]; queued?: string[]; truncated?: boolean; missing?: boolean };
 
@@ -215,6 +215,14 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
     return { took: asked ? took(asked.ts, last.ts) : null, at: last.ts };
   });
 
+  // The turn started with the last prompt Claude read.
+  const since = createMemo(() => {
+    if (a().status !== "working") return null;
+    const items = conv.latest?.items ?? [];
+    for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === "user") return items[i].ts;
+    return null;
+  });
+
   let scroller!: HTMLDivElement;
   const [stuck, setStuck] = createSignal(true);
   const onScroll = () => setStuck(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80);
@@ -308,15 +316,6 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
                 </div>
               )}
             </Index>
-            <Show when={a().status === "working"}>
-              <div class="flex items-center gap-2 text-sm text-working">
-                <StatusDot status="working" size={7} />
-                <span class="truncate">{a().tool ?? "Thinking…"}</span>
-                <Show when={queuedCount()}>
-                  <span class="shrink-0 text-fg-3">· {queuedCount()} queued</span>
-                </Show>
-              </div>
-            </Show>
             <Show when={done()}>
               {(d) => (
                 <div class="flex items-center gap-2 text-sm text-idle animate-fade-in" title={new Date(d().at).toLocaleString()}>
@@ -341,16 +340,50 @@ export function Conversation(p: { agent: Agent; action?: (text: string) => JSX.E
           ↓ Latest
         </button>
       </Show>
-      <Composer agent={a()} ref={(el) => (replyEl = el)} />
+      <Composer agent={a()} ref={(el) => (replyEl = el)} since={since()} queued={queuedCount()} />
     </div>
   );
 }
 
-export function Composer(p: { agent: Agent; ref?: (el: HTMLTextAreaElement) => void }) {
+/** Docked above the reply box, so it shows wherever the chat is scrolled. */
+function WorkingBar(p: { agent: Agent; since: string | null; queued: number }) {
+  const [now, setNow] = createSignal(Date.now());
+  const t = window.setInterval(() => setNow(Date.now()), 1000);
+  onCleanup(() => clearInterval(t));
+  const elapsed = () => (p.since ? took(p.since, new Date(now()).toISOString()) : null);
+  return (
+    <div class="mb-2.5 flex min-w-0 items-center gap-2.5 text-sm animate-fade-in" role="status">
+      <span class="grid size-6 shrink-0 place-items-center rounded-full bg-working-soft text-working">
+        <Spinner size={13} />
+      </span>
+      <span class="shrink-0 font-medium text-working">Working</span>
+      <span class="min-w-0 truncate text-fg-2">{p.agent.tool ?? "Thinking…"}</span>
+      <Show when={p.queued}>
+        <span class="shrink-0 text-fg-3">· {p.queued} queued</span>
+      </Show>
+      <Show when={elapsed()}>
+        <span class="ml-auto shrink-0 font-mono text-xs tabular-nums text-fg-3">{elapsed()}</span>
+      </Show>
+      <Show when={p.agent.reachable}>
+        <Button variant="ghost" size="sm" class={cls("shrink-0", !elapsed() && "ml-auto")} title="Interrupt (Escape in Claude)" onClick={() => act({ type: "interrupt", agent: p.agent.key })}>
+          <Stop size={12} /> Stop
+        </Button>
+      </Show>
+    </div>
+  );
+}
+
+export function Composer(p: { agent: Agent; ref?: (el: HTMLTextAreaElement) => void; since?: string | null; queued?: number }) {
   const a = () => p.agent;
   return (
-    <div class="border-t border-line bg-panel/80 backdrop-blur">
+    <div class="relative border-t border-line bg-panel/80 backdrop-blur">
+      <Show when={a().status === "working"}>
+        <div class="working-line absolute inset-x-0 -top-px h-0.5" aria-hidden="true" />
+      </Show>
       <div class="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-8">
+        <Show when={a().status === "working" && !a().needs_permission}>
+          <WorkingBar agent={a()} since={p.since ?? null} queued={p.queued ?? 0} />
+        </Show>
         <Show when={a().needs_permission}>
           <div class="mb-3 rounded-xl border border-waiting/40 bg-waiting-soft/50 p-3 animate-pop-in">
             <div class="mb-2 text-sm font-medium text-waiting">{a().message ?? "Claude asks for permission"}</div>
@@ -375,11 +408,6 @@ export function Composer(p: { agent: Agent; ref?: (el: HTMLTextAreaElement) => v
         </Show>
         <div class="flex items-end gap-2">
           <Reply agent={a()} ref={p.ref} class="flex-1" placeholder={a().status === "working" ? "Queue a message for Claude…" : undefined} />
-          <Show when={a().status === "working" && a().reachable}>
-            <Button variant="secondary" class="h-[38px]" title="Interrupt (Escape in Claude)" onClick={() => act({ type: "interrupt", agent: a().key })}>
-              <Stop size={13} /> Stop
-            </Button>
-          </Show>
         </div>
       </div>
     </div>

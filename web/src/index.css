@@ -141,6 +141,18 @@ textarea:focus-visible {
   border-radius: 6px;
 }
 
+/* An indeterminate progress line while an agent works. */
+.working-line {
+  background: linear-gradient(90deg, transparent 0%, var(--working) 50%, transparent 100%);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: working-line 1.6s ease-in-out infinite;
+}
+@keyframes working-line {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+
 .prose-chat {
   overflow-wrap: anywhere;
 }
