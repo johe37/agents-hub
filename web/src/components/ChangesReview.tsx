@@ -4,13 +4,13 @@ import { language } from "../highlight";
 import { act, agentRoute, diffView, go, setDiffView, setModes, state, type DiffTarget } from "../store";
 import { alive, cls } from "../util";
 import { parseUnified, type DiffFile } from "./Diff";
-import { FileDiff, Refresh, Sparkles, X } from "./icons";
+import { FileDiff, Plus, Refresh, Sparkles, X } from "./icons";
 import { highlightFile, linesLabel, split, toggleSplit, workspaceAgent } from "./MrReview";
 import { ReviewDiff } from "./ReviewDiff";
-import { Button, IconButton, Spinner } from "./ui";
+import { Button, IconButton, MenuButton, Spinner } from "./ui";
 
-/** A question waiting for the Claude that is starting in the workspace. */
-const [pending, setPending] = createSignal<{ workspace: string; text: string } | null>(null);
+/** A question waiting for the Claude that is starting in this window. */
+const [pending, setPending] = createSignal<{ window: string; text: string } | null>(null);
 
 /** Type text in the agent's input, unsent, and show its terminal so you can go on writing. */
 function typeTo(a: Agent, text: string) {
@@ -20,15 +20,23 @@ function typeTo(a: Agent, text: string) {
   go(agentRoute(a));
 }
 
-function ask(d: DiffTarget, text: string) {
+/** The Claude to ask about the diff: the one it came from, else one in the workspace. */
+function askable(d: DiffTarget): Agent | undefined {
   const own = d.agent ? state.agents.find((a) => a.key === d.agent && a.reachable && alive(a.status)) : undefined;
-  const a = own ?? workspaceAgent(d.workspace);
+  return own ?? workspaceAgent(d.workspace);
+}
+
+const canStart = (d: DiffTarget) => state.workspaces.some((w) => w.name === d.workspace);
+
+function ask(d: DiffTarget, text: string, fresh: boolean) {
+  const a = fresh ? undefined : askable(d);
   if (a) return typeTo(a, text);
-  if (!state.workspaces.some((w) => w.name === d.workspace)) return;
-  setPending({ workspace: d.workspace, text });
+  if (!canStart(d)) return;
   void act({ type: "new_window", workspace: d.workspace, kind: "agent" }, { key: `new:agent` }).then((r) => {
-    if (!r.ok) setPending(null);
-    else if (r.window) go({ view: "workspace", name: d.workspace, window: r.window });
+    if (!r.ok || !r.window) return;
+    setPending({ window: r.window, text });
+    setDiffView(null);
+    go({ view: "workspace", name: d.workspace, window: r.window });
   });
 }
 
@@ -43,7 +51,7 @@ function askPrompt(d: DiffTarget, f: DiffFile, lines: string | null): string {
 export function AskKeeper() {
   createEffect(() => {
     const p = pending();
-    const a = p && workspaceAgent(p.workspace);
+    const a = p && state.agents.find((x) => x.window === p.window && x.reachable && alive(x.status));
     if (p && a) {
       setPending(null);
       typeTo(a, p.text);
@@ -54,7 +62,16 @@ export function AskKeeper() {
 
 type Sel = { file: string; a: number; b: number };
 
-function FileSection(p: { f: DiffFile; sel: Sel | null; select: (a: number, b: number) => void; clear: () => void; ask: (whole: boolean) => void }) {
+function FileSection(p: {
+  f: DiffFile;
+  sel: Sel | null;
+  select: (a: number, b: number) => void;
+  clear: () => void;
+  ask: (whole: boolean, fresh: boolean) => void;
+  /** The Claude that Ask Claude types to, if any runs. */
+  agent: Agent | undefined;
+  canStart: boolean;
+}) {
   const lang = language(p.f.name);
   // shortcut: highlights every file up front, unlike MrReview's lazy FileBox; fine for a branch's worth of changes.
   const html = createMemo(() => (lang && p.f.lines.length <= 4000 ? highlightFile(p.f.lines, lang) : undefined));
@@ -70,9 +87,16 @@ function FileSection(p: { f: DiffFile; sel: Sel | null; select: (a: number, b: n
         <span class="ml-auto font-mono text-xs tabular-nums">
           <span class="text-add">+{p.f.added}</span> <span class="text-del">−{p.f.removed}</span>
         </span>
-        <button class="grid size-6 shrink-0 place-items-center rounded text-fg-3 hover:bg-hover hover:text-accent" onClick={() => p.ask(true)} title="Ask Claude about this file" aria-label="Ask Claude about this file">
-          <Sparkles size={13} />
-        </button>
+        <MenuButton
+          label="Ask Claude about this file"
+          icon={<Sparkles size={13} />}
+          size="sm"
+          align="right"
+          items={[
+            ...(p.agent ? [{ label: `Ask ${p.agent.title}`, icon: <Sparkles size={14} />, run: () => p.ask(true, false) }] : []),
+            ...(p.canStart ? [{ label: "Ask a new Claude", icon: <Plus size={14} />, run: () => p.ask(true, true) }] : []),
+          ]}
+        />
       </header>
       <Show when={!p.f.binary} fallback={<div class="px-3 py-3 text-fg-3">Binary file</div>}>
         <ReviewDiff
@@ -89,9 +113,18 @@ function FileSection(p: { f: DiffFile; sel: Sel | null; select: (a: number, b: n
           after={() => (
             <div class="flex flex-wrap items-center gap-2 font-sans animate-pop-in">
               <span class="text-sm text-fg-3">{label()}</span>
-              <Button size="sm" variant="primary" onClick={() => p.ask(false)} kbd="a" title="Type these lines in Claude's input, unsent">
-                <Sparkles size={13} /> Ask Claude
-              </Button>
+              <Show when={p.agent}>
+                {(a) => (
+                  <Button size="sm" variant="primary" onClick={() => p.ask(false, false)} kbd="a" title={`Type these lines in ${a().title}'s input, unsent`}>
+                    <Sparkles size={13} /> Ask Claude
+                  </Button>
+                )}
+              </Show>
+              <Show when={p.canStart}>
+                <Button size="sm" variant={p.agent ? "secondary" : "primary"} onClick={() => p.ask(false, true)} kbd="n" title="Start a new Claude here and type these lines in its input, unsent">
+                  <Plus size={13} /> New Claude
+                </Button>
+              </Show>
               <Button size="sm" variant="ghost" onClick={p.clear} title="Clear the selection (Esc)">
                 <X size={13} />
               </Button>
@@ -123,19 +156,19 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
 
   const [sel, setSel] = createSignal<Sel | null>(null);
   createEffect(() => (p.target, setSel(null)));
-  const askAbout = (f: DiffFile, whole: boolean) => {
+  const askAbout = (f: DiffFile, whole: boolean, fresh: boolean) => {
     const s = sel();
     const lines = !whole && s?.file === f.name ? linesLabel(f.lines.slice(s.a, s.b + 1).filter((l) => l.type !== "hunk")) : null;
     setSel(null);
-    ask(p.target, askPrompt(p.target, f, lines));
+    ask(p.target, askPrompt(p.target, f, lines), fresh);
   };
   const onKey = (e: KeyboardEvent) => {
     const s = sel();
     if (!s || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Escape") setSel(null);
-    else if (e.key === "a") {
+    else if ((e.key === "a" && askable(p.target)) || (e.key === "n" && canStart(p.target))) {
       const f = files().find((x) => x.name === s.file);
-      if (f) askAbout(f, false);
+      if (f) askAbout(f, false, e.key === "n");
     } else return;
     e.preventDefault();
     e.stopPropagation();
@@ -173,7 +206,7 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
         <Show when={refreshing() || !diff.loading} fallback={<div class="flex flex-col gap-2">{[0, 1, 2, 3].map(() => <div class="skeleton h-6" />)}</div>}>
           <Show when={!diff.error} fallback={<div class="text-danger">{String(diff.error)}</div>}>
             <Show when={files().length} fallback={<div class="px-4 py-10 text-center text-fg-3">{commit() ? "This commit changes no files" : "No changes against HEAD"}</div>}>
-              <p class="mb-3 text-sm text-fg-3">Select lines, or use ✦ on a file, to ask Claude about them. The question is typed in Claude's input; you finish and send it.</p>
+              <p class="mb-3 text-sm text-fg-3">Select lines, or use ✦ on a file, to ask Claude about them: the one already here, or a new one. The question is typed in Claude's input; you finish and send it.</p>
               <div class="flex flex-col gap-4">
                 <For each={files()}>
                   {(f) => (
@@ -182,7 +215,9 @@ export function DiffPane(p: { target: DiffTarget; onClose: () => void }) {
                       sel={sel()?.file === f.name ? sel() : null}
                       select={(a, b) => setSel({ file: f.name, a: Math.min(a, b), b: Math.max(a, b) })}
                       clear={() => setSel(null)}
-                      ask={(whole) => askAbout(f, whole)}
+                      ask={(whole, fresh) => askAbout(f, whole, fresh)}
+                      agent={askable(p.target)}
+                      canStart={canStart(p.target)}
                     />
                   )}
                 </For>

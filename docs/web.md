@@ -46,7 +46,8 @@ Safari cut them to a rounded square.
   changed files; click a file or a commit to see its diff in a diff tab after the windows.
   Each diff gets its own tab; opening one again shows its tab. `Esc` goes back to the window
   you came from.
-  Select lines and press **Ask Claude** (`a`), or ✦ on a file: the file, the lines and a git
+  Select lines and press **Ask Claude** (`a`) for the Claude already here or **New Claude**
+  (`n`) for a new one; ✦ on a file offers the same two. The file, the lines and a git
   command that shows them are typed in Claude's terminal, unsent. Write your question there and
   press `Enter`. Ask about more lines first, and each one adds to the same input.
 - **Edits in the chat.** Each edit shows open as a diff with the file's line numbers. A turn that
